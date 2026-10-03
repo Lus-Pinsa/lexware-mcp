@@ -6,27 +6,82 @@ import type { Paged } from "../lexware/types.js";
 export const DEFAULT_PAGE_SIZE = 25;
 
 /** Tool annotations, shared so semantics can't drift across tool files. */
-export const RO = { readOnlyHint: true, openWorldHint: true, destructiveHint: false } as const;
-export const WRITE = { readOnlyHint: false, openWorldHint: true, destructiveHint: false } as const;
-export const DESTRUCTIVE = { readOnlyHint: false, openWorldHint: true, destructiveHint: true } as const;
+export const RO = {
+  readOnlyHint: true,
+  openWorldHint: true,
+  destructiveHint: false,
+} as const;
+
+export const WRITE = {
+  readOnlyHint: false,
+  openWorldHint: true,
+  destructiveHint: false,
+} as const;
+
+export const DESTRUCTIVE = {
+  readOnlyHint: false,
+  openWorldHint: true,
+  destructiveHint: true,
+} as const;
+
 /** Read-only and purely local (no external reach), e.g. building a deeplink string. */
-export const LOCAL_RO = { readOnlyHint: true, openWorldHint: false, destructiveHint: false } as const;
+export const LOCAL_RO = {
+  readOnlyHint: true,
+  openWorldHint: false,
+  destructiveHint: false,
+} as const;
 
 /** Wrap a string as MCP text content. */
 export function text(message: string): [{ type: "text"; text: string }] {
   return [{ type: "text", text: message }];
 }
 
-/** Standard result for a paged list tool: the Paged envelope + a one-line summary. */
+/**
+ * Standard result for a paged list tool.
+ *
+ * Important:
+ * Some MCP clients primarily expose the text content to the model and may not
+ * reliably surface structuredContent. Therefore this helper returns both:
+ *
+ * 1. the complete paged API response in structuredContent
+ * 2. the actual rows mirrored into the text response
+ *
+ * This allows Claude and other MCP clients to see ids, dates, names, amounts,
+ * statuses and other list fields instead of receiving only a page summary.
+ */
 export function pagedResult<T>(result: Paged<T>, noun: string) {
-  // An empty result set has totalPages 0; render "page 1/1" rather than the
-  // self-contradictory "page 1/0".
+  // An empty result set has totalPages 0; render "page 1/1" rather than "page 1/0".
   const totalPages = Math.max(result.totalPages, 1);
+
+  const rows = result.content ?? [];
+
+  // Keep text responses bounded. structuredContent still contains the complete
+  // page returned by Lexware. If a caller requests a larger page, only the first
+  // 50 rows are mirrored into text to avoid unnecessarily large MCP responses.
+  const maxRowsInText = 50;
+  const visibleRows = rows.slice(0, maxRowsInText);
+
+  const summary =
+    `Found ${result.totalElements} ${noun}; ` +
+    `showing page ${result.number + 1}/${totalPages}; ` +
+    `${rows.length} row(s) on this page.`;
+
+  const rowsText =
+    visibleRows.length > 0
+      ? `\n\nRows (${visibleRows.length}/${rows.length} on this page):\n` +
+        JSON.stringify(visibleRows, null, 2)
+      : `\n\nRows: []`;
+
+  const truncationNotice =
+    rows.length > maxRowsInText
+      ? `\n\nText output limited to the first ${maxRowsInText} rows of this page. ` +
+        `The complete page remains available in structuredContent. ` +
+        `Request a smaller page size or another page when individual rows beyond this limit are needed.`
+      : "";
+
   return {
     structuredContent: result,
-    content: text(
-      `Found ${result.totalElements} ${noun}; showing page ${result.number + 1}/${totalPages}.`,
-    ),
+    content: text(summary + rowsText + truncationNotice),
   };
 }
 
@@ -35,10 +90,18 @@ export function pagedResult<T>(result: Paged<T>, noun: string) {
  * importing Skybridge's `embeddedResource`) so the tools layer stays independent
  * of the Skybridge runtime, per AGENTS.md.
  */
-function embeddedResourceBlock(uri: string, mimeType: string, data: Buffer) {
+function embeddedResourceBlock(
+  uri: string,
+  mimeType: string,
+  data: Buffer,
+) {
   return {
     type: "resource" as const,
-    resource: { uri, mimeType, blob: data.toString("base64") },
+    resource: {
+      uri,
+      mimeType,
+      blob: data.toString("base64"),
+    },
   };
 }
 
@@ -56,7 +119,14 @@ export function binaryResult(opts: {
 }) {
   return {
     structuredContent: opts.structuredContent,
-    content: [...text(opts.message), embeddedResourceBlock(opts.uri, opts.contentType, opts.data)],
+    content: [
+      ...text(opts.message),
+      embeddedResourceBlock(
+        opts.uri,
+        opts.contentType,
+        opts.data,
+      ),
+    ],
   };
 }
 
@@ -67,27 +137,39 @@ export function binaryResult(opts: {
  * otherwise upload corrupt bytes and report success. Accepts standard and
  * URL-safe alphabets and tolerates a data-URI prefix / embedded whitespace.
  */
-export function decodeBase64Strict(input: string, field = "file"): Buffer {
+export function decodeBase64Strict(
+  input: string,
+  field = "file",
+): Buffer {
   let s = input.trim();
+
   if (s.startsWith("data:")) {
     const comma = s.indexOf(",");
-    if (comma >= 0) s = s.slice(comma + 1);
+    if (comma >= 0) {
+      s = s.slice(comma + 1);
+    }
   }
+
   s = s.replace(/\s+/g, "");
-  if (!s) throw new Error(`${field}: base64 content is empty.`);
-  // Validate the alphabet (standard or URL-safe) and length up front — Buffer.from
-  // silently drops invalid characters, so a value like a leftover data-URI prefix or
-  // a truncated payload would otherwise decode to garbage. A charset+length check
-  // rejects that without re-encoding the whole (multi-MB) payload, and unlike a
-  // decode/re-encode round-trip it does not reject non-canonical padding that every
-  // standard decoder accepts. Base64 length is never ≡ 1 (mod 4).
+
+  if (!s) {
+    throw new Error(`${field}: base64 content is empty.`);
+  }
+
+  // Validate the alphabet (standard or URL-safe) and length up front.
   const body = s.replace(/=+$/, "");
+
   if (!/^[A-Za-z0-9+/_-]*$/.test(body) || body.length % 4 === 1) {
     throw new Error(
-      `${field}: invalid base64 (non-base64 characters or wrong length). Pass the raw base64 without a data-URI prefix.`,
+      `${field}: invalid base64 (non-base64 characters or wrong length). ` +
+        `Pass the raw base64 without a data-URI prefix.`,
     );
   }
-  return Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+
+  return Buffer.from(
+    s.replace(/-/g, "+").replace(/_/g, "/"),
+    "base64",
+  );
 }
 
 /**
@@ -102,17 +184,35 @@ export async function deleteIdempotent(
   path: string,
 ): Promise<{ deleted: true; alreadyAbsent: boolean }> {
   try {
-    await client.request<unknown>("DELETE", path, { idempotent: true });
-    return { deleted: true, alreadyAbsent: false };
+    await client.request<unknown>("DELETE", path, {
+      idempotent: true,
+    });
+
+    return {
+      deleted: true,
+      alreadyAbsent: false,
+    };
   } catch (e) {
-    if (isNotFound(e)) return { deleted: true, alreadyAbsent: true };
+    if (isNotFound(e)) {
+      return {
+        deleted: true,
+        alreadyAbsent: true,
+      };
+    }
+
     throw e;
   }
 }
 
 /** True for a non-null, non-array object. */
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+function isPlainObject(
+  value: unknown,
+): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value)
+  );
 }
 
 /**
@@ -131,13 +231,23 @@ export function deepMergePatch(
   base: Record<string, unknown>,
   patch: Record<string, unknown>,
 ): Record<string, unknown> {
-  const out: Record<string, unknown> = { ...base };
+  const out: Record<string, unknown> = {
+    ...base,
+  };
+
   for (const [key, value] of Object.entries(patch)) {
-    if (value === undefined) continue;
+    if (value === undefined) {
+      continue;
+    }
+
     const existing = out[key];
+
     out[key] =
-      isPlainObject(value) && isPlainObject(existing) ? deepMergePatch(existing, value) : value;
+      isPlainObject(value) && isPlainObject(existing)
+        ? deepMergePatch(existing, value)
+        : value;
   }
+
   return out;
 }
 
@@ -150,22 +260,48 @@ export function deepMergePatch(
  * keeps the existing address valid. Existing entries the patch doesn't reach are
  * preserved.
  */
-export function mergeAddresses(current: unknown, patch: unknown): Record<string, unknown> {
-  const cur = isPlainObject(current) ? current : {};
-  const pat = isPlainObject(patch) ? patch : {};
-  const out: Record<string, unknown> = { ...cur };
+export function mergeAddresses(
+  current: unknown,
+  patch: unknown,
+): Record<string, unknown> {
+  const cur = isPlainObject(current)
+    ? current
+    : {};
+
+  const pat = isPlainObject(patch)
+    ? patch
+    : {};
+
+  const out: Record<string, unknown> = {
+    ...cur,
+  };
+
   for (const [key, value] of Object.entries(pat)) {
-    if (value === undefined) continue;
+    if (value === undefined) {
+      continue;
+    }
+
     if (Array.isArray(value)) {
-      const base = Array.isArray(cur[key]) ? (cur[key] as unknown[]) : [];
+      const base = Array.isArray(cur[key])
+        ? (cur[key] as unknown[])
+        : [];
+
       const merged = value.map((entry, i) =>
-        isPlainObject(entry) && isPlainObject(base[i]) ? deepMergePatch(base[i], entry) : entry,
+        isPlainObject(entry) && isPlainObject(base[i])
+          ? deepMergePatch(base[i], entry)
+          : entry,
       );
-      // Keep existing addresses beyond the patch length (e.g. a second billing address).
-      out[key] = base.length > value.length ? merged.concat(base.slice(value.length)) : merged;
+
+      // Keep existing addresses beyond the patch length
+      // (e.g. a second billing address).
+      out[key] =
+        base.length > value.length
+          ? merged.concat(base.slice(value.length))
+          : merged;
     } else {
       out[key] = value;
     }
   }
+
   return out;
 }

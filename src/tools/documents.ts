@@ -381,7 +381,13 @@ export function registerDocumentReadTools(
         );
       }
       const doc = await client.get<Record<string, unknown>>(`/v1/${path}/${encodeURIComponent(id)}`);
-      return { structuredContent: doc, content: text(`${voucherType} ${id} retrieved via /${path}.`) };
+return {
+  structuredContent: doc,
+  content: text(
+    `${voucherType} ${id} retrieved via /${path}.\n\n` +
+      JSON.stringify(doc, null, 2),
+  ),
+};
     },
   );
 

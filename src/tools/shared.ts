@@ -16,7 +16,24 @@ export const LOCAL_RO = { readOnlyHint: true, openWorldHint: false, destructiveH
 export function text(message: string): [{ type: "text"; text: string }] {
   return [{ type: "text", text: message }];
 }
+/** Standard result for a single JSON object exposed to MCP clients. */
+export function objectResult(
+  result: Record<string, unknown>,
+  summary: string,
+) {
+  const json = JSON.stringify(result, null, 2);
+  const maxChars = 60000;
 
+  const visibleJson =
+    json.length > maxChars
+      ? `${json.slice(0, maxChars)}\n\n[Text output truncated after ${maxChars} characters. Full payload remains available in structuredContent.]`
+      : json;
+
+  return {
+    structuredContent: result,
+    content: text(`${summary}\n\n${visibleJson}`),
+  };
+}
 /** Standard result for a paged list tool. */
 export function pagedResult<T>(result: Paged<T>, noun: string) {
   // An empty result set has totalPages 0; render "page 1/1" rather than "page 1/0".

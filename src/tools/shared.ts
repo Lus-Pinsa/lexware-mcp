@@ -17,16 +17,56 @@ export function text(message: string): [{ type: "text"; text: string }] {
   return [{ type: "text", text: message }];
 }
 
-/** Standard result for a paged list tool: the Paged envelope + a one-line summary. */
+/**
+ * Standard result for a paged list tool.
+ *
+ * Important:
+ * Some MCP clients primarily expose the text content to the model and may not
+ * reliably surface structuredContent. Therefore this helper returns both:
+ *
+ * 1. the COMPLETE paged API response in structuredContent
+ * 2. the actual rows mirrored into the text response
+ *
+ * This allows Claude and other MCP clients to see ids, dates, names, amounts,
+ * statuses and other list fields instead of receiving only a page summary.
+ */
 export function pagedResult<T>(result: Paged<T>, noun: string) {
-  // An empty result set has totalPages 0; render "page 1/1" rather than the
-  // self-contradictory "page 1/0".
+  // An empty result set has totalPages 0; render "page 1/1" rather than "page 1/0".
   const totalPages = Math.max(result.totalPages, 1);
+
+  const rows = result.content ?? [];
+
+  // Keep text responses bounded. structuredContent still contains the complete
+  // page returned by Lexware. If a caller requests a larger page, only the first
+  // 50 rows are mirrored into text to avoid unnecessarily large MCP responses.
+  const maxRowsInText = 50;
+  const visibleRows = rows.slice(0, maxRowsInText);
+
+  const summary =
+    `Found ${result.totalElements} ${noun}; ` +
+    `showing page ${result.number + 1}/${totalPages}; ` +
+    `${rows.length} row(s) on this page.`;
+
+  const rowsText =
+    visibleRows.length > 0
+      ? `\n\nRows (${visibleRows.length}/${rows.length} on this page):\n` +
+        JSON.stringify(visibleRows, null, 2)
+      : `\n\nRows: []`;
+
+  const truncationNotice =
+    rows.length > maxRowsInText
+      ? `\n\nText output limited to the first ${maxRowsInText} rows of this page. ` +
+        `The complete page remains available in structuredContent. ` +
+        `Request a smaller page size or another page when individual rows beyond this limit are needed.`
+      : "";
+
   return {
+    // Preserve the COMPLETE API page, including content[] and all page metadata.
     structuredContent: result,
-    content: text(
-      `Found ${result.totalElements} ${noun}; showing page ${result.number + 1}/${totalPages}.`,
-    ),
+
+    // Mirror the actual rows into text for MCP clients that otherwise expose only
+    // the human-readable summary to the model.
+    content: text(summary + rowsText + truncationNotice),
   };
 }
 
@@ -69,33 +109,40 @@ export function binaryResult(opts: {
  */
 export function decodeBase64Strict(input: string, field = "file"): Buffer {
   let s = input.trim();
+
   if (s.startsWith("data:")) {
     const comma = s.indexOf(",");
     if (comma >= 0) s = s.slice(comma + 1);
   }
+
   s = s.replace(/\s+/g, "");
-  if (!s) throw new Error(`${field}: base64 content is empty.`);
-  // Validate the alphabet (standard or URL-safe) and length up front — Buffer.from
-  // silently drops invalid characters, so a value like a leftover data-URI prefix or
-  // a truncated payload would otherwise decode to garbage. A charset+length check
-  // rejects that without re-encoding the whole (multi-MB) payload, and unlike a
-  // decode/re-encode round-trip it does not reject non-canonical padding that every
-  // standard decoder accepts. Base64 length is never ≡ 1 (mod 4).
+
+  if (!s) {
+    throw new Error(`${field}: base64 content is empty.`);
+  }
+
+  // Validate the alphabet and length up front.
   const body = s.replace(/=+$/, "");
+
   if (!/^[A-Za-z0-9+/_-]*$/.test(body) || body.length % 4 === 1) {
     throw new Error(
-      `${field}: invalid base64 (non-base64 characters or wrong length). Pass the raw base64 without a data-URI prefix.`,
+      `${field}: invalid base64 (non-base64 characters or wrong length). ` +
+        `Pass the raw base64 without a data-URI prefix.`,
     );
   }
-  return Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+
+  return Buffer.from(
+    s.replace(/-/g, "+").replace(/_/g, "/"),
+    "base64",
+  );
 }
 
 /**
- * DELETE a resource idempotently. A 404 — the resource is already gone, e.g. a
- * retried DELETE whose first attempt already succeeded, or an id that never
- * existed — is treated as success rather than a false failure. Returns whether the
- * resource was actually found, so callers can distinguish "deleted it" from
- * "it was already absent".
+ * DELETE a resource idempotently.
+ *
+ * A 404 means the resource is already absent and is therefore treated as a
+ * successful outcome. This is useful for retries where a previous DELETE may
+ * already have succeeded.
  */
 export async function deleteIdempotent(
   client: LexwareClient,
@@ -105,7 +152,10 @@ export async function deleteIdempotent(
     await client.request<unknown>("DELETE", path, { idempotent: true });
     return { deleted: true, alreadyAbsent: false };
   } catch (e) {
-    if (isNotFound(e)) return { deleted: true, alreadyAbsent: true };
+    if (isNotFound(e)) {
+      return { deleted: true, alreadyAbsent: true };
+    }
+
     throw e;
   }
 }
@@ -116,56 +166,77 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Read-modify-write merge: overlay `patch` onto `base`, recursing into nested
- * objects so a partial sub-object (e.g. `{ company: { vatRegistrationId } }`)
- * updates one field without wiping its siblings (`company.name`). Arrays and
- * scalars replace wholesale; an `undefined` patch value leaves the base untouched
- * (callers preserve a field by simply omitting it); an explicit `null` clears it.
+ * Read-modify-write merge.
  *
- * Lexware/lexoffice `PUT` replaces the WHOLE resource, so update tools must GET the
- * current object and merge the caller's fields over it — otherwise omitted fields
- * (attached files, addresses, voucherNumber, …) would be silently wiped and
- * required fields would 406.
+ * Overlay `patch` onto `base`, recursing into nested objects so partial updates
+ * don't wipe sibling fields.
+ *
+ * Arrays and scalars replace wholesale.
+ * `undefined` means "leave unchanged".
+ * `null` means "clear explicitly".
+ *
+ * Lexware PUT requests replace the whole resource, therefore update tools must
+ * fetch the current object first and merge the requested patch into it.
  */
 export function deepMergePatch(
   base: Record<string, unknown>,
   patch: Record<string, unknown>,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = { ...base };
+
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined) continue;
+
     const existing = out[key];
+
     out[key] =
-      isPlainObject(value) && isPlainObject(existing) ? deepMergePatch(existing, value) : value;
+      isPlainObject(value) && isPlainObject(existing)
+        ? deepMergePatch(existing, value)
+        : value;
   }
+
   return out;
 }
 
 /**
- * Merge a contact's address collection (`{ billing: [...], shipping: [...] }`) by
- * INDEX, deep-merging each address object — unlike {@link deepMergePatch}, which
- * replaces arrays wholesale. This lets a partial patch (e.g. just `countryCode`)
- * update the matching existing address instead of wiping its street/zip/city.
- * lexoffice requires `countryCode` in every address object, so element-wise merge
- * keeps the existing address valid. Existing entries the patch doesn't reach are
- * preserved.
+ * Merge a contact's address collection by INDEX.
+ *
+ * This is intentionally different from deepMergePatch because addresses are
+ * arrays of objects. A partial address patch should update the corresponding
+ * existing address instead of replacing the complete address object.
  */
-export function mergeAddresses(current: unknown, patch: unknown): Record<string, unknown> {
+export function mergeAddresses(
+  current: unknown,
+  patch: unknown,
+): Record<string, unknown> {
   const cur = isPlainObject(current) ? current : {};
   const pat = isPlainObject(patch) ? patch : {};
+
   const out: Record<string, unknown> = { ...cur };
+
   for (const [key, value] of Object.entries(pat)) {
     if (value === undefined) continue;
+
     if (Array.isArray(value)) {
-      const base = Array.isArray(cur[key]) ? (cur[key] as unknown[]) : [];
+      const base = Array.isArray(cur[key])
+        ? (cur[key] as unknown[])
+        : [];
+
       const merged = value.map((entry, i) =>
-        isPlainObject(entry) && isPlainObject(base[i]) ? deepMergePatch(base[i], entry) : entry,
+        isPlainObject(entry) && isPlainObject(base[i])
+          ? deepMergePatch(base[i], entry)
+          : entry,
       );
-      // Keep existing addresses beyond the patch length (e.g. a second billing address).
-      out[key] = base.length > value.length ? merged.concat(base.slice(value.length)) : merged;
+
+      // Preserve existing addresses beyond the patch length.
+      out[key] =
+        base.length > value.length
+          ? merged.concat(base.slice(value.length))
+          : merged;
     } else {
       out[key] = value;
     }
   }
+
   return out;
 }

@@ -15,8 +15,15 @@ import {
   quotationInputShape,
   sizeParam,
 } from "./schemas.js";
-import { LOCAL_RO, RO, WRITE, binaryResult, pagedResult, text } from "./shared.js";
-
+import {
+  LOCAL_RO,
+  RO,
+  WRITE,
+  binaryResult,
+  objectResult,
+  pagedResult,
+  text,
+} from "./shared.js";
 /** A Lexware voucher-document type and how to create it. */
 interface DocType {
   /** Tool-name suffix, e.g. "credit-note". */
@@ -280,10 +287,16 @@ export function registerDocumentReadTools(
         inputSchema: { id: z.string() },
         annotations: RO,
       },
-      async ({ id }) => {
-        const document = await client.get<Record<string, unknown>>(`/v1/${doc.path}/${encodeURIComponent(id)}`);
-        return { structuredContent: document, content: text(`${doc.label} ${id} retrieved.`) };
-      },
+async ({ id }) => {
+  const document = await client.get<Record<string, unknown>>(
+    `/v1/${doc.path}/${encodeURIComponent(id)}`
+  );
+
+  return objectResult(
+    document,
+    `${doc.label} ${id} retrieved.`,
+  );
+},
     );
   }
 
@@ -322,9 +335,15 @@ export function registerDocumentReadTools(
       annotations: RO,
     },
     async ({ id }) => {
-      const voucher = await client.get<Record<string, unknown>>(`/v1/vouchers/${encodeURIComponent(id)}`);
-      return { structuredContent: voucher, content: text(`Voucher ${id} retrieved.`) };
-    },
+  const voucher = await client.get<Record<string, unknown>>(
+    `/v1/vouchers/${encodeURIComponent(id)}`
+  );
+
+  return objectResult(
+    voucher,
+    `Voucher ${id} retrieved.`,
+  );
+},
   );
 
   server.registerTool(
@@ -350,13 +369,17 @@ export function registerDocumentReadTools(
           errors.push({ id, error: e instanceof Error ? e.message : String(e) });
         }
       }
-      return {
-        structuredContent: { vouchers, errors, count: vouchers.length },
-        content: text(
-          `Fetched ${vouchers.length}/${(ids as string[]).length} voucher(s)` +
-            (errors.length ? `; ${errors.length} failed.` : "."),
-        ),
-      };
+     const result = {
+  vouchers,
+  errors,
+  count: vouchers.length,
+};
+
+return objectResult(
+  result,
+  `Fetched ${vouchers.length}/${(ids as string[]).length} voucher(s)` +
+    (errors.length ? `; ${errors.length} failed.` : "."),
+);
     },
   );
 
@@ -381,13 +404,10 @@ export function registerDocumentReadTools(
         );
       }
       const doc = await client.get<Record<string, unknown>>(`/v1/${path}/${encodeURIComponent(id)}`);
-return {
-  structuredContent: doc,
-  content: text(
-    `${voucherType} ${id} retrieved via /${path}.\n\n` +
-      JSON.stringify(doc, null, 2),
-  ),
-};
+return objectResult(
+  doc,
+  `${voucherType} ${id} retrieved via /${path}.`,
+);
     },
   );
 

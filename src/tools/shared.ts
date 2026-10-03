@@ -17,16 +17,35 @@ export function text(message: string): [{ type: "text"; text: string }] {
   return [{ type: "text", text: message }];
 }
 
-/** Standard result for a paged list tool: the Paged envelope + a one-line summary. */
+/** Standard result for a paged list tool. */
 export function pagedResult<T>(result: Paged<T>, noun: string) {
-  // An empty result set has totalPages 0; render "page 1/1" rather than the
-  // self-contradictory "page 1/0".
+  // An empty result set has totalPages 0; render "page 1/1" rather than "page 1/0".
   const totalPages = Math.max(result.totalPages, 1);
+
+  const rows = result.content ?? [];
+  const maxRowsInText = 50;
+  const visibleRows = rows.slice(0, maxRowsInText);
+
+  const summary =
+    `Found ${result.totalElements} ${noun}; ` +
+    `showing page ${result.number + 1}/${totalPages}; ` +
+    `${rows.length} row(s) on this page.`;
+
+  const rowsText =
+    visibleRows.length > 0
+      ? `\n\nRows (${visibleRows.length}/${rows.length} on this page):\n` +
+        JSON.stringify(visibleRows, null, 2)
+      : `\n\nRows: []`;
+
+  const truncationNotice =
+    rows.length > maxRowsInText
+      ? `\n\nText output limited to the first ${maxRowsInText} rows of this page. ` +
+        `The complete page remains available in structuredContent.`
+      : "";
+
   return {
     structuredContent: result,
-    content: text(
-      `Found ${result.totalElements} ${noun}; showing page ${result.number + 1}/${totalPages}.`,
-    ),
+    content: text(summary + rowsText + truncationNotice),
   };
 }
 

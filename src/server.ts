@@ -1,65 +1,129 @@
+import { createVerify } from "node:crypto";
 import express, { type Request, type Response } from "express";
-import { mcpAuthMetadataRouter, McpServer, requireBearerAuth } from "skybridge/server";
+import {
+  mcpAuthMetadataRouter,
+  McpServer,
+  requireBearerAuth,
+} from "skybridge/server";
+
 import { bearerAuthMiddleware } from "./auth.js";
-import { ConfigError, describeCapabilities, loadConfig } from "./config.js";
+import {
+  ConfigError,
+  describeCapabilities,
+  loadConfig,
+} from "./config.js";
 import { LexwareClient } from "./lexware/client.js";
-import { buildOAuthMetadata, createAccessTokenVerifier } from "./oauth.js";
+import {
+  buildOAuthMetadata,
+  createAccessTokenVerifier,
+} from "./oauth.js";
 import { registerTools } from "./tools/index.js";
 
-/** Base64 file uploads (upload-file / upload-voucher-file) travel inline in the JSON-RPC body. */
+/**
+ * Base64 file uploads
+ * (upload-file / upload-voucher-file)
+ * travel inline in the JSON-RPC body.
+ */
 const JSON_BODY_LIMIT = "12mb";
-const isMcpPath = (p: string): boolean => p === "/mcp" || p.startsWith("/mcp/");
+
+const isMcpPath = (p: string): boolean =>
+  p === "/mcp" || p.startsWith("/mcp/");
+
+const isLexwareWebhookPath = (p: string): boolean =>
+  p === "/webhooks/lexware" ||
+  p.startsWith("/webhooks/lexware/");
 
 /**
- * Reconfigure body parsing so large uploads work WITHOUT widening the pre-auth
- * attack surface. Skybridge pre-applies a single global `express.json()` (~100 KB
- * default) at router-stack index 0 — before the /mcp auth middleware. We swap that
- * layer's handler, in place, so it keeps the ~100 KB limit for non-/mcp routes (e.g.
- * /status) but DEFERS /mcp bodies to a {@link JSON_BODY_LIMIT} parser mounted AFTER
- * the auth gate (see below). Net effect: an unauthenticated request can never trigger
- * a multi-MB parse, and authenticated uploads still get the raised limit.
+ * Reconfigure body parsing so large uploads work WITHOUT widening
+ * the pre-auth attack surface.
  *
- * In-place handler swap (no stack reordering) so it can't mis-order routes. Guarded:
- * returns false if the internal layer can't be located, and the caller warns loudly.
+ * Skybridge pre-applies a global express.json() parser.
+ * MCP requests are deferred until after authentication.
+ *
+ * Lexware webhook requests are also deferred because the raw body
+ * is required for signature verification.
  */
-function deferMcpBodyParsing(app: express.Express): boolean {
+function deferMcpBodyParsing(
+  app: express.Express,
+): boolean {
   try {
-    type Layer = { handle?: express.RequestHandler & { name?: string } };
+    type Layer = {
+      handle?: express.RequestHandler & {
+        name?: string;
+      };
+    };
+
     const router =
-      (app as unknown as { router?: { stack: Layer[] }; _router?: { stack: Layer[] } }).router ??
-      (app as unknown as { _router?: { stack: Layer[] } })._router;
+      (
+        app as unknown as {
+          router?: { stack: Layer[] };
+          _router?: { stack: Layer[] };
+        }
+      ).router ??
+      (
+        app as unknown as {
+          _router?: { stack: Layer[] };
+        }
+      )._router;
+
     const stack = router?.stack;
-    if (!Array.isArray(stack)) return false;
-    const layer = stack.find((l) => l?.handle?.name === "jsonParser");
-    if (!layer) return false;
-    const smallJson = express.json(); // ~100 KB default — for /status and other non-/mcp routes
-    layer.handle = (req, res, next) => (isMcpPath(req.path) ? next() : smallJson(req, res, next));
+
+    if (!Array.isArray(stack)) {
+      return false;
+    }
+
+    const layer = stack.find(
+      (l) => l?.handle?.name === "jsonParser",
+    );
+
+    if (!layer) {
+      return false;
+    }
+
+    const smallJson = express.json();
+
+    layer.handle = (req, res, next) =>
+      isMcpPath(req.path) ||
+      isLexwareWebhookPath(req.path)
+        ? next()
+        : smallJson(req, res, next);
+
     return true;
   } catch {
     return false;
   }
 }
 
-// Fail fast with a clear, secret-free message on any misconfiguration.
+/* ============================================================
+   CONFIG
+   ============================================================ */
+
 let config;
+
 try {
   config = loadConfig();
 } catch (err) {
   if (err instanceof ConfigError) {
-    console.error(`Configuration error: ${err.message}`);
+    console.error(
+      `Configuration error: ${err.message}`,
+    );
     process.exit(1);
   }
+
   throw err;
 }
 
-// Skybridge's `run()` binds `process.env.__PORT` (default 3000). When running the
-// built server directly (`node dist/server.js`) there's no `skybridge start` to
-// bridge ports, so make our validated `config.port` (which reads `PORT`, default
-// 8080) authoritative. `skybridge dev` sets `__PORT` itself, so only set it when
-// it isn't already provided.
+/**
+ * Skybridge's run() binds process.env.__PORT.
+ * Render supplies PORT.
+ */
 if (!process.env.__PORT) {
   process.env.__PORT = String(config.port);
 }
+
+/* ============================================================
+   LEXWARE CLIENT
+   ============================================================ */
 
 const client = new LexwareClient({
   baseUrl: config.lexwareApiBaseUrl,
@@ -67,99 +131,410 @@ const client = new LexwareClient({
   debug: config.debugLogging,
 });
 
+/* ============================================================
+   MCP SERVER
+   ============================================================ */
+
 const server = new McpServer(
   {
     name: "lexware-office",
     version: "0.1.7",
   },
-  { capabilities: {} },
+  {
+    capabilities: {},
+  },
 );
 
-// Defer /mcp bodies from the pre-applied ~100 KB global parser (they get the raised
-// limit post-auth, below); other routes keep the small limit.
-const bodyParsingConfigured = deferMcpBodyParsing(server.express);
+const bodyParsingConfigured =
+  deferMcpBodyParsing(server.express);
 
-// Unauthenticated health check. Use `/status`, not `/healthz`: Google Front End
-// intercepts `/healthz` on Cloud Run (it never reaches the container).
-server.express.get("/status", (_req: Request, res: Response) => {
-  res.json({ status: "ok" });
-});
+/* ============================================================
+   HEALTH CHECK
+   ============================================================ */
 
-server.use((req, _res, next) => {
-  if (
-    req.path === "/mcp" ||
-    req.path.startsWith("/mcp/") ||
-    req.path.startsWith("/.well-known/")
-  ) {
-    console.error(
-      `[debug] ${req.method} ${req.path} auth=${req.headers.authorization ? "yes" : "no"} ` +
-        `accept=${req.headers.accept ?? ""} ua=${req.headers["user-agent"] ?? ""}`,
+server.express.get(
+  "/status",
+  (_req: Request, res: Response) => {
+    res.json({
+      status: "ok",
+    });
+  },
+);
+
+/* ============================================================
+   LEXWARE WEBHOOK
+   ============================================================ */
+
+type LexwareWebhookPayload = {
+  organizationId: string;
+  eventType: string;
+  resourceId: string;
+  eventDate: string;
+};
+
+/**
+ * Lexware signs webhook payloads.
+ *
+ * Public key comes from:
+ * LEXWARE_WEBHOOK_PUBLIC_KEY
+ */
+function verifyLexwareWebhookSignature(
+  rawBody: Buffer,
+  signatureBase64: string,
+  publicKey: string,
+): boolean {
+  try {
+    const verifier =
+      createVerify("RSA-SHA512");
+
+    verifier.update(rawBody);
+    verifier.end();
+
+    return verifier.verify(
+      publicKey,
+      Buffer.from(
+        signatureBase64,
+        "base64",
+      ),
     );
-  }
-  next();
-});
+  } catch (err) {
+    console.error(
+      "[lexware-webhook] signature verification error",
+      err instanceof Error
+        ? err.message
+        : "unknown error",
+    );
 
-// Gate the MCP endpoint according to the configured auth mode.
+    return false;
+  }
+}
+
+function getLexwareWebhookPublicKey():
+  | string
+  | undefined {
+  return process.env
+    .LEXWARE_WEBHOOK_PUBLIC_KEY
+    ?.replace(/\\n/g, "\n");
+}
+
+/**
+ * Lexware checks callback reachability
+ * when the subscription is created.
+ */
+server.express.head(
+  "/webhooks/lexware",
+  (_req: Request, res: Response) => {
+    res.sendStatus(204);
+  },
+);
+
+/**
+ * Useful manual browser check.
+ */
+server.express.get(
+  "/webhooks/lexware",
+  (_req: Request, res: Response) => {
+    res.json({
+      status: "ok",
+      webhook: "lexware",
+      event: "voucher.created",
+    });
+  },
+);
+
+/**
+ * Lexware webhook receiver.
+ *
+ * IMPORTANT:
+ * This route does NOT use MCP bearer authentication.
+ * Authentication is performed via X-Lxo-Signature.
+ */
+server.express.post(
+  "/webhooks/lexware",
+
+  express.raw({
+    type: "application/json",
+    limit: "64kb",
+  }),
+
+  (req: Request, res: Response) => {
+    const publicKey =
+      getLexwareWebhookPublicKey();
+
+    if (!publicKey) {
+      console.error(
+        "[lexware-webhook] LEXWARE_WEBHOOK_PUBLIC_KEY missing",
+      );
+
+      res.sendStatus(503);
+      return;
+    }
+
+    const signature =
+      req.get("x-lxo-signature");
+
+    if (!signature) {
+      console.error(
+        "[lexware-webhook] missing X-Lxo-Signature",
+      );
+
+      res.sendStatus(401);
+      return;
+    }
+
+    if (!Buffer.isBuffer(req.body)) {
+      console.error(
+        "[lexware-webhook] body is not raw Buffer",
+      );
+
+      res.sendStatus(400);
+      return;
+    }
+
+    const rawBody =
+      req.body as Buffer;
+
+    const valid =
+      verifyLexwareWebhookSignature(
+        rawBody,
+        signature,
+        publicKey,
+      );
+
+    if (!valid) {
+      console.error(
+        "[lexware-webhook] invalid signature",
+      );
+
+      res.sendStatus(401);
+      return;
+    }
+
+    let payload: LexwareWebhookPayload;
+
+    try {
+      payload =
+        JSON.parse(
+          rawBody.toString("utf8"),
+        ) as LexwareWebhookPayload;
+    } catch {
+      console.error(
+        "[lexware-webhook] invalid JSON",
+      );
+
+      res.sendStatus(400);
+      return;
+    }
+
+    if (
+      !payload.organizationId ||
+      !payload.eventType ||
+      !payload.resourceId ||
+      !payload.eventDate
+    ) {
+      console.error(
+        "[lexware-webhook] incomplete payload",
+      );
+
+      res.sendStatus(400);
+      return;
+    }
+
+    /**
+     * Phase 1:
+     * Only voucher.created is processed.
+     *
+     * Other Lexware events are acknowledged
+     * but ignored.
+     */
+    if (
+      payload.eventType !==
+      "voucher.created"
+    ) {
+      console.error(
+        `[lexware-webhook] ignored event=${payload.eventType} resourceId=${payload.resourceId}`,
+      );
+
+      res.sendStatus(204);
+      return;
+    }
+
+    console.error(
+      `[lexware-webhook] NEW VOUCHER resourceId=${payload.resourceId} eventDate=${payload.eventDate}`,
+    );
+
+    /**
+     * IMPORTANT:
+     * For now we only RECEIVE the event.
+     *
+     * Next step:
+     * resourceId → pending queue → MCP tool → Claude
+     */
+
+    res.sendStatus(204);
+  },
+);
+
+/* ============================================================
+   DEBUG LOGGING
+   ============================================================ */
+
+server.use(
+  (req, _res, next) => {
+    if (
+      req.path === "/mcp" ||
+      req.path.startsWith("/mcp/") ||
+      req.path.startsWith(
+        "/.well-known/",
+      )
+    ) {
+      console.error(
+        `[debug] ${req.method} ${req.path} auth=${
+          req.headers.authorization
+            ? "yes"
+            : "no"
+        } accept=${
+          req.headers.accept ?? ""
+        } ua=${
+          req.headers["user-agent"] ?? ""
+        }`,
+      );
+    }
+
+    next();
+  },
+);
+
+/* ============================================================
+   MCP AUTH
+   ============================================================ */
+
 if (config.auth.mode === "oauth") {
   const oauth = config.auth;
-  // Advertise the authorization server so MCP clients can discover and sign in.
+
   server.use(
     mcpAuthMetadataRouter({
-      oauthMetadata: buildOAuthMetadata(oauth),
-      resourceServerUrl: new URL(oauth.resource),
+      oauthMetadata:
+        buildOAuthMetadata(oauth),
+      resourceServerUrl:
+        new URL(oauth.resource),
     }),
   );
-  // RFC 9728: the protected-resource metadata path is the well-known segment
-  // followed by the resource's path (so a path-bearing resource resolves correctly).
-  const resUrl = new URL(oauth.resource);
-  const resPath = resUrl.pathname === "/" ? "" : resUrl.pathname.replace(/\/$/, "");
+
+  const resUrl =
+    new URL(oauth.resource);
+
+  const resPath =
+    resUrl.pathname === "/"
+      ? ""
+      : resUrl.pathname.replace(
+          /\/$/,
+          "",
+        );
+
   server.use(
     "/mcp",
     requireBearerAuth({
-      verifier: { verifyAccessToken: createAccessTokenVerifier(oauth) },
-      resourceMetadataUrl: `${resUrl.origin}/.well-known/oauth-protected-resource${resPath}`,
+      verifier: {
+        verifyAccessToken:
+          createAccessTokenVerifier(
+            oauth,
+          ),
+      },
+
+      resourceMetadataUrl:
+        `${resUrl.origin}/.well-known/oauth-protected-resource${resPath}`,
     }),
   );
-} else if (config.auth.mode === "static") {
-  server.use("/mcp", bearerAuthMiddleware(config.auth.token));
+} else if (
+  config.auth.mode === "static"
+) {
+  server.use(
+    "/mcp",
+    bearerAuthMiddleware(
+      config.auth.token,
+    ),
+  );
 }
-// mode "none": no gate (operator explicitly opted into unauthenticated).
 
-// Parse /mcp bodies at the raised limit — mounted AFTER the auth gate above, so an
-// unauthenticated request is rejected before any multi-MB body is buffered/parsed.
-// (Only effective when the global parser was successfully told to defer /mcp.)
+/* ============================================================
+   MCP JSON BODY
+   ============================================================ */
+
 if (bodyParsingConfigured) {
-  server.use("/mcp", express.json({ limit: JSON_BODY_LIMIT }));
+  server.use(
+    "/mcp",
+    express.json({
+      limit: JSON_BODY_LIMIT,
+    }),
+  );
 }
 
-registerTools(server, client, config);
+/* ============================================================
+   MCP TOOLS
+   ============================================================ */
+
+registerTools(
+  server,
+  client,
+  config,
+);
+
+/* ============================================================
+   STARTUP LOGGING
+   ============================================================ */
 
 console.error(
-  `[lexware-mcp] starting — ${describeCapabilities(config)} bodyLimit=${bodyParsingConfigured ? `${JSON_BODY_LIMIT} (/mcp, post-auth)` : "default(~100kb)"}`,
+  `[lexware-mcp] starting — ${describeCapabilities(
+    config,
+  )} bodyLimit=${
+    bodyParsingConfigured
+      ? `${JSON_BODY_LIMIT} (/mcp, post-auth)`
+      : "default(~100kb)"
+  }`,
 );
-for (const warning of config.warnings) {
-  console.error(`[lexware-mcp] WARNING: ${warning}`);
+
+console.error(
+  "[lexware-webhook] endpoint=/webhooks/lexware event=voucher.created",
+);
+
+for (
+  const warning of config.warnings
+) {
+  console.error(
+    `[lexware-mcp] WARNING: ${warning}`,
+  );
 }
+
 if (!bodyParsingConfigured) {
   console.error(
-    "[lexware-mcp] WARNING: could not raise the JSON body limit (Skybridge/Express internals changed) — " +
-      "uploads over ~100 KB will be rejected. upload-file/upload-voucher-file may fail until this is fixed.",
+    "[lexware-mcp] WARNING: could not raise the JSON body limit — uploads over ~100 KB may fail.",
   );
 }
-if (config.auth.mode === "oauth" && config.auth.allowedEmailDomains.length === 0) {
+
+if (
+  config.auth.mode === "oauth" &&
+  config.auth
+    .allowedEmailDomains.length === 0
+) {
   console.error(
-    "[lexware-mcp] WARNING: OAuth mode with no OAUTH_ALLOWED_EMAIL_DOMAINS — ANY user who can " +
-      "authenticate with your issuer can reach this server. Set OAUTH_ALLOWED_EMAIL_DOMAINS to restrict access.",
+    "[lexware-mcp] WARNING: OAuth mode with no OAUTH_ALLOWED_EMAIL_DOMAINS.",
   );
 }
-if (config.auth.mode === "none") {
+
+if (
+  config.auth.mode === "none"
+) {
   console.error(
-    "[lexware-mcp] WARNING: /mcp is UNAUTHENTICATED (MCP_ALLOW_UNAUTHENTICATED=true). Anyone who can reach " +
-      "this port can use every enabled tool. Bind to localhost / a private network only, and prefer a browser " +
-      "that blocks DNS-rebinding; configure OAUTH_ISSUER or MCP_AUTH_TOKEN for any shared or public deployment.",
+    "[lexware-mcp] WARNING: /mcp is UNAUTHENTICATED.",
   );
 }
+
+/* ============================================================
+   RUN
+   ============================================================ */
 
 export default await server.run();
 
-export type AppType = typeof server;
+export type AppType =
+  typeof server;

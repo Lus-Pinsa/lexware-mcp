@@ -18,7 +18,7 @@ import {
   createAccessTokenVerifier,
 } from "./oauth.js";
 import { registerTools } from "./tools/index.js";
-
+import { addPendingVoucherEvent } from "./pending-voucher-events.js";
 /**
  * Base64 file uploads
  * (upload-file / upload-voucher-file)
@@ -359,9 +359,14 @@ server.express.post(
       return;
     }
 
-    console.error(
-      `[lexware-webhook] NEW VOUCHER resourceId=${payload.resourceId} eventDate=${payload.eventDate}`,
-    );
+    const pending = addPendingVoucherEvent({
+  resourceId: payload.resourceId,
+  eventDate: payload.eventDate,
+});
+
+console.error(
+  `[lexware-webhook] NEW VOUCHER resourceId=${payload.resourceId} eventDate=${payload.eventDate} pending=${pending.count} added=${pending.added}`,
+);
 
     /**
      * IMPORTANT:

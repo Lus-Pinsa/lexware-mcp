@@ -36,6 +36,10 @@ import {
   registerPendingVoucherEventWriteTools,
 } from "./pending-voucher-events.js";
 
+import {
+  registerVoucherReconciliationReadTools,
+} from "./reconciliation.js";
+
 import { registerProfileTools } from "./profile.js";
 import { registerReferenceReadTools } from "./reference.js";
 import { registerVoucherWriteTools } from "./vouchers.js";
@@ -75,10 +79,24 @@ export function registerTools(
   registerEventSubscriptionReadTools(server, client);
 
   /*
-   * NEW:
    * Claude can read pending voucher.created events.
    */
   registerPendingVoucherEventReadTools(server);
+
+  /*
+   * Read-only restart/reconciliation fallback.
+   *
+   * Compares recent Lexware vouchers against the current
+   * in-memory Pending Queue.
+   *
+   * Does not modify Lexware.
+   * Does not acknowledge events.
+   * Does not modify the Pending Queue.
+   */
+  registerVoucherReconciliationReadTools(
+    server,
+    client,
+  );
 
   /*
    * ============================================================
@@ -102,7 +120,6 @@ export function registerTools(
     );
 
     /*
-     * NEW:
      * Claude may acknowledge an event after processing it.
      *
      * This only changes the MCP queue.

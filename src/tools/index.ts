@@ -31,14 +31,19 @@ import {
   registerFileWriteTools,
 } from "./files.js";
 
+import {
+  registerPendingVoucherEventReadTools,
+  registerPendingVoucherEventWriteTools,
+} from "./pending-voucher-events.js";
+
 import { registerProfileTools } from "./profile.js";
 import { registerReferenceReadTools } from "./reference.js";
 import { registerVoucherWriteTools } from "./vouchers.js";
 
 /**
- * Register MCP tools according to the resolved capability tiers.
+ * Register MCP tools according to resolved capability tiers.
  *
- * Only enabled tiers are advertised to the model.
+ * Only enabled tiers are advertised to Claude.
  */
 export function registerTools(
   server: McpServer,
@@ -48,30 +53,39 @@ export function registerTools(
   const { capabilities } = config;
 
   /*
+   * ============================================================
    * READ TIER
+   * ============================================================
+   *
    * Always available.
    */
+
   registerProfileTools(server, client);
   registerContactReadTools(server, client);
   registerArticleReadTools(server, client);
+
   registerDocumentReadTools(
     server,
     client,
     config.lexwareAppBaseUrl,
   );
+
   registerReferenceReadTools(server, client);
   registerFileReadTools(server, client);
   registerEventSubscriptionReadTools(server, client);
 
   /*
-   * DRAFT / CONTROLLED WRITE TIER
-   *
-   * This includes the LU'S-specific webhook ensure tool.
-   *
-   * That tool cannot accept arbitrary URLs or arbitrary event types,
-   * so exposing it here does NOT expose the general event-subscription
-   * write surface.
+   * NEW:
+   * Claude can read pending voucher.created events.
    */
+  registerPendingVoucherEventReadTools(server);
+
+  /*
+   * ============================================================
+   * DRAFT / CONTROLLED WRITE TIER
+   * ============================================================
+   */
+
   if (capabilities.drafts) {
     registerContactDraftTools(server, client);
     registerArticleWriteTools(server, client);
@@ -79,22 +93,58 @@ export function registerTools(
     registerVoucherWriteTools(server, client);
     registerFileWriteTools(server, client);
 
-    registerLusVoucherWebhookTools(server, client);
+    /*
+     * LU'S fixed voucher webhook.
+     */
+    registerLusVoucherWebhookTools(
+      server,
+      client,
+    );
+
+    /*
+     * NEW:
+     * Claude may acknowledge an event after processing it.
+     *
+     * This only changes the MCP queue.
+     * It does NOT modify the Lexware voucher.
+     */
+    registerPendingVoucherEventWriteTools(
+      server,
+    );
   }
 
   /*
-   * FINALIZE / SENSITIVE / IRREVERSIBLE TIER
+   * ============================================================
+   * FINALIZE / SENSITIVE TIER
+   * ============================================================
    *
-   * Keep disabled by default.
-   *
-   * General webhook create/delete stays here because arbitrary callback
-   * URLs are exfiltration-capable.
+   * Remains disabled by default.
    */
-  if (capabilities.finalize) {
-    registerDocumentFinalizeTools(server, client);
-    registerArticleDeleteTools(server, client);
 
-    registerEventSubscriptionWriteTools(server, client);
-    registerEventSubscriptionDeleteTools(server, client);
+  if (capabilities.finalize) {
+    registerDocumentFinalizeTools(
+      server,
+      client,
+    );
+
+    registerArticleDeleteTools(
+      server,
+      client,
+    );
+
+    /*
+     * General arbitrary webhook create/delete stays behind
+     * FINALIZE because arbitrary external callback URLs are
+     * exfiltration-capable.
+     */
+    registerEventSubscriptionWriteTools(
+      server,
+      client,
+    );
+
+    registerEventSubscriptionDeleteTools(
+      server,
+      client,
+    );
   }
 }

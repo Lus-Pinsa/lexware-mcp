@@ -22,10 +22,6 @@ import {
 
 /**
  * Voucher types belonging to Lexware bookkeeping vouchers.
- *
- * These are intentionally limited to bookkeeping voucher types.
- * Sales documents such as quotations or normal invoice resources
- * are not part of this reconciliation.
  */
 const RECONCILE_VOUCHER_TYPES = [
   "purchaseinvoice",
@@ -38,18 +34,30 @@ type ReconcileVoucherType =
   (typeof RECONCILE_VOUCHER_TYPES)[number];
 
 /**
- * Safely read the id from a voucherlist row.
+ * Convert a voucherlist row into a generic record.
+ *
+ * This keeps the reconciliation tool independent from whether
+ * every Lexware response field is explicitly declared in the
+ * local VoucherlistEntry TypeScript interface.
  */
-function voucherId(
+function voucherRecord(
   row: VoucherlistEntry,
+): Record<string, unknown> {
+  return row as unknown as Record<
+    string,
+    unknown
+  >;
+}
+
+/**
+ * Safely read a string field.
+ */
+function stringField(
+  row: VoucherlistEntry,
+  key: string,
 ): string {
   const value =
-    (
-      row as unknown as Record<
-        string,
-        unknown
-      >
-    ).id;
+    voucherRecord(row)[key];
 
   return typeof value === "string"
     ? value
@@ -57,26 +65,114 @@ function voucherId(
 }
 
 /**
- * Safely read createdDate from a voucherlist row.
- *
- * Keeping this defensive means the reconciliation tool does not
- * depend on createdDate being explicitly declared in the local
- * VoucherlistEntry TypeScript interface.
+ * Safely read a number field.
+ */
+function numberField(
+  row: VoucherlistEntry,
+  key: string,
+): number | undefined {
+  const value =
+    voucherRecord(row)[key];
+
+  return typeof value === "number"
+    ? value
+    : undefined;
+}
+
+/**
+ * Safely read the voucher id.
+ */
+function voucherId(
+  row: VoucherlistEntry,
+): string {
+  return stringField(
+    row,
+    "id",
+  );
+}
+
+/**
+ * Safely read createdDate.
  */
 function voucherCreatedDate(
   row: VoucherlistEntry,
 ): string {
-  const value =
-    (
-      row as unknown as Record<
-        string,
-        unknown
-      >
-    ).createdDate;
+  return stringField(
+    row,
+    "createdDate",
+  );
+}
 
-  return typeof value === "string"
-    ? value
-    : "";
+/**
+ * Build a compact, visible reconciliation candidate.
+ *
+ * This is intentionally duplicated into the text response because
+ * some MCP clients do not visibly expose structuredContent.
+ */
+function reconciliationCandidateDetail(
+  row: VoucherlistEntry,
+) {
+  return {
+    id:
+      stringField(
+        row,
+        "id",
+      ),
+
+    voucherType:
+      stringField(
+        row,
+        "voucherType",
+      ),
+
+    voucherNumber:
+      stringField(
+        row,
+        "voucherNumber",
+      ),
+
+    voucherDate:
+      stringField(
+        row,
+        "voucherDate",
+      ),
+
+    createdDate:
+      stringField(
+        row,
+        "createdDate",
+      ),
+
+    updatedDate:
+      stringField(
+        row,
+        "updatedDate",
+      ),
+
+    contactName:
+      stringField(
+        row,
+        "contactName",
+      ),
+
+    totalAmount:
+      numberField(
+        row,
+        "totalAmount",
+      ),
+
+    currency:
+      stringField(
+        row,
+        "currency",
+      ),
+
+    voucherStatus:
+      stringField(
+        row,
+        "voucherStatus",
+      ),
+  };
 }
 
 /**
@@ -106,7 +202,7 @@ function voucherCreatedDate(
  * - have disappeared from RAM because Render restarted,
  * - or genuinely have been missed by the webhook.
  *
- * This conservative behaviour is intentional:
+ * Conservative behaviour is intentional:
  *
  * Prefer resurfacing an already reviewed voucher over silently
  * losing a newly created voucher.
@@ -163,9 +259,7 @@ export function registerVoucherReconciliationReadTools(
       maxPagesPerType,
     }) => {
       /*
-       * Lexware is the Source of Truth.
-       *
-       * Fetch recent bookkeeping vouchers by createdDate.
+       * Lexware remains the Source of Truth.
        */
       const recentVouchers:
         VoucherlistEntry[] = [];
@@ -181,13 +275,19 @@ export function registerVoucherReconciliationReadTools(
 
       const PAGE_SIZE = 250;
 
+      /*
+       * Load all recent bookkeeping voucher types.
+       */
       for (
         const voucherType of
           RECONCILE_VOUCHER_TYPES
       ) {
         let page = 0;
+
         let pagesScanned = 0;
+
         let totalElements = 0;
+
         let truncated = false;
 
         for (;;) {
@@ -204,12 +304,14 @@ export function registerVoucherReconciliationReadTools(
                   "any",
 
                 createdDateFrom,
+
                 createdDateTo,
 
                 sort:
                   "createdDate,DESC",
 
                 page,
+
                 size:
                   PAGE_SIZE,
               },
@@ -247,10 +349,7 @@ export function registerVoucherReconciliationReadTools(
       }
 
       /*
-       * Defensive deduplication.
-       *
-       * A voucher should normally occur only once, but the id is
-       * the authoritative identifier.
+       * Defensive deduplication by Lexware voucher id.
        */
       const uniqueRecent =
         new Map<
@@ -275,6 +374,9 @@ export function registerVoucherReconciliationReadTools(
         );
       }
 
+      /*
+       * Newest vouchers first.
+       */
       const recent =
         [
           ...uniqueRecent.values(),
@@ -287,9 +389,9 @@ export function registerVoucherReconciliationReadTools(
         );
 
       /*
-       * Current RAM queue.
+       * Read current RAM Pending Queue.
        *
-       * Reading only.
+       * No mutation.
        */
       const pending =
         listPendingVoucherEvents();
@@ -313,8 +415,7 @@ export function registerVoucherReconciliationReadTools(
         );
 
       /*
-       * Recent Lexware vouchers which are still represented
-       * in the current Pending Queue.
+       * Recent Lexware vouchers still represented in queue.
        */
       const representedInPendingQueue =
         recent.filter(
@@ -325,12 +426,12 @@ export function registerVoucherReconciliationReadTools(
         );
 
       /*
-       * Recent Lexware vouchers which are NOT currently
-       * represented in RAM.
+       * Recent Lexware vouchers missing from current RAM queue.
        *
-       * IMPORTANT:
+       * These are candidates only.
        *
-       * These are candidates, not confirmed webhook failures.
+       * They are NOT automatically treated as missed webhook
+       * events.
        */
       const reconciliationCandidates =
         recent.filter(
@@ -341,11 +442,8 @@ export function registerVoucherReconciliationReadTools(
         );
 
       /*
-       * Pending events outside the requested Lexware date window.
-       *
-       * This is useful for spotting older queue items which still
-       * require review but are intentionally outside this
-       * reconciliation query.
+       * Pending events not included in the queried Lexware
+       * creation-date window.
        */
       const pendingOutsideRecentWindow =
         pending.filter(
@@ -355,6 +453,9 @@ export function registerVoucherReconciliationReadTools(
             ),
         );
 
+      /*
+       * Did any voucher type hit the page safety limit?
+       */
       const truncated =
         Object.values(
           perType,
@@ -362,6 +463,52 @@ export function registerVoucherReconciliationReadTools(
           (entry) =>
             entry.truncated,
         );
+
+      /*
+       * Create simplified candidate data.
+       *
+       * This is returned in structuredContent AND printed in the
+       * visible text response.
+       */
+      const candidateDetails =
+        reconciliationCandidates.map(
+          reconciliationCandidateDetail,
+        );
+
+      const candidateTextLines =
+        candidateDetails.length === 0
+          ? [
+              "Reconciliation candidate details: NONE.",
+            ]
+          : [
+              "Reconciliation candidate details:",
+              ...candidateDetails.map(
+                (
+                  candidate,
+                  index,
+                ) =>
+                  [
+                    `[${index + 1}]`,
+                    `id=${candidate.id || "DATA NOT AVAILABLE"}`,
+                    `voucherType=${candidate.voucherType || "DATA NOT AVAILABLE"}`,
+                    `voucherNumber=${candidate.voucherNumber || "DATA NOT AVAILABLE"}`,
+                    `contactName=${candidate.contactName || "DATA NOT AVAILABLE"}`,
+                    `totalAmount=${
+                      candidate.totalAmount ??
+                      "DATA NOT AVAILABLE"
+                    } ${
+                      candidate.currency ||
+                      ""
+                    }`.trim(),
+                    `voucherStatus=${candidate.voucherStatus || "DATA NOT AVAILABLE"}`,
+                    `voucherDate=${candidate.voucherDate || "DATA NOT AVAILABLE"}`,
+                    `createdDate=${candidate.createdDate || "DATA NOT AVAILABLE"}`,
+                    `updatedDate=${candidate.updatedDate || "DATA NOT AVAILABLE"}`,
+                  ].join(
+                    " | ",
+                  ),
+              ),
+            ];
 
       const warning =
         "CONSERVATIVE RECONCILIATION: A voucher listed under reconciliationCandidates is not proof that a webhook was missed. " +
@@ -379,6 +526,7 @@ export function registerVoucherReconciliationReadTools(
           filters: {
             createdDateFrom,
             createdDateTo,
+
             voucherTypes:
               RECONCILE_VOUCHER_TYPES,
           },
@@ -421,6 +569,9 @@ export function registerVoucherReconciliationReadTools(
 
           reconciliationCandidates,
 
+          reconciliationCandidateDetails:
+            candidateDetails,
+
           pendingOutsideRecentWindow,
 
           warning,
@@ -429,17 +580,35 @@ export function registerVoucherReconciliationReadTools(
         content: text(
           [
             "Lexware voucher reconciliation completed (READ-ONLY).",
+
             `Creation window: ${createdDateFrom} → ${createdDateTo ?? "open"}.`,
+
             `Recent Lexware vouchers: ${recent.length}.`,
+
             `Current Pending Queue events: ${pending.length}.`,
+
             `Still represented in Pending Queue: ${representedInPendingQueue.length}.`,
+
             `Reconciliation candidates not currently in queue: ${reconciliationCandidates.length}.`,
+
             `Pending events outside queried window: ${pendingOutsideRecentWindow.length}.`,
+
+            `truncated: ${truncated}.`,
+
             truncated
               ? "WARNING: Page safety cap reached for at least one voucher type; result may be incomplete."
               : "Pagination complete for all queried voucher types.",
+
+            "",
+
+            ...candidateTextLines,
+
+            "",
+
             warning,
-          ].join("\n"),
+          ].join(
+            "\n",
+          ),
         ),
       };
     },

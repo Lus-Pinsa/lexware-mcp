@@ -136,15 +136,13 @@ export function createAccessTokenVerifier(oauth: OAuthSettings, deps: VerifierDe
         ...(oauth.verifyAudience ? { audience: audiences } : {}),
       }));
 
+      // No user identifiers (sub/email) here: logs must stay free of PII (AGENTS.md).
       console.error("[lexware-mcp] OAuth token verified:", {
         iss: payload.iss,
         aud: payload.aud,
-        sub: payload.sub,
         client_id: payload.client_id,
         azp: payload.azp,
         scope: payload.scope,
-        email: payload.email,
-        email_verified: payload.email_verified,
       });
     } catch (err) {
       console.error("[lexware-mcp] OAuth jwtVerify failed:", err instanceof Error ? err.message : err);

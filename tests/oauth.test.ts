@@ -1,5 +1,5 @@
 import * as jose from "jose";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import {
   createAccessTokenVerifier,
   isEmailDomainAllowed,
@@ -174,5 +174,19 @@ describe("createAccessTokenVerifier", () => {
     });
     const token = await sign({ sub: "u" });
     await expect(verify(token)).rejects.toThrow(/domain is not permitted/);
+  });
+
+  it("never logs user identifiers (email/sub) of a verified token", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const verify = createAccessTokenVerifier(settings({ allowedEmailDomains: ["example.com"] }), { jwks });
+      const token = await sign({ sub: "user-sub-123", email: "person@example.com", email_verified: true });
+      await verify(token);
+      const logged = JSON.stringify(spy.mock.calls);
+      expect(logged).not.toContain("person@example.com");
+      expect(logged).not.toContain("user-sub-123");
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

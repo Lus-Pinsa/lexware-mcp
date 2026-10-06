@@ -6,6 +6,31 @@ PR: https://github.com/Lus-Pinsa/lexware-mcp/pull/2 (Draft, **nicht gemergt**)
 
 ---
 
+## STAND MERGE-READINESS (Phase-1-Abschluss nach ChatGPT-Audit)
+
+Dieser Abschnitt ersetzt bei Widersprüchen die älteren Angaben weiter unten.
+
+- **Status: GELB. PR #2 noch NICHT mergen.** Der Foundation-Code ist getestet und CodeQL ist grün. Die Merge-Bedingungen
+  aus der Definition of Done hängen aber an Owner-Aktionen, die kein Agent ausführen kann.
+- **Neu in diesem Abschluss:**
+  - Per Test belegt: `LEXWARE_READ_ONLY=true` entfernt genau die 16 zustandsändernden Tools und erhält alle Lese-Tools.
+    Der Webhook-Empfänger hängt nicht an den Tiers.
+  - Status-Bezeichnungen präzisiert: 11 Business-Boards stehen auf **STRUCTURE READY** (nur Struktur, nicht operativ),
+    Daily COO auf **PARTIAL**. Eine Registry-Regel verhindert Fehlmarkierungen.
+  - Separater Dependency-PR [Lus-Pinsa/lexware-mcp#3](https://github.com/Lus-Pinsa/lexware-mcp/pull/3), stacked auf
+    #2: critical und alle high behoben, Audit in CI grün. Es bleibt 1 low (esbuild, Windows-Dev-Server). Unabhängiger
+    Security-Review: PASS WITH RISKS.
+  - Owner-Checkliste: `ai-company/audit/2026-10-06-owner-checklist.md`.
+- **Merge-Blocker (Owner):**
+  1. Dependency Graph aktivieren.
+  2. Ruleset `ai-company/github/ruleset-main.json` importieren.
+  3. Auf Render `LEXWARE_READ_ONLY=true` setzen.
+  4. PR #3 prüfen und freigeben. Reihenfolge: erst #2, dann #3 mit Base `main`. Alternativ #3 in #2 übernehmen.
+- **Nach Owner-Freigabe:** Härtung des Guard-Hooks (`AI_COMPANY_GATE_MAINTENANCE=1`), siehe `2026-10-06-final-audit.md`.
+- **Tests:** 221/221 grün.
+
+---
+
 ## EXECUTIVE SUMMARY
 
 **Was wurde gebaut?** Eine schlanke, CI-geprüfte Multi-Agent-Foundation in Claude Code:
@@ -149,7 +174,7 @@ deploy-verifier, knowledge-steward, technology-radar, finance-lead, finance-audi
   Korrektur: Auf `3a69a7e` bis `0533a05` war der CodeQL-Code-Scanning-Check **rot**, mit 1 High (`js/file-system-race`) im
   neuen Scanner. Behoben in `96c144b`.
 - **Branch Rules:** **keine aktiv** (`main` ist ungeschützt). Die Vorlage `ai-company/github/ruleset-main.json` braucht einen Import durch Luigi.
-- **Tests:** lokal 12 Dateien, **218/218 grün** (vorher 135 Tests, davon 7 rot)
+- **Tests:** lokal 12 Dateien, **221/221 grün** (vorher 135 Tests, davon 7 rot)
 
 ---
 
@@ -301,11 +326,11 @@ Kundenspezifisch sind Connectoren, die Zuordnung Capability → Tool, Sources of
 
 1. **Branch-Schutz fehlt.** Ruleset `ai-company/github/ruleset-main.json` importieren (Luigi).
 2. **Dependency Graph aktivieren** (Luigi). Danach wird der CI-Job `dependency-review` grün.
-3. **Prod-Dependency-Audit rot** (1 critical, 11 high, transitiv). Lösung über einen separaten Update-PR oder Dependabot
-   Security Updates, Freigabe durch Luigi.
+3. **Prod-Dependency-Audit rot auf PR #2** (1 critical, 11 high, transitiv, schon vorher vorhanden). **Gelöst im separaten
+   PR #3** (Audit dort grün). Merge braucht die Freigabe durch Luigi.
 4. **Render nicht prüfbar:** Domain-Freigabe in der Cloud-Umgebung oder Render-Connector (nur lesend). Entscheidung bei Luigi.
-5. **Entscheidung zur serverseitigen drafts-Write-Fläche** (`create-voucher`, `update-voucher`, `upload-*` sind in Produktion
-   über claude.ai-Chats erreichbar). Siehe `ai-company/policies/finance-write-gates.md`.
+5. **Serverseitig read-only absichern:** Auf Render `LEXWARE_READ_ONLY=true` setzen (Owner-Checkliste Punkt 3). Per Test
+   ist belegt, dass die Lese-Pipeline vollständig erhalten bleibt.
 6. **Gate-Härtung freigeben:** Der Hook-Patch aus dem Final Audit braucht `AI_COMPANY_GATE_MAINTENANCE=1` oder eine manuelle Änderung durch Luigi.
 
 ---
@@ -347,7 +372,7 @@ Basis `main@b601a6c`. Commits: `6ebe68d`, `163648c`, `50586f8`, `46be074`, `7657
   Eskalation) und `decideAction` (Phase-1-Verbote, fail-closed).
 - `ai-company/core/registry.ts` validiert die Konsistenz von Org, Profilen, Agent-Dateien und Customer Config, CI erzwingt das.
 
-**Tests.** `npm test`: 12 Dateien, 218/218 grün (lokal Node 22, CI Node 24). Davon neu:
+**Tests.** `npm test`: 12 Dateien, 221/221 grün (lokal Node 22, CI Node 24). Davon neu:
 - `tests/finance-policy.test.ts`: exakte Menge der zustandsändernden Tools in der Produktionskonfiguration,
   keine Finalize-, Delete- oder freien Webhook-Tools, READ_ONLY registriert nur readOnly-Tools,
   Reconcile und PDF-Text rufen keine Write-Methoden, Queue ist idempotent, Acknowledge ist rein lokal, Webhook-Tool mit festem Ziel.

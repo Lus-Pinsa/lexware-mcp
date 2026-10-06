@@ -47,6 +47,23 @@ Agenten-Änderungen gesperrt. Das ist so gewollt. Die folgenden Härtungen brauc
 6. Secret-Lesewege ergänzen: `gh auth token`, `/proc/*/environ`, `process.env` in `node -e`.
 7. Im Settings-Deny das CEO-`Agent`-Tool auf benannte Agenten beschränken (Syntax laut Claude-Code-Doku prüfen, PoC).
 
+### Status der Hook-Härtung beim Phase-1-Abschluss
+
+`AI_COMPANY_GATE_MAINTENANCE` ist in dieser Umgebung **nicht gesetzt**. Die Härtung wurde deshalb **nicht** ausgeführt. Der
+Hook wurde auch nicht umgangen. Nach Owner-Freigabe (Owner-Checkliste Punkt 4) wird jede Regel mit eigenem Test umgesetzt:
+
+| Regel | Test, der danach ergänzt wird |
+|---|---|
+| `git -C … push`, `git --git-dir … push` | blockiert, wenn das Ziel main ist oder ein Force-Push vorliegt |
+| `HEAD:refs/heads/main`, Refspecs in Anführungszeichen, `+refs/…` | blockiert |
+| `gh api …/merges`, `gh api …/pulls/<n>/merge` | blockiert |
+| Tool `Monitor` (führt Shell aus) | Matcher deckt Monitor ab; dieselben Bash-Regeln greifen |
+| Agent-Tool-Grenzen: `Agent` nur für registrierte Agenten, nicht `general-purpose` | blockiert `subagent_type: general-purpose` für den CEO-Pfad |
+| Lexware-Allowlist (`get-|list-|reconcile-|summarize-|render-|download-`) statt Denyliste | ein unbekanntes neues Lexware-Tool wird blockiert |
+| weitere Secret-Lesewege (`gh auth token`, `/proc/*/environ`, `process.env` in `node -e`) | blockiert |
+| geschützte Pfade gemäß CODEOWNERS (`.claude/agents|skills|rules`, `ai-company/core|policies`, Policy-Tests) | Edit/Write blockiert ohne Wartungsmodus |
+| False Positives (`2>/dev/null`, `>&2`, `=>`) | erlaubt |
+
 ## Restrisiken nach dem Audit (Kernpunkte)
 
 1. **Server-seitige Write-Fläche (höchstes Geschäftsrisiko):** In claude.ai-Chats mit dem Connector sind 15 Lexware-Write-Tools

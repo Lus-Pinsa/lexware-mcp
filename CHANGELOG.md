@@ -4,6 +4,31 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **LU'S expense read pipeline** (already deployed; documented here): signature-verified
+  `POST /webhooks/lexware` receiver (`LEXWARE_WEBHOOK_PUBLIC_KEY`, RSA-SHA512, fail-closed 503 without key)
+  that queues `voucher.created` events in an in-memory pending queue; read tools
+  `get-pending-voucher-events`, `reconcile-recent-vouchers` (queue vs. Lexware creation dates) and
+  `get-voucher-file-text` (original-PDF text via `pdf-parse` 2.4.5, page count, SHA-256); drafts-tier
+  `ensure-lus-voucher-webhook` (fixed target only, no URL/event input) and `acknowledge-voucher-event`
+  (local queue only).
+- **LU'S AI-company foundation** (`ai-company/`, `.claude/`): Cloud CEO skill/agent, 19 boards with
+  least-privilege profiles, independent reviewers, deterministic governance core (status certification,
+  review loop capped at 3 fix rounds, separation of duties, Phase-1 action policy), PreToolUse guard hook,
+  Claude Code deny/ask rules for all Lexware write tools, dependency-free secret/business-data scanner.
+- Tests: `tests/finance-policy.test.ts` (frozen production write surface, read-only guarantees of the
+  expense pipeline, pending-queue idempotency, fixed-target webhook tool) and `tests/governance.test.ts`.
+- CI: least-privilege `GITHUB_TOKEN`, governance typecheck, secret scan, separate prod-dependency audit,
+  dependency review, CodeQL; PR template; code owners for safety-gate files.
+
+### Fixed
+- **No PII in logs:** the OAuth verifier no longer logs `sub`, `email` or `email_verified` on every
+  request (regression test added).
+- Stale tests: tier-registration lists now include the LU'S tools; `pagedResult` expectations match the
+  row-exposing output.
+
 ## [0.1.7]
 
 ### Added

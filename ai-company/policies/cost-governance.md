@@ -15,7 +15,8 @@
    - `haiku`: deploy-verifier (einfache Health- und Log-Checks)
 5. **Parallelität nur bei echter Unabhängigkeit.** Der CEO startet parallele Agenten nur, wenn
    keine Daten- oder Dateiabhängigkeit besteht. Jeder Agent kostet Tokens.
-6. **Retry-Limit 3** verhindert teure Endlosschleifen. Das ist technisch gedeckelt.
+6. **Retry-Limit 3** verhindert teure Endlosschleifen. Im Governance-Kern (`runReviewLoop`) ist es im Code gedeckelt und
+   per Test belegt. In Live-Sessions setzt es der CEO laut Skill durch, dort ist es eine Prozessregel, kein Code-Zwang.
 
 ## Was laufende AI-Nutzung erzeugt
 

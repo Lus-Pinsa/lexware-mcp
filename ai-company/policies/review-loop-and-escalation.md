@@ -12,8 +12,9 @@ TASK → TEAM LEAD (Plan + Akzeptanzkriterien) → SPECIALIST → TEST ENGINEER
 
 - Bei REQUEST_CHANGES oder ROT geht die Arbeit zurück an den zuständigen Specialist, mit den Findings.
 - **Maximal 3 automatische Fix-Runden je Problem.** Danach gilt **BLOCKED**: Blocker dokumentieren,
-  Cloud CEO informieren, die erforderliche Entscheidung konkret benennen. Kein Endlos-Loop. Das Limit
-  ist im Code gedeckelt: `maxFixRounds` lässt sich nicht über 3 setzen.
+  Cloud CEO informieren, die erforderliche Entscheidung konkret benennen. Kein Endlos-Loop. In der
+  Referenzimplementierung ist das Limit im Code gedeckelt (`maxFixRounds` lässt sich nicht über 3 setzen).
+  In Live-Sessions setzt es der CEO-Skill als Prozessregel durch.
 - Ein Absturz oder Fehler eines Agenten zählt als gescheiterte Runde. Ein unbekannter Zustand ist nie GRÜN.
 
 ## Trennung der Aufgaben

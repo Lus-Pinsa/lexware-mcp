@@ -13,7 +13,8 @@ PR: https://github.com/Lus-Pinsa/lexware-mcp/pull/2 (Draft, **nicht gemergt**)
 - 19 Boards mit Leads, Workern und Reviewern, davon 16 sofort ausführbare Agentenrollen,
 - Least-Privilege-Profile,
 - ein deterministischer Governance-Kern (Status nur mit Nachweis, Ersteller ≠ Prüfer ≠ CI, Review-Loop
-  technisch auf 3 Fix-Runden gedeckelt, Eskalation, fail-closed Policy),
+  im Code auf 3 Fix-Runden gedeckelt, Eskalation, fail-closed Policy; in Live-Sessions setzt der CEO-Skill das als
+  Prozessregel durch),
 - technische Safety Gates für Agenten (`.claude/settings.json` mit Deny/Ask, PreToolUse-Guard-Hook),
 - Trennung Core ↔ Customer Config,
 - gehärtete CI,
@@ -35,8 +36,13 @@ die nie gelaufen war, und 7 veraltete, rote Tests.
 - Abhängigkeiten und Lockfile: unverändert.
 - Keine produktiven Writes, nichts nach `main` gemergt, keine kostenpflichtigen Dienste, keine Cron-Routinen.
 
+**Final Audit (3 unabhängige Prüfer):**
+- Security: PASS WITH RISKS.
+- QA/DoD: DONE WITH OPEN ITEMS (16/19 verifiziert, 3 teilweise).
+- Architektur: REQUEST_CHANGES nur als Phase-2-Backlog („blockiert V1 nicht“).
+
 **Gesamtstatus: GELB.** Die Foundation steht und ist getestet. Offen sind Owner-Aktionen (Branch-Schutz,
-Dependency Graph, Render-Zugang) und eine Entscheidung zur serverseitigen drafts-Write-Fläche.
+Dependency Graph, Render-Zugang, Härtung der Gate-Dateien) und eine Entscheidung zur serverseitigen drafts-Write-Fläche.
 
 ---
 
@@ -131,13 +137,19 @@ deploy-verifier, knowledge-steward, technology-radar, finance-lead, finance-audi
 | `76573d1` | ci: Härtung, CodeQL, CODEOWNERS, PR-Template |
 | `3a69a7e` | docs: Lexware-Stack und Foundation dokumentiert |
 | `5f9e8df` | docs(audit): Inventur und Orchestrierungstests |
-| (folgt) | docs(audit): Final Audit und dieser Bericht |
+| `0533a05` | docs(audit): Entwurf dieses Berichts |
+| `96c144b` | fix(secret-scan): CodeQL-High-Befund (TOCTOU) behoben |
+| (letzter Commit) | Audit-Korrekturen, Final-Audit-Protokoll, finaler Bericht. SHA: siehe PR. |
 
-- **CI (erste Actions-Läufe der Repo-Historie)** auf `3a69a7e` und `5f9e8df`:
-  build-test ✅ · secret-scan ✅ · docker ✅ · CodeQL ✅ · dependency-review ❌ (Dependency Graph im
-  Repo deaktiviert) · audit ❌ (transitive Altlasten, Lockfile unverändert gegenüber `main`)
+- **CI (erste Actions-Läufe der Repo-Historie).** Stand Head `96c144b`:
+  - grün: build-test, secret-scan, docker, CodeQL
+  - dependency-review ❌: Dependency Graph im Repo deaktiviert
+  - audit ❌: transitive Altlasten, Lockfile unverändert gegenüber `main`
+
+  Korrektur: Auf `3a69a7e` bis `0533a05` war der CodeQL-Code-Scanning-Check **rot**, mit 1 High (`js/file-system-race`) im
+  neuen Scanner. Behoben in `96c144b`.
 - **Branch Rules:** **keine aktiv** (`main` ist ungeschützt). Die Vorlage `ai-company/github/ruleset-main.json` braucht einen Import durch Luigi.
-- **Tests:** lokal 12 Dateien, **216/216 grün** (vorher 135 Tests, davon 7 rot)
+- **Tests:** lokal 12 Dateien, **218/218 grün** (vorher 135 Tests, davon 7 rot)
 
 ---
 
@@ -181,6 +193,16 @@ serverseitige Tiers. Kein Profil hat in Phase 1 Finance-, Prod- oder Deploy-Writ
 Idempotenz, Finance-Policy, Hook) · Secret- und Business-Data-Scan · Prod-Dependency-Audit · Dependency
 Review · CodeQL · `permissions: contents: read` · Guard-Hook (live belegt) · Settings-Deny (live belegt) ·
 CODEOWNERS · serverseitige Tiers (Finalize aus) · Webhook-Signaturprüfung · kein PII im OAuth-Log.
+
+**Lücken im Guard-Hook (Final Audit):**
+- Der Matcher deckt `Monitor`, `Grep`, `Glob` und `Agent` nicht ab.
+- `git -C … push` wird nicht erkannt.
+- Lexware-Regel als Denyliste statt Allowliste.
+- Agent-, Skill- und Core-Dateien sind ungeschützt.
+- False Positives bei `>`.
+
+Ein Patch-Vorschlag liegt in `ai-company/audit/2026-10-06-final-audit.md`. Die Umsetzung braucht Luigi im Wartungsmodus,
+weil der Hook seine eigenen Dateien schützt.
 
 **Nicht vorhanden:** Branch-Schutz/Ruleset (Owner) · Dependency Graph/Dependabot-Alerts (Owner) · natives
 Secret Scanning/Push Protection (nicht prüfbar, Owner) · Webhook-Tests, Replay-Schutz, organizationId-Abgleich ·
@@ -284,6 +306,7 @@ Kundenspezifisch sind Connectoren, die Zuordnung Capability → Tool, Sources of
 4. **Render nicht prüfbar:** Domain-Freigabe in der Cloud-Umgebung oder Render-Connector (nur lesend). Entscheidung bei Luigi.
 5. **Entscheidung zur serverseitigen drafts-Write-Fläche** (`create-voucher`, `update-voucher`, `upload-*` sind in Produktion
    über claude.ai-Chats erreichbar). Siehe `ai-company/policies/finance-write-gates.md`.
+6. **Gate-Härtung freigeben:** Der Hook-Patch aus dem Final Audit braucht `AI_COMPANY_GATE_MAINTENANCE=1` oder eine manuelle Änderung durch Luigi.
 
 ---
 
@@ -311,8 +334,8 @@ Connector „LU'S Lexware“ angebunden, Auth per OAuth 2.1. Phase 1 (dieser Auf
 Multi-Agent-Foundation ohne produktive Writes.
 
 **Zu auditieren.** PR https://github.com/Lus-Pinsa/lexware-mcp/pull/2 (Draft), Branch `claude/busy-knuth-0980fw`,
-Basis `main@b601a6c`. Commits: `6ebe68d`, `163648c`, `50586f8`, `46be074`, `76573d1`, `3a69a7e`, `5f9e8df`,
-dazu der Final-Report-Commit. Diff ohne Lockfile ca. 214 KB, Laufzeitcode nur in `src/oauth.ts` geändert.
+Basis `main@b601a6c`. Commits: `6ebe68d`, `163648c`, `50586f8`, `46be074`, `76573d1`, `3a69a7e`, `5f9e8df`, `0533a05`,
+`96c144b`, dazu der letzte Audit- und Report-Commit (SHA im PR). Diff ohne Lockfile ca. 214 KB, Laufzeitcode nur in `src/oauth.ts` geändert.
 
 **Tatsächliche Architektur.**
 - Claude Code als Laufzeit der Agenten.
@@ -324,7 +347,7 @@ dazu der Final-Report-Commit. Diff ohne Lockfile ca. 214 KB, Laufzeitcode nur in
   Eskalation) und `decideAction` (Phase-1-Verbote, fail-closed).
 - `ai-company/core/registry.ts` validiert die Konsistenz von Org, Profilen, Agent-Dateien und Customer Config, CI erzwingt das.
 
-**Tests.** `npm test`: 12 Dateien, 216/216 grün (lokal Node 22, CI Node 24). Davon neu:
+**Tests.** `npm test`: 12 Dateien, 218/218 grün (lokal Node 22, CI Node 24). Davon neu:
 - `tests/finance-policy.test.ts`: exakte Menge der zustandsändernden Tools in der Produktionskonfiguration,
   keine Finalize-, Delete- oder freien Webhook-Tools, READ_ONLY registriert nur readOnly-Tools,
   Reconcile und PDF-Text rufen keine Write-Methoden, Queue ist idempotent, Acknowledge ist rein lokal, Webhook-Tool mit festem Ziel.
@@ -332,8 +355,17 @@ dazu der Final-Report-Commit. Diff ohne Lockfile ca. 214 KB, Laufzeitcode nur in
   und 7 erlaubte Shell-Befehle), Settings, Scanner.
 - Zuvor 7 rote, veraltete Tests auf `main`, jetzt repariert.
 
-**CI.** Die ersten Actions-Läufe der Repo-Historie: build-test ✅, secret-scan ✅, docker ✅, CodeQL ✅,
-dependency-review ❌ (Dependency Graph deaktiviert), audit ❌ (transitive Advisories, Lockfile unverändert).
+**CI.** Die ersten Actions-Läufe der Repo-Historie. Auf `96c144b`: build-test ✅, secret-scan ✅, docker ✅, CodeQL ✅
+(davor 1 High-Befund im eigenen Scanner, behoben), dependency-review ❌ (Dependency Graph deaktiviert),
+audit ❌ (transitive Advisories, Lockfile unverändert).
+
+**Final Audit (Phase I, drei unabhängige Prüfer parallel).**
+- Security: PASS WITH RISKS.
+- QA/DoD: DONE WITH OPEN ITEMS (16/19 verifiziert, 3 teilweise: klare Rollen, Ersteller≠Prüfer bei Boards ohne
+  eigenen Reviewer, CI nicht voll grün).
+- Architektur: REQUEST_CHANGES als Phase-2-Backlog, blockiert V1 nicht.
+
+Umgesetzte Korrekturen und offener Hook-Patch: `ai-company/audit/2026-10-06-final-audit.md`.
 
 **Connector-Status.** GitHub VERIFIZIERT · LU'S Lexware VERIFIZIERT nur lesend (6 Read-Tools live) ·
 Render BLOCKIERT (Egress-Proxy der Agent-Umgebung, kein Render-Connector).
@@ -364,12 +396,17 @@ Audit-Log außerhalb von Git.
 **Bekannte Risiken.**
 1. Hook und Settings wirken **nur in Claude-Code-Sessions dieses Repos**. In claude.ai-Chats mit dem Connector
    sind 15 Lexware-Write-Tools erreichbar (Drafts-Tier), darunter das Buchen von Belegen.
-2. Der Hook arbeitet string-basiert, ist umgehbar (Obfuskation) und erzeugt False Positives. Er ist eine Leitplanke, keine Sandbox.
+2. Der Hook arbeitet string-basiert, ist umgehbar (u. a. `git -C … push`, das Monitor-Tool) und erzeugt False Positives.
+   Er ist eine Leitplanke, keine Sandbox, und fail-open, wenn Node fehlt oder ein Timeout greift.
 3. Läuft der CEO als Hauptsession, begrenzen ihn nur Hook, Settings und Skill, nicht seine Tool-Liste.
 4. Die RAM-Queue geht bei Restart oder Spin-down verloren. Reconciliation ist der Fallback.
 5. Fester LU'S-Callback in einem öffentlichen Repo.
 6. Transitive Dependency-Advisories.
 7. `[debug]`-Request-Log läuft immer (ohne PII).
 8. Prompt Injection über Lieferanten-PDF-Text in Sessions mit Write-Tools.
+9. Agent-Tool-Grenzen wurden in dieser Session nicht technisch erzwungen, weil die Agent-Typen erst nach einem Neustart laden.
+   Das CEO-`Agent`-Tool ist nicht auf benannte Agenten beschränkt. Reviewer haben `Bash`.
+10. Der Finance-Policy-Test erkennt nur korrekt annotierte Writes. Abgemildert durch eingefrorene Namenslisten je Tier in
+    `tests/tools.test.ts`.
 
 **Blocker.** Siehe Abschnitt OPEN BLOCKERS (1–5), alle mit Owner-Aktion oder Owner-Entscheidung.

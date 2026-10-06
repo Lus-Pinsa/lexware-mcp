@@ -37,6 +37,21 @@ const agents = loadAgentFiles();
 const customer = loadCustomer("lus");
 
 describe("registry", () => {
+  it("pins the retry limit to 3 in code AND in the org registry", () => {
+    expect(MAX_FIX_ROUNDS).toBe(3);
+    expect(org.governance.maxFixRounds).toBe(MAX_FIX_ROUNDS);
+  });
+
+  it("detects a planned reviewer whose fallback auditor is also a creator on that board", () => {
+    const broken = structuredClone(org);
+    const treasury = broken.boards.find((b) => b.id === "treasury")!;
+    expect("ref" in treasury.reviewer ? null : treasury.reviewer.agent).toBeNull();
+    treasury.workers[0].agent = "final-auditor";
+    treasury.workers[0].profile = "reviewer";
+    const v = validateRegistry({ org: broken, profiles, agents, customer });
+    expect(v.some((m) => m.includes('board "treasury": reviewer agent "final-auditor"'))).toBe(true);
+  });
+
   it("has no violations (boards, roles, profiles, agents, customer config)", () => {
     expect(validateRegistry({ org, profiles, agents, customer })).toEqual([]);
   });

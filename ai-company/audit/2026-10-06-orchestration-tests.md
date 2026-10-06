@@ -24,7 +24,7 @@ Der CEO hat in drei unabhängige Boards zerlegt, **parallel gestartet**, und dan
 **Ersteller ≠ Prüfer:** F4 hat F1–F3 nicht erstellt und prüfte gegen `git show HEAD:<pfad>`.
 
 **Reaktion des CEO auf die Befunde (Review-Loop):**
-- Veraltete Tests aktualisiert. Danach waren 216/216 Tests grün (Commit `6ebe68d`).
+- Veraltete Tests aktualisiert: 135/135 grün (Commit `6ebe68d`). Mit allen neuen Tests sind es auf HEAD 216/216.
 - PII-Log entfernt. Der Regressionstest schlägt auf dem alten Code nachweislich fehl und läuft auf dem Fix grün (`163648c`).
 - Fehlende Sicherheitstests ergänzt: `tests/finance-policy.test.ts` (`50586f8`).
 - Doku-Drift behoben (`3a69a7e`).
@@ -33,7 +33,8 @@ Der CEO hat in drei unabhängige Boards zerlegt, **parallel gestartet**, und dan
 
 ## G: Parallelitätstest
 
-Zwei unabhängige Aufgaben wurden in **einer** Nachricht gestartet (Start 11:52:46Z):
+Zwei unabhängige Aufgaben wurden in **einer** Nachricht gestartet. Den Startbefehl gab der CEO um 11:52:46Z, die Agenten
+meldeten ihren eigenen Start ca. 20 s später:
 
 | Task | Rolle | Start–Ende (UTC) | Ergebnis |
 |---|---|---|---|
@@ -88,6 +89,6 @@ Testdesign verwerfen oder deterministischen Sollwert definieren.* Das Repo blieb
 
 | Test | Ergebnis |
 |---|---|
-| Delegation (Eng + Sec + QA + unabhängiger Review) | **BESTANDEN** |
+| Delegation (Eng + Sec + QA + unabhängiger Review) | **BESTANDEN** (belegt: Prozess und Rollentreue; Tool-Grenzen per Anweisung, nicht technisch) |
 | Parallelität | **BESTANDEN** |
 | Failure / Retry-Limit / Eskalation | **BESTANDEN** (live und deterministisch) |

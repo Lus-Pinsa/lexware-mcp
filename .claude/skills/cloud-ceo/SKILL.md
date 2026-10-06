@@ -52,6 +52,9 @@ in the same message. Dependent tasks wait. Two builders never edit the same file
 Each delegation message contains: role (from org.json), goal, inputs, acceptance criteria,
 the output contract of the agent, and "max 3 fix rounds, then BLOCKED".
 
+Boards whose reviewer role has no agent yet (structure-only business boards): run the review with
+`final-auditor`, and cap the result at **GELB** until the board has its own data source and reviewer.
+
 ## 4. Review loop (max 3 rounds)
 ```
 TASK → LEAD (plan) → SPECIALIST → TEST ENGINEER → DOMAIN REVIEWER → SECURITY REVIEW

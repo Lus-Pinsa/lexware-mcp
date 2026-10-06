@@ -29,6 +29,7 @@ nehmen ab. Das hält Kosten, Rechte und Nachvollziehbarkeit beim CEO.
 | Operations | FOUNDATION READY (Struktur) | board-analyst | operations-auditor (geplant) | nein |
 | AI / Technology Radar | FOUNDATION READY | technology-radar | security-auditor | ja, manuell |
 
+`status` in `org.json` beschreibt die Foundation-Reife. Die operative Reife steht in der Spalte „Operativ heute“.
 „FOUNDATION READY (Struktur)“ bedeutet: Rollen, Rechte, KPIs, harte Grenzen und Review-Pfad sind
 definiert und CI-validiert. Es gibt aber noch **keine Datenquelle**, daher liefert das Board heute nur Konzept- und
 Lückenanalysen.
@@ -89,5 +90,8 @@ bei erheblicher Änderung Freigabe durch Luigi → Produktion. Quellen: `ai-comp
 
 Die KPIs je Board stehen in `org.json` (`kpis[].source` = benötigte Datenquelle). Ein KPI ist nur
 messbar, wenn seine Quelle in der Customer Config als verifiziert gilt (`kpiAvailability()` in
-`ai-company/core/registry.ts`). Heute sind für LU'S nur Finance-KPIs aus dem Accounting messbar.
-Alle anderen sind `DATA NOT AVAILABLE`. Keine erfundenen Metriken.
+`ai-company/core/registry.ts`). Heute haben für LU'S 20 von 51 KPIs eine verbundene Quelle
+(`accounting.read`, `code.read`). Davon hat aber nur Finance (und Engineering/Security/QA für `code.read`) einen
+Agenten mit Zugriff. KPIs von Costing, Purchasing oder Sales, die aus dem Accounting kommen, sind erst messbar,
+wenn diese Boards einen Agenten mit `accounting.read` bekommen. Alles andere: `DATA NOT AVAILABLE`.
+Keine erfundenen Metriken.

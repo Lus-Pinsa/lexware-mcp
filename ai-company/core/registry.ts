@@ -136,6 +136,9 @@ const REQUIRED_BOARDS = [
   "seo-growth", "sales", "operations", "technology-radar",
 ];
 
+/** Agent that executes reviewer roles which have no dedicated agent yet. */
+export const REVIEWER_FALLBACK_AGENT = "final-auditor";
+
 /** Strings that would tie the core to one customer or vendor (multi-tenant guard). */
 export const CORE_FORBIDDEN_PATTERN = /pinsa|pinsaboys|\blu['’]s\b|luigi|neunkirchen|lexware|lexoffice|lightspeed|zenchef|onrender/i;
 
@@ -179,8 +182,11 @@ export function validateRegistry(input: {
     } else {
       const creators = [b.lead, ...b.workers];
       if (creators.some((c) => c.id === reviewerId)) v.push(`board "${b.id}": reviewer is also a creator`);
-      if (reviewer.agent !== null && creators.some((c) => c.agent === reviewer.agent)) {
-        v.push(`board "${b.id}": reviewer shares agent "${reviewer.agent}" with a creator`);
+      // A planned reviewer (agent null) is executed by the final auditor; it must still be independent.
+      const reviewerAgent = reviewer.agent ?? REVIEWER_FALLBACK_AGENT;
+      if (!agentByName.has(reviewerAgent)) v.push(`board "${b.id}": reviewer agent "${reviewerAgent}" does not exist`);
+      if (creators.some((c) => c.agent === reviewerAgent)) {
+        v.push(`board "${b.id}": reviewer agent "${reviewerAgent}" is also used by a creator`);
       }
       const rp = profiles.profiles[reviewer.profile];
       if (rp && rp.domains.repoWrite !== "no") v.push(`board "${b.id}": reviewer profile "${reviewer.profile}" can write the repo`);

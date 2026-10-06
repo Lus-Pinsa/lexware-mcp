@@ -33,7 +33,7 @@
 | Connector | Status | Testmethode |
 |---|---|---|
 | **GitHub** | **VERIFIZIERT** | GitHub-MCP: `get_me`, `list_branches`, `list_workflows`, `list_workflow_runs`, `list_pull_requests`, `create_pull_request` (PR #2), `get_job_logs`. Push über git-Proxy auf den Feature-Branch. |
-| **LU'S Lexware** (Render-MCP) | **VERIFIZIERT (nur lesend)** | `get-profile` OK · `list-event-subscriptions`: genau 1 Abo `voucher.created` auf den festen Callback · `get-pending-voucher-events`: 0 Einträge · `reconcile-recent-vouchers` (seit 01.10.): 9 Belege, 9 Reconciliation-Kandidaten, nicht abgeschnitten · `get-voucher` OK · `get-voucher-file-text`: PDF erkannt, Text extrahiert, 2 Seiten, SHA-256 berechnet. **Keine Write-Tools aufgerufen.** |
+| **LU'S Lexware** (Render-MCP) | **VERIFIZIERT (nur lesend)** | `get-profile` OK · `list-event-subscriptions`: genau 1 Abo `voucher.created` auf den festen Callback · `get-pending-voucher-events`: 0 Einträge · `reconcile-recent-vouchers` (Fenster seit 01.10.): vollständig, nicht abgeschnitten · `get-voucher` OK · `get-voucher-file-text`: PDF erkannt, Text extrahiert, 2 Seiten, SHA-256 berechnet. **Keine Write-Tools aufgerufen.** |
 | **Render** (Infrastruktur) | **BLOCKIERT** | Kein Render-Connector in der Agent-Umgebung. Direktes HTTPS zu `lus-lexware-mcp.onrender.com` wurde vom Egress-Proxy der Cloud-Umgebung abgelehnt (`CONNECT tunnel failed, 403`). Lebendigkeit ist nur **indirekt** belegt, weil der Lexware-Connector antwortet. |
 
 ## Serverseitige Tier-Grenzen (aus der Tool-Liste des Connectors abgeleitet)
@@ -49,8 +49,7 @@
 - Die Queue war leer, obwohl am selben Tag ein neuer Beleg angelegt wurde. Das ist **kein Beweis** für einen verlorenen
   Webhook. Möglich sind ein Acknowledge oder ein Restart/Spin-down des RAM-Speichers. Die Reconciliation hat ihn korrekt
   als Kandidaten ausgewiesen.
-- Im Abgleichsfenster gibt es Belege mit identischer Lieferanten-Rechnungsnummer, also einen fachlichen Dubletten-Verdacht.
-  Die Prüfung gehört in Phase 2 (Finance). Hier wurde nichts verändert.
+- Fachliche Beobachtungen aus den Belegen wurden nur im Chat an Luigi berichtet, nicht ins öffentliche Repo geschrieben.
 
 ## Umgebung (für Reproduzierbarkeit)
 

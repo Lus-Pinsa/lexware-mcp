@@ -41,7 +41,9 @@ serverseitigen Tiers im lexware-mcp (`src/config.ts`, `src/tools/index.ts`,
 - Lexware-Produktion schreiben (Settings-Deny + Hook + Agent-Tool-Listen)
 - eigene Safety Gates entfernen: `.claude/settings.json`, `.claude/hooks/`, `.github/workflows/`
   und `CODEOWNERS` sind per Hook gesperrt. Änderungen daran gibt es nur, wenn ein Mensch
-  `AI_COMPANY_GATE_MAINTENANCE=1` in der Umgebung setzt, plus Owner-Review laut CODEOWNERS.
+  `AI_COMPANY_GATE_MAINTENANCE=1` in der Umgebung setzt. Gemergt wird ausschließlich durch Luigi; Agenten
+  können nicht mergen (Hook + Settings). Hinweis: Mit einem einzigen Maintainer verlangt das Ruleset
+  0 Approvals, CODEOWNERS dokumentiert deshalb Zuständigkeit, erzwingt aber keine zweite Person.
 
 ## Grenzen dieser Durchsetzung (ehrlich)
 
@@ -50,3 +52,9 @@ serverseitigen Tiers im lexware-mcp (`src/config.ts`, `src/tools/index.ts`,
   die serverseitige Tier-Konfiguration. Siehe `finance-write-gates.md`.
 - Läuft der Cloud CEO als Hauptsession (Skill statt `--agent`), hat er technisch die Tools
   der Hauptsession. Die Begrenzung erfolgt dann über Hook, Settings und Skill-Regeln, nicht über die Tool-Liste.
+- Das `Agent`-Tool des CEO ist nicht auf benannte Agenten beschränkt; er könnte einen `general-purpose`-
+  Subagenten mit allen Tools starten. Die Einschränkung auf registrierte Agenten ist für Phase 2 vorgesehen.
+- Reviewer-Profile erlauben `Bash` (für Tests). Damit könnten sie technisch Dateien schreiben; „editiert
+  nie“ beruht dort auf Anweisung.
+- Der Guard-Hook arbeitet string-basiert, ist umgehbar und erzeugt False Positives. Er ist eine Leitplanke,
+  keine Sandbox. Härtungsvorschlag: `ai-company/audit/2026-10-06-final-audit.md`.

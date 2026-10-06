@@ -1,5 +1,5 @@
 {
-  "$comment": "Core organisation of the AI company (customer-agnostic). No customer names, brands or vendor connectors here — those live in ai-company/customers/<id>/. Validated by tests/governance.test.ts. role.agent = Claude Code agent file in .claude/agents/ that executes the role today (null = planned role, executed on demand by the generic 'board-analyst' read-only agent or not at all).",
+  "$comment": "Core organisation of the AI company (customer-agnostic). No customer names, brands or vendor connectors here — those live in ai-company/customers/<id>/. Validated by tests/governance.test.ts. role.agent = Claude Code agent file in .claude/agents/ that executes the role today (null = planned role: worker/lead roles may be executed on demand by the generic read-only 'board-analyst'; a reviewer role with agent null is executed by 'final-auditor' so that creator != reviewer still holds — enforced by registry.ts).",
   "version": 1,
   "phase": "foundation",
   "governance": {
@@ -103,7 +103,7 @@
       "lead": { "id": "devops-lead", "title": "DevOps Lead", "profile": "lead", "agent": null },
       "workers": [
         { "id": "github-ci-agent", "title": "GitHub CI Agent", "profile": "reviewer", "agent": null },
-        { "id": "render-monitor", "title": "Hosting Monitor", "profile": "deploy-verifier", "agent": "deploy-verifier" },
+        { "id": "hosting-monitor", "title": "Hosting Monitor", "profile": "deploy-verifier", "agent": "deploy-verifier" },
         { "id": "deploy-verifier", "title": "Deploy Verifier", "profile": "deploy-verifier", "agent": "deploy-verifier" },
         { "id": "healthcheck-agent", "title": "Healthcheck Agent", "profile": "deploy-verifier", "agent": "deploy-verifier" },
         { "id": "runtime-log-reviewer", "title": "Runtime Log Reviewer", "profile": "deploy-verifier", "agent": "deploy-verifier" }

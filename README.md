@@ -28,12 +28,12 @@ Related projects — local (stdio) Lexware MCP servers:
 
 ## Capabilities
 
-60 tools across three tiers you enable via environment variables:
+65 tools across three tiers you enable via environment variables (40 read · 16 drafts · 9 finalize):
 
 | Tier | Default | What it covers |
 |------|---------|----------------|
-| **Read** | always on | Profile; contacts & articles (list/get); the voucherlist (plus `summarize-vouchers` for server-side totals); full documents (invoices, quotations, credit notes, order confirmations, delivery notes, dunnings, down-payment invoices, vouchers); **render any document type to PDF** and **download files/receipts** (returned inline as embedded resources); batch & type-dispatched reads (get-vouchers, get-document, get-voucher-file, get-document-file); payments; reference data (countries, payment conditions, posting categories, print layouts); recurring templates (get & list); event subscriptions; document deeplinks |
-| **Drafts/writes** (`LEXWARE_ENABLE_DRAFTS`) | on | Create **draft** invoices/quotations/credit-notes/order-confirmations/delivery-notes/dunnings (the Lexware API has no update endpoint for these — set every field, including payment terms, at creation); create & update contacts, articles, and **bookkeeping vouchers**; **upload files** and **attach receipts** to vouchers; create documents as **follow-ups** (`precedingSalesVoucherId`) |
+| **Read** | always on | Profile; contacts & articles (list/get); **LU'S expense pipeline**: `get-pending-voucher-events` (webhook queue), `reconcile-recent-vouchers` (queue vs. Lexware), `get-voucher-file-text` (original-PDF text + SHA-256); the voucherlist (plus `summarize-vouchers` for server-side totals); full documents (invoices, quotations, credit notes, order confirmations, delivery notes, dunnings, down-payment invoices, vouchers); **render any document type to PDF** and **download files/receipts** (returned inline as embedded resources); batch & type-dispatched reads (get-vouchers, get-document, get-voucher-file, get-document-file); payments; reference data (countries, payment conditions, posting categories, print layouts); recurring templates (get & list); event subscriptions; document deeplinks |
+| **Drafts/writes** (`LEXWARE_ENABLE_DRAFTS`) | on | Create **draft** invoices/quotations/credit-notes/order-confirmations/delivery-notes/dunnings (the Lexware API has no update endpoint for these — set every field, including payment terms, at creation); create & update contacts, articles, and **bookkeeping vouchers**; **upload files** and **attach receipts** to vouchers; create documents as **follow-ups** (`precedingSalesVoucherId`); LU'S: `ensure-lus-voucher-webhook` (creates only the fixed `voucher.created` subscription — no URL/event input) and `acknowledge-voucher-event` (local queue only) |
 | **Finalize** (`LEXWARE_ENABLE_FINALIZE`) | off | Issue **legally binding** finalized documents in one step via the dedicated `create-finalized-*` tools (confirmation-gated); irreversible article deletes; **manage webhook event subscriptions** (create + delete — a webhook streams financial events to an external URL, so it's opt-in). Enabling this tier also enables Drafts. |
 
 Set `LEXWARE_READ_ONLY=true` to force read-only (overrides the flags above).
@@ -69,7 +69,7 @@ neither set, the server refuses to start unless `MCP_ALLOW_UNAUTHENTICATED=true`
 ## Quick start (Docker)
 
 ```bash
-git clone https://github.com/marselsel/lexware-mcp && cd lexware-mcp
+git clone https://github.com/Lus-Pinsa/lexware-mcp && cd lexware-mcp
 cp .env.example .env          # set LEXWARE_API_KEY and MCP_AUTH_TOKEN
 docker compose up --build     # serves on http://localhost:8080/mcp
 ```
@@ -106,6 +106,7 @@ LEXWARE_API_KEY=... MCP_AUTH_TOKEN=... npm start
 | `LEXWARE_ENABLE_FINALIZE` | `false` | Enable finalize / legally-binding tools (also enables Drafts) |
 | `LEXWARE_API_BASE_URL` | `https://api.lexware.io` | API base URL |
 | `LEXWARE_APP_BASE_URL` | `https://app.lexware.de` | Web-app base for document deeplinks |
+| `LEXWARE_WEBHOOK_PUBLIC_KEY` | — | PEM public key used to verify `X-Lxo-Signature` on `POST /webhooks/lexware` (`\n` escapes allowed). Without it the webhook answers `503` (fail closed) |
 | `PORT` | `8080` | Listen port (your platform may inject this) |
 | `LEXWARE_DEBUG_LOGGING` | `false` | Verbose logs (never secrets/bodies) |
 
@@ -155,6 +156,12 @@ domain) is in [docs/cloud-run.md](docs/cloud-run.md).
 - `src/lexware/` — rate-limited (~2 req/s, token bucket), retry-aware client with safe error
   mapping; never retries non-idempotent POSTs on ambiguous failures (no duplicate documents).
 - `src/tools/` — tools registered conditionally by tier.
+- `src/oauth.ts` — OAuth 2.1 access-token verification (JWKS, issuer/audience, email-domain allow-list).
+- `POST /webhooks/lexware` (in `src/server.ts`) — signature-verified Lexware webhook; `voucher.created`
+  events go into an **in-memory** pending queue (`src/pending-voucher-events.ts`, lost on restart —
+  `reconcile-recent-vouchers` is the fallback against Lexware as source of truth).
+- `ai-company/` + `.claude/` — the LU'S multi-agent foundation (Cloud CEO, boards, governance, safety
+  gates); see [ai-company/README.md](ai-company/README.md).
 - `src/server.ts` — wires it together on the Skybridge Express server.
 
 ## Development

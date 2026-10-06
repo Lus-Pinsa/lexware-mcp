@@ -12,8 +12,10 @@
     "build:views": "skybridge build",
     "start": "node dist/server.js",
     "typecheck": "tsc -b --force",
+    "typecheck:governance": "tsc -p ai-company/tsconfig.json",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "secret-scan": "node ai-company/scripts/secret-scan.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

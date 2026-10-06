@@ -1,0 +1,20 @@
+{
+  "$comment": "Official sources watched by the AI / Technology Radar. reachableFromAgentEnv = result of the first radar run (2026-10-06) from the cloud agent environment.",
+  "lastRun": "2026-10-06",
+  "sources": [
+    { "topic": "Claude / Anthropic API release notes", "url": "https://platform.claude.com/docs/en/release-notes/overview", "reachableFromAgentEnv": true },
+    { "topic": "Claude Code changelog", "url": "https://code.claude.com/docs/en/changelog", "reachableFromAgentEnv": true },
+    { "topic": "Claude Code subagents", "url": "https://code.claude.com/docs/en/sub-agents", "reachableFromAgentEnv": true },
+    { "topic": "Claude Code hooks", "url": "https://code.claude.com/docs/en/hooks", "reachableFromAgentEnv": true },
+    { "topic": "MCP specification (GitHub mirror)", "url": "https://github.com/modelcontextprotocol/modelcontextprotocol", "reachableFromAgentEnv": true },
+    { "topic": "MCP specification", "url": "https://modelcontextprotocol.io/specification", "reachableFromAgentEnv": false },
+    { "topic": "GitHub changelog", "url": "https://github.blog/changelog/", "reachableFromAgentEnv": false },
+    { "topic": "GitHub Actions / security docs", "url": "https://docs.github.com/", "reachableFromAgentEnv": false },
+    { "topic": "Render changelog", "url": "https://render.com/changelog", "reachableFromAgentEnv": false },
+    { "topic": "Lexware Office API", "url": "https://developers.lexware.io/docs/", "reachableFromAgentEnv": false },
+    { "topic": "Lightspeed (POS) developer docs", "url": "https://developers.lightspeedhq.com/", "reachableFromAgentEnv": null },
+    { "topic": "Zenchef API", "url": "https://docs.zenchef.com/", "reachableFromAgentEnv": null },
+    { "topic": "Google Business Profile / Search Console API", "url": "https://developers.google.com/my-business", "reachableFromAgentEnv": null },
+    { "topic": "Meta / Instagram Graph API changelog", "url": "https://developers.facebook.com/docs/graph-api/changelog", "reachableFromAgentEnv": null }
+  ]
+}

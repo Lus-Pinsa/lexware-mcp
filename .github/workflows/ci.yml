@@ -4,12 +4,25 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+# Least privilege for the GITHUB_TOKEN; jobs that need more ask for it explicitly.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-test:
+    name: build-test (typecheck, tests, governance)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
@@ -17,14 +30,60 @@ jobs:
       - run: npm ci
       - name: Typecheck + build
         run: npm run build
-      - name: Test
+      - name: Typecheck AI-company governance core
+        run: npm run typecheck:governance
+      - name: Test (unit, finance policy, governance, guard hook)
         run: npm test
-      - name: Audit (production deps)
+
+  secret-scan:
+    name: secret-scan (credentials + business data)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - name: Scan tracked files
+        run: node ai-company/scripts/secret-scan.mjs
+
+  audit:
+    name: audit (production dependencies)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - name: Audit (production deps, high+)
         run: npm audit --omit=dev --audit-level=high
+
+  dependency-review:
+    name: dependency-review (new dependencies in PR)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
 
   docker:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Build image
         run: docker build -t lexware-mcp:ci .

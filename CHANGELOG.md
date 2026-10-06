@@ -23,6 +23,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - CI: least-privilege `GITHUB_TOKEN`, governance typecheck, secret scan, separate prod-dependency audit,
   dependency review, CodeQL; PR template; code owners for safety-gate files.
 
+### Security
+- **Dependency hardening:** semver-compatible updates of vulnerable transitive dependencies
+  (incl. critical `proxy-addr` 2.0.8, `qs`, `body-parser`, `fast-uri`, `ip-address`, `@hono/node-server`, `hono`,
+  `postcss`, `nanoid`, `source-map-js`, `browserslist`, `brace-expansion`) and a scoped override that gives
+  nodemon (skybridge dev-server peer) `chokidar@4`, removing the unpatched `braces` chain. Production audit
+  (`--audit-level=high`) is clean; one low advisory remains (esbuild, Windows dev server only). Analysis:
+  `ai-company/audit/2026-10-06-dependency-audit.md`.
+
 ### Fixed
 - **No PII in logs:** the OAuth verifier no longer logs `sub`, `email` or `email_verified` on every
   request (regression test added).

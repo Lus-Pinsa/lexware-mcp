@@ -35,5 +35,10 @@
   },
   "engines": {
     "node": ">=24.14.1"
+  },
+  "overrides": {
+    "nodemon": {
+      "chokidar": "^4.0.3"
+    }
   }
 }

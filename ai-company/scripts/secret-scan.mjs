@@ -10,7 +10,7 @@
  * Allow a reviewed false positive by adding `secret-scan:allow` on the same line.
  */
 import { execFileSync } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readFileSync } from "node:fs";
 
 export const RULES = [
   { id: "private-key", re: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/ },
@@ -65,11 +65,16 @@ if (isMain) {
   const findings = [];
   for (const file of files) {
     if (SKIP.some((re) => re.test(file))) continue;
+    let fd;
     try {
-      if (statSync(file).size > 2_000_000) continue;
-      findings.push(...scanText(file, readFileSync(file, "utf8")));
+      // Size check and read go through the same descriptor (no check-then-use race).
+      fd = openSync(file, "r");
+      if (fstatSync(fd).size > 2_000_000) continue;
+      findings.push(...scanText(file, readFileSync(fd, "utf8")));
     } catch {
       // deleted or unreadable file — nothing to scan
+    } finally {
+      if (fd !== undefined) closeSync(fd);
     }
   }
   for (const f of findings) console.error(`${f.file}:${f.line}: ${f.rule}`); // never print the matched value

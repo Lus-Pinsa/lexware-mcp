@@ -228,6 +228,16 @@ describe("loadFinanceSnapshot — read-only, budgeted, honest about completeness
     expect(snap.completeness.attachments).toMatchObject({ needed: 1, fetched: 1 });
   });
 
+  it.each([
+    ["rows on a list that claims zero pages", { content: [paidRow(3)], totalPages: 0, last: true }],
+    ["the final announced page says it is not the last", { content: [paidRow(3)], totalPages: 1, last: false }],
+  ])("contradictory paging (%s) is PARTIAL/INCONSISTENT_PAGING, never COMPLETE", async (_label, body) => {
+    const { client } = fakeLexware((path) => (path === "/v1/voucherlist" ? body : new LexwareApiError(404, "x")));
+    const snap = await loadFinanceSnapshot(client, { window: WINDOW, now: NOW, includeDetails: false, includePayments: false });
+    expect(snap.completeness).toMatchObject({ list: "PARTIAL", listReason: "INCONSISTENT_PAGING" });
+    expect(snap.records).toHaveLength(1);
+  });
+
   it("non-finite options fall back to safe defaults instead of disabling the limits", async () => {
     const { client } = fakeLexware(standardRoute([paidRow(3)]));
     const snap = await loadFinanceSnapshot(client, {

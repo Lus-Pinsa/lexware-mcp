@@ -67,13 +67,14 @@ export function sanitizeUntrustedText(input: unknown, opts: SanitizeOptions): Sa
  * syntax), markdown image/link syntax and URL schemes. Deterministic, so comparisons stay stable.
  */
 export function neutralizeMarkup(s: string): string {
+  // Order matters: scheme neutralization inserts "[:]", so the markdown-link breakers must run after it.
   return s
     .replace(/</g, "‹")
     .replace(/>/g, "›")
-    .replace(/!\[/g, "! [")
-    .replace(/\]\(/g, "] (")
     .replace(/(?<![A-Za-z0-9])(https?|ftps?|sftp|file|javascript|data|vbscript|mailto|wss?|intent|tel|sms|blob):/gi, "$1[:]")
-    .replace(/(?<![A-Za-z0-9])www\./gi, (m) => `${m.slice(0, 3)}[.]`);
+    .replace(/(?<![A-Za-z0-9])www\./gi, (m) => `${m.slice(0, 3)}[.]`)
+    .replace(/!\[/g, "! [")
+    .replace(/\]\(/g, "] (");
 }
 
 /**

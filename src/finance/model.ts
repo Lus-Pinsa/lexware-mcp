@@ -264,6 +264,7 @@ export type FileInspectionStatus =
   | "unsupported_file_type"
   | "parse_error"
   | "parse_timeout"
+  | "parser_busy"
   | "file_too_large";
 
 export interface AttachmentInspection {

@@ -179,6 +179,7 @@ const STATUS_LABEL: Record<FileInspectionResult["status"], string> = {
   unsupported_file_type: "UNSUPPORTED_FILE_TYPE",
   parse_error: "PARSE_ERROR",
   parse_timeout: "PARSE_TIMEOUT",
+  parser_busy: "PARSER_BUSY",
   file_too_large: "FILE_TOO_LARGE",
 };
 
@@ -227,6 +228,9 @@ export function fileTextResult(result: FileInspectionResult) {
       break;
     case "parse_timeout":
       body = ["", "TEXT NOT AVAILABLE", "", `PDF parsing exceeded the ${result.limits.parseTimeoutMs / 1000} s safety timeout and was aborted.`, NO_INFERENCE];
+      break;
+    case "parser_busy":
+      body = ["", "TEXT NOT AVAILABLE (parser busy)", "", "All PDF parser slots are in use. The file was not parsed; retry shortly. This says nothing about the file.", NO_INFERENCE];
       break;
     case "file_too_large":
       body = [

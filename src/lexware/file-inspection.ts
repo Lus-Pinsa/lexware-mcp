@@ -37,7 +37,14 @@ export const DEFAULT_FILE_LIMITS: FileInspectionLimits = Object.freeze({
 /** Heap limit of a parser worker. */
 export const PARSER_WORKER_MAX_OLD_GENERATION_MB = 256;
 /** Parser workers allowed at the same time; further requests fail fast instead of queueing. */
-export const MAX_CONCURRENT_PARSERS = 2;
+export const MAX_CONCURRENT_PARSERS = 1;
+/**
+ * Memory watchdog: the worker heap limit does not cover typed-array buffers (where pdf.js keeps decoded
+ * streams), so the main thread also watches the process RSS and terminates the parser once it has grown by
+ * more than this many MB since the parse started.
+ */
+export const PARSER_MAX_RSS_GROWTH_MB = 384;
+const WATCHDOG_POLL_MS = 100;
 
 /** Terminating/destroying a parser must never hang the request either. */
 const DESTROY_TIMEOUT_MS = 2_000;
@@ -52,7 +59,16 @@ export type InspectionStatus =
   | "unsupported_file_type"
   | "parse_error"
   | "parse_timeout"
+  | "parser_busy"
   | "file_too_large";
+
+/** All parser slots are in use; the file was not parsed. Retryable — says nothing about the file itself. */
+export class ParserBusyError extends Error {
+  constructor() {
+    super("PDF parser busy (concurrency limit reached); try again shortly");
+    this.name = "ParserBusyError";
+  }
+}
 
 export interface FileInspectionResult {
   readonly fileId: string;
@@ -119,59 +135,85 @@ function parserModulePaths(): { pdfParsePath: string; canvasFactoryPath: string 
   return modulePaths;
 }
 
-/** Default extractor: pdf-parse in an isolated, memory-limited worker thread; `destroy` terminates it. */
-export const workerPdfExtractor: PdfTextExtractor = (data, { maxPages, maxRawChars }) => {
-  if (activeParsers >= MAX_CONCURRENT_PARSERS) {
-    return {
-      result: Promise.reject(new Error("PDF parser busy (concurrency limit reached); try again shortly")),
-      destroy: async () => undefined,
-    };
-  }
-  activeParsers += 1;
-  // Copy into a standalone ArrayBuffer and transfer it, so the caller's Buffer stays intact.
-  const bytes = data.slice().buffer;
-  const worker = new Worker(PARSER_WORKER_SOURCE, {
-    eval: true,
-    workerData: { bytes, maxPages, maxRawChars, ...parserModulePaths() },
-    transferList: [bytes],
-    resourceLimits: { maxOldGenerationSizeMb: PARSER_WORKER_MAX_OLD_GENERATION_MB, maxYoungGenerationSizeMb: 32, stackSizeMb: 4 },
-    stdout: true,
-    stderr: true,
-  });
-  let released = false;
-  const release = () => {
-    if (!released) {
-      released = true;
-      activeParsers -= 1;
-    }
-  };
-  const result = new Promise<{ text: string; total: number; rawLength?: number }>((resolve, reject) => {
-    worker.once("message", (m: { ok: boolean; text?: string; total?: number; rawLength?: number; error?: string }) => {
-      if (m.ok) resolve({ text: m.text ?? "", total: typeof m.total === "number" ? m.total : Number.NaN, rawLength: m.rawLength });
-      else reject(new Error(m.error ?? "PDF parsing failed"));
-    });
-    worker.once("error", (err: Error & { code?: string }) => {
-      reject(
-        new Error(
-          err.code === "ERR_WORKER_OUT_OF_MEMORY" ? "PDF parsing exceeded the memory limit and was aborted" : err.message,
-        ),
-      );
-    });
-    worker.once("exit", (code) => {
-      release();
-      if (code !== 0) reject(new Error(`PDF parser stopped (exit code ${code})`));
-    });
-  });
-  return {
-    result,
-    destroy: async () => {
-      await worker.terminate().catch(() => undefined);
-      release();
-    },
-  };
-};
+export interface WorkerExtractorOptions {
+  /** RSS growth (MB) that aborts a parse. */
+  readonly maxRssGrowthMb?: number;
+  /** Watchdog poll interval (ms). */
+  readonly pollMs?: number;
+}
 
-/** Media type without parameters; anything that is not a plain `type/subtype` token is dropped (header is untrusted). */
+/**
+ * pdf-parse in an isolated worker thread: heap-limited, memory-watched, empty environment (no secrets), at most
+ * {@link MAX_CONCURRENT_PARSERS} at a time; `destroy` terminates it.
+ */
+export function createWorkerPdfExtractor(options: WorkerExtractorOptions = {}): PdfTextExtractor {
+  const maxGrowthBytes = (options.maxRssGrowthMb ?? PARSER_MAX_RSS_GROWTH_MB) * 1024 * 1024;
+  const pollMs = options.pollMs ?? WATCHDOG_POLL_MS;
+  return (data, { maxPages, maxRawChars }) => {
+    if (activeParsers >= MAX_CONCURRENT_PARSERS) {
+      return { result: Promise.reject(new ParserBusyError()), destroy: async () => undefined };
+    }
+    // Build everything that can throw synchronously BEFORE taking a slot, so a failure cannot leak it.
+    // Copy into a standalone ArrayBuffer and transfer it, so the caller's Buffer stays intact.
+    const bytes = data.slice().buffer;
+    const worker = new Worker(PARSER_WORKER_SOURCE, {
+      eval: true,
+      workerData: { bytes, maxPages, maxRawChars, ...parserModulePaths() },
+      transferList: [bytes],
+      env: {},
+      resourceLimits: { maxOldGenerationSizeMb: PARSER_WORKER_MAX_OLD_GENERATION_MB, maxYoungGenerationSizeMb: 32, stackSizeMb: 4 },
+      stdout: true,
+      stderr: true,
+    });
+    activeParsers += 1;
+    let released = false;
+    let watchdog: NodeJS.Timeout | undefined;
+    const release = () => {
+      if (watchdog) clearInterval(watchdog);
+      if (!released) {
+        released = true;
+        activeParsers -= 1;
+      }
+    };
+    const baselineRss = process.memoryUsage.rss();
+    const result = new Promise<{ text: string; total: number; rawLength?: number }>((resolve, reject) => {
+      watchdog = setInterval(() => {
+        if (process.memoryUsage.rss() - baselineRss > maxGrowthBytes) {
+          clearInterval(watchdog);
+          reject(new Error("PDF parsing exceeded the memory limit and was aborted"));
+          void worker.terminate().catch(() => undefined);
+        }
+      }, pollMs);
+      watchdog.unref();
+      worker.once("message", (m: { ok: boolean; text?: string; total?: number; rawLength?: number; error?: string }) => {
+        if (m.ok) resolve({ text: m.text ?? "", total: typeof m.total === "number" ? m.total : Number.NaN, rawLength: m.rawLength });
+        else reject(new Error(m.error ?? "PDF parsing failed"));
+      });
+      worker.once("error", (err: Error & { code?: string }) => {
+        reject(
+          new Error(
+            err.code === "ERR_WORKER_OUT_OF_MEMORY" ? "PDF parsing exceeded the memory limit and was aborted" : err.message,
+          ),
+        );
+      });
+      worker.once("exit", (code) => {
+        release();
+        if (code !== 0) reject(new Error(`PDF parser stopped (exit code ${code})`));
+      });
+    });
+    return {
+      result,
+      destroy: async () => {
+        await worker.terminate().catch(() => undefined);
+        release();
+      },
+    };
+  };
+}
+
+/** Default extractor used by inspectLexwareFile. */
+export const workerPdfExtractor: PdfTextExtractor = createWorkerPdfExtractor();
+
 function normalizeMimeType(contentType: string): string | null {
   const t = contentType.split(";")[0].trim().toLowerCase();
   return /^[a-z0-9][a-z0-9!#$&^_.+-]{0,63}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,63}$/.test(t) ? t : null;
@@ -282,7 +324,9 @@ export async function inspectLexwareFile(
 
     // Cut huge raw text before the (allocation-heavy) cleaning step.
     const rawCut = extracted.length > maxRawChars || (typeof rawLength === "number" && rawLength > extracted.length);
-    const rawText = extracted.length > maxRawChars ? extracted.slice(0, maxRawChars) : extracted;
+    let rawText = extracted.length > maxRawChars ? extracted.slice(0, maxRawChars) : extracted;
+    // Never end on a lone high surrogate after cutting by UTF-16 index.
+    if (rawText.length > 0 && /[\uD800-\uDBFF]$/.test(rawText)) rawText = rawText.slice(0, -1);
     const cleaned = cleanUntrustedText(rawText.trim(), { maxChars });
     // Availability is judged on the full cleaned text, not on what the cap leaves over (maxChars may be 0).
     const textAvailable = sanitizeUntrustedText(rawText, { maxChars: 1, singleLine: true }).cleanedLength > 0;
@@ -302,6 +346,7 @@ export async function inspectLexwareFile(
       returnedCharacters: Array.from(cleaned.text).length,
     };
   } catch (err) {
+    if (err instanceof ParserBusyError) return { ...common, status: "parser_busy" };
     const message = cleanUntrustedText(err instanceof Error ? err.message : String(err), {
       maxChars: MAX_PARSE_ERROR_CHARS,
       singleLine: true,

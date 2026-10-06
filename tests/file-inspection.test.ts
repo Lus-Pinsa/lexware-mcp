@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { deflateSync } from "node:zlib";
 import { describe, expect, it, vi } from "vitest";
 import { LexwareApiError, ResponseTooLargeError, UnsafeRequestPathError } from "../src/lexware/errors.js";
@@ -7,6 +9,7 @@ import {
   type PdfTextExtractor,
   inspectLexwareFile,
   MAX_CONCURRENT_PARSERS,
+  createWorkerPdfExtractor,
   workerPdfExtractor,
 } from "../src/lexware/file-inspection.js";
 import { fileTextResult } from "../src/tools/files.js";
@@ -257,18 +260,50 @@ describe("workerPdfExtractor — real pdf-parse in an isolated worker", () => {
     );
     await new Promise((r) => setTimeout(r, 50));
     const extra = await inspectLexwareFile(client(slow), "file-2", { maxCharacters: 1000, limits: { parseTimeoutMs: 800 } });
-    expect(extra.status).toBe("parse_error");
-    expect(extra.parseError).toMatch(/busy/i);
+    // Busy is its own retryable status: it says nothing about the file (hash is still computed).
+    expect(extra.status).toBe("parser_busy");
+    expect(extra.sha256).toBe(sha(slow));
+    expect(fileTextResult(extra).content[0].text).toContain("PARSER_BUSY");
     await Promise.all(running);
     // Slots are released afterwards.
     const after = await inspectLexwareFile(client(pdfWithStream("BT /F1 24 Tf 72 720 Td (ok) Tj ET")), "file-3", { maxCharacters: 1000 });
     expect(after.status).toBe("text_extracted");
   }, 30_000);
 
+  it("the memory watchdog aborts a parse whose decoded data grows the process beyond the limit", async () => {
+    const memoryBomb = pdfWithStream("BT /F1 1 Tf 0 0 Td (AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA) Tj ET\n".repeat(2_000_000), true);
+    const extractor = createWorkerPdfExtractor({ maxRssGrowthMb: 48, pollMs: 20 });
+    const started = Date.now();
+    const r = await inspectLexwareFile(client(memoryBomb), "file-1", { maxCharacters: 1000, limits: { parseTimeoutMs: 15_000 } }, extractor);
+    expect(r.status).toBe("parse_error");
+    expect(r.parseError).toMatch(/memory limit/);
+    expect(Date.now() - started).toBeLessThan(15_000);
+  }, 30_000);
+
+  it("parser workers get an empty environment (no API key or token inside the parser thread)", () => {
+    const src = readFileSync(join(process.cwd(), "src/lexware/file-inspection.ts"), "utf8");
+    expect(src).toMatch(/new Worker\(PARSER_WORKER_SOURCE, \{[\s\S]*?\benv: \{\},/);
+  });
+
+  it("a synchronous failure while starting a worker never leaks a parser slot", async () => {
+    const failing = Object.assign(new Uint8Array(16), {
+      slice() {
+        throw new Error("Array buffer allocation failed");
+      },
+    });
+    for (let i = 0; i < MAX_CONCURRENT_PARSERS + 2; i++) {
+      expect(() => workerPdfExtractor(failing, { maxPages: 1, maxRawChars: 10 })).toThrow(/allocation failed/);
+    }
+    const ok = await inspectLexwareFile(client(pdfWithStream("BT /F1 24 Tf 72 720 Td (still works) Tj ET")), "file-1", { maxCharacters: 1000 });
+    expect(ok.status).toBe("text_extracted");
+  }, 20_000);
+
   it("leaves the caller's buffer intact (bytes are copied before transfer)", async () => {
     const bytes = pdfWithStream("BT /F1 24 Tf 72 720 Td (copy) Tj ET");
     const before = sha(bytes);
-    await workerPdfExtractor(new Uint8Array(bytes), { maxPages: 1, maxRawChars: 100 }).result;
+    const job = workerPdfExtractor(new Uint8Array(bytes), { maxPages: 1, maxRawChars: 100 });
+    await job.result;
+    await job.destroy(); // releases the parser slot immediately (inspectLexwareFile always does this)
     expect(sha(bytes)).toBe(before);
   }, 20_000);
 });

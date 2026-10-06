@@ -132,3 +132,11 @@ describe("review round 1: additional smuggling and link vectors", () => {
     expect(neutralizeMarkup("Mustertel: 1")).toBe("Mustertel: 1");
   });
 });
+
+describe("review round 2: neutralization order", () => {
+  it("scheme neutralization cannot itself create a markdown link", () => {
+    const out = neutralizeMarkup("https:(//evil.example/?d=1) x](y) [a]:(b)");
+    expect(out).not.toContain("](");
+    expect(out).toContain("https[:] (//evil.example/?d=1)");
+  });
+});

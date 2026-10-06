@@ -560,3 +560,21 @@ describe("review round 1: QA gaps", () => {
     }
   });
 });
+
+describe("review round 2: sales document consistency", () => {
+  it("checks net + tax against the list gross when the document has no gross", () => {
+    const r = applySalesDocumentDetail(
+      row(invoiceRow(4, { totalAmount: 300 })),
+      invoiceDetail(4, { totalPrice: { currency: "EUR", totalNetAmount: 189, totalTaxAmount: 13.23 } }),
+      "invoice",
+      CTX,
+    );
+    expect(codes(r)).toContain("TOTALS_INCONSISTENT");
+  });
+
+  it("reports an invalid document file id", () => {
+    const r = applySalesDocumentDetail(row(invoiceRow()), invoiceDetail(4, { files: { documentFileId: "../evil" } }), "invoice", CTX);
+    expect(r.attachments).toMatchObject({ value: null, quality: "MISSING", reason: "INVALID_FORMAT" });
+    expect(codes(r)).toContain("ATTACHMENT_ID_INVALID");
+  });
+});

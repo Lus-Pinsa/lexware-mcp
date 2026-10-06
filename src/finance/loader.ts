@@ -237,8 +237,12 @@ export async function loadFinanceSnapshot(client: ReadOnlyLexwareClient, options
     const totalPages = typeof res.totalPages === "number" ? res.totalPages : null;
     const stop = res.content.length === 0 || res.last === true || (totalPages !== null && page + 1 >= totalPages);
     if (stop) {
-      // Fail closed on self-contradictory paging metadata (e.g. "last" or an empty page while more pages are announced).
-      if (totalPages !== null && page + 1 < totalPages) {
+      // Fail closed on self-contradictory paging metadata: "last"/an empty page while more pages are announced,
+      // rows on a list that claims zero pages, or the final announced page saying it is not the last.
+      const moreAnnounced = totalPages !== null && page + 1 < totalPages;
+      const rowsWithoutPages = totalPages === 0 && res.content.length > 0;
+      const notLastAtEnd = totalPages !== null && page + 1 >= totalPages && res.last === false && res.content.length > 0;
+      if (moreAnnounced || rowsWithoutPages || notLastAtEnd) {
         list = "PARTIAL";
         listReason = "INCONSISTENT_PAGING";
         errors.push({ stage: "list", status: null, kind: "inconsistent_paging", message: `page ${page} ended the list but totalPages is ${totalPages}` });

@@ -35,9 +35,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Security
 - **PDF input hardening** for `get-voucher-file-text` (and the finance loader): 10 MiB download limit (aborted
-  while streaming, re-checked after download), parsing in an isolated worker thread with a 256 MB heap limit that
-  is terminated after 15 s (a hostile PDF can no longer block the server), at most 2 parses at a time (fail fast
-  instead of queueing), first 20 pages only, capped text, and extracted text returned as UNTRUSTED content
+  while streaming, re-checked after download), parsing in an isolated worker thread (256 MB heap limit, empty
+  environment, terminated after 15 s or when the process memory grows by more than 384 MB — a hostile PDF can no
+  longer block or exhaust the server), one parse at a time (fail fast with `parser_busy` instead of queueing),
+  first 20 pages only, capped text, and extracted text returned as UNTRUSTED content
   (control/bidi/zero-width/tag/variation-selector characters removed, markup, URL schemes and `www.` links
   neutralized, nonce-delimited block with a fixed "data, not instructions" preamble).
 - **Lexware client:** request paths with `.`/`..` segments (incl. percent-encoded, encoded separators and `..;`),
@@ -49,7 +50,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `pageLimitApplied`, `untrustedContent`, `contentWarning`, `limits`. Behaviour changes: `mimeType` is normalized
   (parameters stripped, lower-cased, `null` if malformed), `extractedText` is sanitized/neutralized (e.g. `<` → `‹`,
   `https:` → `https[:]`), character counts are code points, and pdf-parse page markers are no longer included —
-  a scanned PDF without a text layer is now correctly reported as OCR_REQUIRED.
+  a scanned PDF without a text layer is now correctly reported as OCR_REQUIRED. New `extractionStatus` values: `parse_timeout`,
+  `parser_busy` (all parser slots in use; retryable, says nothing about the file) and `file_too_large`.
 - **Dependency hardening:** semver-compatible updates of vulnerable transitive dependencies
   (incl. critical `proxy-addr` 2.0.8, `qs`, `body-parser`, `fast-uri`, `ip-address`, `@hono/node-server`, `hono`,
   `postcss`, `nanoid`, `source-map-js`, `browserslist`, `brace-expansion`) and a scoped override that gives

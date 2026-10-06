@@ -333,6 +333,7 @@ export function recomputeIssues(record: FinanceRecord): FinanceRecord {
       if (status === "ocr_required" || status === "unsupported_file_type") add("ATTACHMENT_TEXT_UNAVAILABLE", "attachments");
       if (status === "file_too_large") add("ATTACHMENT_TOO_LARGE", "attachments");
       if (status === "parse_error" || status === "parse_timeout") add("ATTACHMENT_PARSE_FAILED", "attachments");
+      if (status === "parser_busy") add("ATTACHMENT_NOT_INSPECTED", "attachments");
     }
   }
 
@@ -663,8 +664,12 @@ export function applySalesDocumentDetail(
   ] as const) {
     if (read.precisionReduced) r = addEventIssue(r, "AMOUNT_PRECISION_REDUCED", field);
   }
-  if (isUsable(gross.field) && isUsable(net.field) && isUsable(tax.field)) {
-    if (net.field.value + tax.field.value !== gross.field.value) r = addEventIssue(r, "TOTALS_INCONSISTENT", "grossCents");
+  // Internal consistency of the document, and consistency with the (merged) gross used downstream.
+  if (isUsable(net.field) && isUsable(tax.field)) {
+    const sum = net.field.value + tax.field.value;
+    const documentGrossOff = isUsable(gross.field) && sum !== gross.field.value;
+    const listGrossOff = !isUsable(gross.field) && isUsable(r.grossCents) && sum !== r.grossCents.value;
+    if (documentGrossOff || listGrossOff) r = addEventIssue(r, "TOTALS_INCONSISTENT", "grossCents");
   }
 
   const taxConditions = isObject(raw.taxConditions) ? raw.taxConditions : {};
@@ -701,6 +706,9 @@ export function applySalesDocumentDetail(
 
   const files = isObject(raw.files) ? raw.files : {};
   const documentFileId = readId(files.documentFileId, source);
+  if (documentFileId.quality === "MISSING" && documentFileId.reason !== "FIELD_ABSENT") {
+    r = addEventIssue(r, "ATTACHMENT_ID_INVALID", "attachments");
+  }
   const attachments: FieldValue<ReadonlyArray<Attachment>> = isUsable(documentFileId)
     ? structured([{ fileId: documentFileId.value, inspection: null }], source)
     : missing(documentFileId.reason ?? "FIELD_ABSENT", source);

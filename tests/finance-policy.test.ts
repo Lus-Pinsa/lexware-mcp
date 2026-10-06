@@ -291,7 +291,20 @@ describe("Phase 2 finance truth layer stays read-only", () => {
     for (const f of files) {
       const src = readFileSync(f, "utf8");
       const rel = f.slice(root.length + 1);
-      for (const forbidden of [/\.post\s*\(/, /\.request\s*\(/, /postMultipart/, /\bfetch\s*\(/, /node:fs/, /child_process/, /\beval\s*\(/, /new Function/, /process\.env/]) {
+      for (const forbidden of [
+        /\.post\s*\(/,
+        /\.request\s*\(/,
+        /postMultipart/,
+        /\bfetch\s*\(/,
+        /node:fs/,
+        /child_process/,
+        /\beval\s*\(/,
+        /new Function/,
+        /process\.env/,
+        /\bimport\s*\(/, // dynamic import would bypass the import allowlist
+        /\brequire\s*\(/,
+        /^\s*import\s+["']/m, // side-effect import
+      ]) {
         expect({ file: rel, match: forbidden.test(src) }).toEqual({ file: rel, match: false });
       }
       for (const m of src.matchAll(/from\s+"([^"]+)"/g)) {

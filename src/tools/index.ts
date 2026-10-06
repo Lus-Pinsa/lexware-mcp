@@ -42,7 +42,14 @@ import {
 
 import { registerProfileTools } from "./profile.js";
 import { registerReferenceReadTools } from "./reference.js";
+import {
+  type RegisteredToolInfo,
+  type ServerRuntime,
+  registerServerInfoTool,
+  trackToolRegistrations,
+} from "./server-info.js";
 import { registerVoucherWriteTools } from "./vouchers.js";
+import { PROCESS_STARTED_AT } from "../build-info.js";
 
 /**
  * Register MCP tools according to resolved capability tiers.
@@ -50,11 +57,19 @@ import { registerVoucherWriteTools } from "./vouchers.js";
  * Only enabled tiers are advertised to Claude.
  */
 export function registerTools(
-  server: McpServer,
+  mcpServer: McpServer,
   client: LexwareClient,
   config: Config,
+  runtime: ServerRuntime = { env: process.env, startedAt: PROCESS_STARTED_AT },
 ): void {
   const { capabilities } = config;
+
+  /*
+   * Every registration below goes through this wrapper so `get-server-info` can report the exact set of
+   * tools this process exposes (evaluated when the tool is called, i.e. after all tiers are registered).
+   */
+  const registered: RegisteredToolInfo[] = [];
+  const server = trackToolRegistrations(mcpServer, registered);
 
   /*
    * ============================================================
@@ -96,6 +111,17 @@ export function registerTools(
   registerVoucherReconciliationReadTools(
     server,
     client,
+  );
+
+  /*
+   * Local, read-only introspection: build commit, tiers, registered tools.
+   * Does not call Lexware and never returns secrets.
+   */
+  registerServerInfoTool(
+    server,
+    config,
+    () => registered,
+    runtime,
   );
 
   /*

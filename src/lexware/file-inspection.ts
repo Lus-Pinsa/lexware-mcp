@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
-import { Worker } from "node:worker_threads";
+import { Worker, type WorkerOptions } from "node:worker_threads";
 
 import { cleanUntrustedText, sanitizeUntrustedText } from "../untrusted.js";
 import { ResponseTooLargeError, UnsafeRequestPathError } from "./errors.js";
@@ -143,6 +143,22 @@ export interface WorkerExtractorOptions {
 }
 
 /**
+ * Options for a parser thread: empty environment (no API key or token inside the parser), heap and stack limits,
+ * and its own stdout/stderr streams so nothing it prints reaches the server log. Exported for the isolation test.
+ */
+export function parserWorkerOptions(workerData: Record<string, unknown>, transferList: ArrayBuffer[]): WorkerOptions {
+  return {
+    eval: true,
+    workerData,
+    transferList,
+    env: {},
+    resourceLimits: { maxOldGenerationSizeMb: PARSER_WORKER_MAX_OLD_GENERATION_MB, maxYoungGenerationSizeMb: 32, stackSizeMb: 4 },
+    stdout: true,
+    stderr: true,
+  };
+}
+
+/**
  * pdf-parse in an isolated worker thread: heap-limited, memory-watched, empty environment (no secrets), at most
  * {@link MAX_CONCURRENT_PARSERS} at a time; `destroy` terminates it.
  */
@@ -156,15 +172,13 @@ export function createWorkerPdfExtractor(options: WorkerExtractorOptions = {}): 
     // Build everything that can throw synchronously BEFORE taking a slot, so a failure cannot leak it.
     // Copy into a standalone ArrayBuffer and transfer it, so the caller's Buffer stays intact.
     const bytes = data.slice().buffer;
-    const worker = new Worker(PARSER_WORKER_SOURCE, {
-      eval: true,
-      workerData: { bytes, maxPages, maxRawChars, ...parserModulePaths() },
-      transferList: [bytes],
-      env: {},
-      resourceLimits: { maxOldGenerationSizeMb: PARSER_WORKER_MAX_OLD_GENERATION_MB, maxYoungGenerationSizeMb: 32, stackSizeMb: 4 },
-      stdout: true,
-      stderr: true,
-    });
+    const worker = new Worker(
+      PARSER_WORKER_SOURCE,
+      parserWorkerOptions({ bytes, maxPages, maxRawChars, ...parserModulePaths() }, [bytes]),
+    );
+    // Discard parser output (pdf.js warnings can echo document content) instead of buffering it until exit.
+    worker.stdout.resume();
+    worker.stderr.resume();
     activeParsers += 1;
     let released = false;
     let watchdog: NodeJS.Timeout | undefined;

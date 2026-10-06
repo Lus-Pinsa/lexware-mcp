@@ -112,6 +112,13 @@ describe("LexwareClient — dot-segment guard", () => {
     "/v1/files/.\t./x",
     "/v1/files/.\n./x",
     "/v1/files/x\r",
+    "/v1/files/..%00",
+    "/v1/files/%00",
+    "/v1/files/a%0Ab",
+    "/v1/files/a%7F",
+    "/v1/files/%c0%ae%c0%ae",
+    "/v1/files/%zz",
+    "/v1/files/%E0%A4%A",
   ])(
     "refuses %j without sending a request",
     async (path) => {
@@ -122,6 +129,13 @@ describe("LexwareClient — dot-segment guard", () => {
       expect(fetchFn).not.toHaveBeenCalled();
     },
   );
+
+  it("still allows valid percent-encoding inside a segment", async () => {
+    const fetchFn = vi.fn(async () => new Response("{}", { headers: { "content-type": "application/json" } }));
+    const client = makeClient(fetchFn as unknown as typeof fetch);
+    await client.get(`/v1/contacts/${encodeURIComponent("a b-ä")}`);
+    expect(fetchFn).toHaveBeenCalledOnce();
+  });
 
   it("still allows dots inside a segment", async () => {
     const fetchFn = vi.fn(async () => new Response("{}", { headers: { "content-type": "application/json" } }));

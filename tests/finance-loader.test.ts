@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { loadFinanceSnapshot } from "../src/finance/loader.js";
 import type { LexwareClient } from "../src/lexware/client.js";
 import { LexwareApiError } from "../src/lexware/errors.js";
-import type { PdfTextExtractor } from "../src/lexware/file-inspection.js";
+import { ParserBusyError, type PdfTextExtractor } from "../src/lexware/file-inspection.js";
 import { FINANCE_READ_PATHS, createReadOnlyLexwareClient } from "../src/lexware/read-only-client.js";
 import {
   id,
@@ -289,5 +289,49 @@ describe("loadFinanceSnapshot — read-only, budgeted, honest about completeness
     });
     expect(calls[0].query).toMatchObject({ createdDateFrom: "2026-10-05", createdDateTo: "2026-10-06" });
     expect(snap.records.map((r) => r.id)).toEqual([id(2)]);
+  });
+});
+
+describe("review round 3: paging metadata, parser_busy accounting, locale-independent order", () => {
+  it.each([
+    ["negative", -1],
+    ["fractional", 0.5],
+    ["not a number", "3"],
+    ["NaN", Number.NaN],
+  ])("a %s totalPages is INVALID_RESPONSE and no row is trusted", async (_label, totalPages) => {
+    const body = { content: [paidRow(3)], totalPages };
+    const { client } = fakeLexware((path) => (path === "/v1/voucherlist" ? body : new LexwareApiError(404, "x")));
+    const snap = await loadFinanceSnapshot(client, { window: WINDOW, now: NOW, includeDetails: false, includePayments: false });
+    expect(snap.completeness).toMatchObject({ list: "FAILED", listReason: "INVALID_RESPONSE" });
+    expect(snap.records).toHaveLength(0);
+    expect(snap.errors[0]).toMatchObject({ stage: "list", kind: "invalid_response" });
+  });
+
+  it("an invalid totalPages on a later page keeps the earlier rows and reports PARTIAL", async () => {
+    const route: Route = (path, query) => {
+      if (path !== "/v1/voucherlist") return new LexwareApiError(404, "x");
+      return query?.page === 0 ? page([paidRow(3)], 0, 3) : { content: [paidRow(4)], totalPages: -3 };
+    };
+    const snap = await loadFinanceSnapshot(fakeLexware(route).client, { window: WINDOW, now: NOW, includeDetails: false, includePayments: false });
+    expect(snap.completeness).toMatchObject({ list: "PARTIAL", listReason: "INVALID_RESPONSE" });
+    expect(snap.records.map((r) => r.id)).toEqual([id(3)]);
+  });
+
+  it("a parser_busy attachment is counted as skipped, not fetched, and the record says so", async () => {
+    const busy: PdfTextExtractor = () => ({ result: Promise.reject(new ParserBusyError()), destroy: async () => undefined });
+    const pdf = Buffer.from("%PDF-1.4 test");
+    const { client } = fakeLexware(standardRoute([paidRow(3)]), () => ({ data: pdf, contentType: "application/pdf" }));
+    const snap = await loadFinanceSnapshot(client, { window: WINDOW, now: NOW, inspectAttachments: true, extractor: busy });
+    expect(snap.records[0].attachments.value?.[0].inspection?.status).toBe("parser_busy");
+    expect(snap.completeness.attachments).toMatchObject({ needed: 1, fetched: 0, failed: 0, skippedBusy: 1 });
+    expect(snap.records[0].provenance.attachments).toBe("SKIPPED");
+    expect(snap.records[0].issues.map((i) => i.code)).toContain("ATTACHMENT_NOT_INSPECTED");
+  });
+
+  it("records on the same day are ordered by plain code units, not by the runtime locale", async () => {
+    const rows = [paidRow(3, { id: "b-1" }), paidRow(3, { id: "B-1" }), paidRow(3, { id: "a-1" })];
+    const { client } = fakeLexware((path) => (path === "/v1/voucherlist" ? page(rows) : new LexwareApiError(404, "x")));
+    const snap = await loadFinanceSnapshot(client, { window: WINDOW, now: NOW, includeDetails: false, includePayments: false });
+    expect(snap.records.map((r) => r.id)).toEqual(["B-1", "a-1", "b-1"]);
   });
 });

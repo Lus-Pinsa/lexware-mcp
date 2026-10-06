@@ -86,7 +86,8 @@ export interface Completeness {
   readonly categories: "LOADED" | "FAILED" | "NOT_NEEDED" | "SKIPPED_BUDGET";
   readonly details: StageCounts;
   readonly payments: StageCounts & { readonly notApplicable: number };
-  readonly attachments: StageCounts;
+  /** `skippedBusy`: not inspected because the PDF parser was busy with another request (retryable). */
+  readonly attachments: StageCounts & { readonly skippedBusy: number };
   readonly budget: { readonly maxRequests: number; readonly used: number; readonly exhausted: boolean };
   readonly duplicateRowsDropped: number;
   readonly outsideWindowDropped: number;
@@ -144,6 +145,11 @@ function describeError(stage: Stage, err: unknown, recordId?: string): LoadError
 function basisDay(record: FinanceRecord, basis: LoadWindow["basis"], timeZone: string): string | null {
   if (basis === "voucherDate") return isUsable(record.voucherDate) ? record.voucherDate.value : null;
   return isUsable(record.createdAt) ? dayInTimeZone(new Date(record.createdAt.value), timeZone) : null;
+}
+
+/** `totalPages` may be absent; when present it must be a non-negative integer, or the paging cannot be trusted. */
+function isValidTotalPages(v: unknown): boolean {
+  return v === undefined || v === null || (Number.isSafeInteger(v) && (v as number) >= 0);
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -217,10 +223,14 @@ export async function loadFinanceSnapshot(client: ReadOnlyLexwareClient, options
       }
       break;
     }
-    if (!isObject(res) || !Array.isArray(res.content)) {
+    if (!isObject(res) || !Array.isArray(res.content) || !isValidTotalPages(res.totalPages)) {
       list = page === 0 ? "FAILED" : "PARTIAL";
       listReason = "INVALID_RESPONSE";
-      errors.push({ stage: "list", status: null, kind: "invalid_response", message: "voucherlist response has no content array" });
+      const message =
+        isObject(res) && Array.isArray(res.content)
+          ? "voucherlist totalPages is not a non-negative integer"
+          : "voucherlist response has no content array";
+      errors.push({ stage: "list", status: null, kind: "invalid_response", message });
       break;
     }
     const c = ctx();
@@ -263,12 +273,13 @@ export async function loadFinanceSnapshot(client: ReadOnlyLexwareClient, options
     records.set(r.id, r);
   }
 
-  // Newest first, deterministic.
+  // Newest first, deterministic: plain code-unit order, independent of the runtime locale.
+  const cmp = (x: string, y: string) => (x < y ? -1 : x > y ? 1 : 0);
   const order = [...records.values()]
     .sort((a, b) => {
       const da = basisDay(a, window.basis, timeZone) ?? "";
       const db = basisDay(b, window.basis, timeZone) ?? "";
-      return da === db ? a.id.localeCompare(b.id) : db.localeCompare(da);
+      return da === db ? cmp(a.id, b.id) : cmp(db, da);
     })
     .map((r) => r.id);
   const financial = order.filter((id) => {
@@ -366,7 +377,7 @@ export async function loadFinanceSnapshot(client: ReadOnlyLexwareClient, options
   }
 
   // 5. Attachments (download + SHA-256 + text; optional, expensive).
-  const attachments = { needed: 0, fetched: 0, failed: 0, skippedBudget: 0 };
+  const attachments = { needed: 0, fetched: 0, failed: 0, skippedBudget: 0, skippedBusy: 0 };
   if (inspectAttachments) {
     const budgetedClient = {
       getBinary: (path: string, accept?: string, opts?: { maxBytes?: number }) =>
@@ -386,7 +397,13 @@ export async function loadFinanceSnapshot(client: ReadOnlyLexwareClient, options
             { maxCharacters: maxCharactersPerFile },
             options.extractor,
           );
-          attachments.fetched += 1;
+          if (result.status === "parser_busy") {
+            // Nothing was inspected; the file itself says nothing about the record.
+            attachments.skippedBusy += 1;
+            skipped = true;
+          } else {
+            attachments.fetched += 1;
+          }
           set(applyAttachmentInspection(get(id), result, ctx()));
         } catch (err) {
           if (err instanceof BudgetExhausted) {

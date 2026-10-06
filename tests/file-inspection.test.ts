@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { Worker } from "node:worker_threads";
 import { deflateSync } from "node:zlib";
 import { describe, expect, it, vi } from "vitest";
 import { LexwareApiError, ResponseTooLargeError, UnsafeRequestPathError } from "../src/lexware/errors.js";
@@ -10,6 +11,7 @@ import {
   inspectLexwareFile,
   MAX_CONCURRENT_PARSERS,
   createWorkerPdfExtractor,
+  parserWorkerOptions,
   workerPdfExtractor,
 } from "../src/lexware/file-inspection.js";
 import { fileTextResult } from "../src/tools/files.js";
@@ -280,9 +282,27 @@ describe("workerPdfExtractor — real pdf-parse in an isolated worker", () => {
     expect(Date.now() - started).toBeLessThan(15_000);
   }, 30_000);
 
-  it("parser workers get an empty environment (no API key or token inside the parser thread)", () => {
+  it("parser workers get an empty environment (no API key or token inside the parser thread)", async () => {
+    // The extractor builds its worker from parserWorkerOptions …
     const src = readFileSync(join(process.cwd(), "src/lexware/file-inspection.ts"), "utf8");
-    expect(src).toMatch(/new Worker\(PARSER_WORKER_SOURCE, \{[\s\S]*?\benv: \{\},/);
+    expect(src).toMatch(/new Worker\(\s*PARSER_WORKER_SOURCE,\s*parserWorkerOptions\(/);
+    expect(src.match(/new Worker\(/g)).toHaveLength(1);
+    // … and a real thread started with exactly those options sees no parent variable.
+    process.env.PARSER_ENV_CANARY = "canary-present";
+    try {
+      const probe =
+        "const { parentPort } = require('node:worker_threads');" +
+        "parentPort.postMessage({ keys: Object.keys(process.env).length, canary: process.env.PARSER_ENV_CANARY ?? 'absent' });";
+      const w = new Worker(probe, parserWorkerOptions({}, []));
+      const seen = await new Promise((resolve, reject) => {
+        w.once("message", resolve);
+        w.once("error", reject);
+      });
+      await w.terminate();
+      expect(seen).toEqual({ keys: 0, canary: "absent" });
+    } finally {
+      delete process.env.PARSER_ENV_CANARY;
+    }
   });
 
   it("a synchronous failure while starting a worker never leaks a parser slot", async () => {

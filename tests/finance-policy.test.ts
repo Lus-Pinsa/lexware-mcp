@@ -307,7 +307,7 @@ describe("Phase 2 finance truth layer stays read-only", () => {
       ]) {
         expect({ file: rel, match: forbidden.test(src) }).toEqual({ file: rel, match: false });
       }
-      for (const m of src.matchAll(/from\s+"([^"]+)"/g)) {
+      for (const m of src.matchAll(/from\s+["']([^"']+)["']/g)) {
         expect({ file: rel, import: m[1], allowed: allowedImport.test(m[1]) }).toEqual({ file: rel, import: m[1], allowed: true });
       }
     }

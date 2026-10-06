@@ -36,14 +36,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Security
 - **PDF input hardening** for `get-voucher-file-text` (and the finance loader): 10 MiB download limit (aborted
   while streaming, re-checked after download), parsing in an isolated worker thread (256 MB heap limit, empty
-  environment, terminated after 15 s or when the process memory grows by more than 384 MB — a hostile PDF can no
-  longer block or exhaust the server), one parse at a time (fail fast with `parser_busy` instead of queueing),
+  environment, output discarded, terminated after 15 s or when the process memory grows by more than 384 MB — a
+  hostile PDF no longer blocks the event loop, and its memory use is bounded by that watchdog; measured peak about
+  500 MB process RSS, so instance sizing still has to be confirmed), one parse at a time (fail fast with
+  `parser_busy` instead of queueing),
   first 20 pages only, capped text, and extracted text returned as UNTRUSTED content
   (control/bidi/zero-width/tag/variation-selector characters removed, markup, URL schemes and `www.` links
   neutralized, nonce-delimited block with a fixed "data, not instructions" preamble).
 - **Lexware client:** request paths with `.`/`..` segments (incl. percent-encoded, encoded separators and `..;`),
-  backslashes or TAB/CR/LF are refused before sending; a malformed `maxBytes` is refused instead of meaning
-  "unlimited".
+  backslashes, TAB/CR/LF, percent-encoded control characters (e.g. `%00`) or malformed/overlong percent-encoding
+  are refused before sending; a malformed `maxBytes` is refused instead of meaning "unlimited".
 
 ### Changed
 - `get-voucher-file-text` output: all previous `structuredContent` fields are kept; new fields `pagesParsed`,

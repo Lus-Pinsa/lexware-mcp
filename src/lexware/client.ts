@@ -45,11 +45,18 @@ export function assertSafeRequestPath(path: string): void {
   if (/[\\\t\r\n]/.test(path)) throw new UnsafeRequestPathError("path contains a backslash or control whitespace");
   const pathOnly = path.split(/[?#]/, 1)[0];
   for (const segment of pathOnly.split("/")) {
-    let decoded = segment;
+    let decoded: string;
     try {
       decoded = decodeURIComponent(segment);
     } catch {
-      // Malformed escapes stay as-is; they cannot form a dot segment.
+      // Malformed or overlong escapes (e.g. "%zz", "%c0%ae") have no meaning for a client; a server might still
+      // decode them leniently, so they are refused.
+      throw new UnsafeRequestPathError("path contains malformed percent-encoding");
+    }
+    for (const ch of decoded) {
+      const code = ch.codePointAt(0) ?? 0;
+      // Encoded control characters (e.g. "..%00") could be truncated or stripped by a server.
+      if (code < 0x20 || code === 0x7f) throw new UnsafeRequestPathError("path contains an encoded control character");
     }
     // Encoded separators (%2F, %5C) and ";" matrix parameters ("..;x") could form a dot segment on a server
     // that decodes or strips them, so every decoded sub-segment is checked.

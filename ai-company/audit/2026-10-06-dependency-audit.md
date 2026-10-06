@@ -1,6 +1,6 @@
 # Dependency-Hardening: Analyse je Advisory (06.10.2026)
 
-Branch `claude/dependency-hardening`. Er baut auf PR #2 auf, `main` bleibt unverändert.
+Branch `claude/dependency-hardening`, Basis `main` (nach dem Merge von PR #2 neu aufgebaut).
 Ausgangslage: `npm audit --omit=dev` meldete **18 Befunde (1 critical, 11 high, 4 moderate, 2 low)**, alle transitiv.
 PR #2 hatte den Lockfile nicht verändert.
 
@@ -35,6 +35,7 @@ PR #2 hatte den Lockfile nicht verändert.
 | chokidar | high | nodemon | nein | 3.6.0 → 4.0.3 | **behoben** (Override) |
 | nodemon | high | Peer von skybridge | nein | 3.1.14 (mit chokidar 4) | **behoben** (Override) |
 | skybridge | high (nur über nodemon) | direkt | ja (Framework) | 1.2.4 unverändert | **behoben** (über Override) |
+| @modelcontextprotocol/sdk | high (GHSA-6qxp-vccf-f47h, OAuth-Client) | direkt | Server-Teile ja, **Client nein** (0 Client-Dateien in der Trace) | 1.29.0 → 1.32.1 | **behoben** (Nachtrag, s. u.) |
 | esbuild | low | in skybridge verschachtelt, 0.27.7 | nein | unverändert | **offen, low**: Advisory GHSA-g7r4-m6w7-qqqr betrifft laut Text nur den *Dev-Server unter Windows*. Fix erst mit skybridge ≥ 1.3 (eigenes Minor-Upgrade, separat zu bewerten). |
 
 Weitere Änderungen im Lockfile, alle semver-kompatibel und mit passendem sha512 laut Registry: `content-type` 2.1.0 (neue,
@@ -44,7 +45,10 @@ verschachtelte Kopie unter `body-parser`; zur Laufzeit geladen), `side-channel` 
 (`anymatch`, `binary-extensions`, `braces`, `fill-range`, `glob-parent`, `is-binary-path`, `is-extglob`, `is-glob`,
 `is-number`, `normalize-path`, `picomatch`, `to-regex-range`). Es gibt keine neuen Paketnamen.
 
-Danach: `npm audit --omit=dev --audit-level=high` mit **exit 0**, verbleibend **1 low** (esbuild, s. o.).
+Danach: `npm audit --omit=dev --audit-level=high` mit **exit 0**, verbleibend **1 low** (esbuild, s. o.). Nach dem
+SDK-Nachtrag ebenfalls exit 0 mit 1 low. Das Gesamt-Audit inklusive Dev-Abhängigkeiten meldet zusätzlich
+`vitest`/`@vitest/mocker` moderate (GHSA-82fw-gwwq-j7x9, nur Test-Runner, nicht im Produktions-Image geladen). Das ist bewusst
+nicht Teil dieses PRs (keine weiteren Dependency-Änderungen ohne Freigabe).
 
 **Warum der esbuild-Fix zurückgestellt ist:** Technisch wäre er per `npm audit fix` ohne `--force` erreichbar, weil
 skybridge 1.3+ noch innerhalb von `^1.2.4` liegt. Das wäre aber ein Minor-Upgrade des Frameworks (1.2.4 → 1.4.x) mit eigenem
@@ -54,6 +58,33 @@ nicht verhältnismäßig. Empfehlung: das skybridge-Minor-Upgrade separat bewert
 **Keine Schwachstelle wurde allein durch Behauptung als irrelevant eingestuft.** Alle zur Laufzeit geladenen Pakete
 sind auf gepatchte Versionen aktualisiert. Nicht geladene Pakete sind ebenfalls aktualisiert, mit Ausnahme von
 esbuild (low, Windows-Dev-Server).
+
+## Nachtrag: MCP SDK 1.32.1 (GHSA-6qxp-vccf-f47h)
+
+Das Advisory wurde nach dem ersten grünen Audit veröffentlicht. Es betrifft `@modelcontextprotocol/sdk` 1.12.0–1.30.1
+(OAuth-**Client** kann Zugangsdaten an einen falschen Server senden). Mit Freigabe durch Luigi wurde nur dieses Paket
+angehoben: `package.json` `^1.29.0` → `^1.32.1`, Lockfile 1.29.0 → 1.32.1. Die einzige Änderung an den Abhängigkeiten des SDK
+ist die erweiterte Range für `@hono/node-server` (`^1.19.9 || ^2.0.5`); die gesperrte Version 1.19.17 bleibt. Keine
+weiteren Lockfile-Änderungen.
+
+Laufzeit-Nachweis mit `NODE_ENV=production`, Modul-Tracer und lokalem Test-IdP (JWKS, signierte Test-Tokens, nur
+synthetische Daten, kein Lexware-Aufruf):
+
+| Prüfung | 1.29.0 | 1.32.1 |
+|---|---|---|
+| ohne Token / falsche Audience / falscher Issuer / abgelaufen / fremder Schlüssel / ohne `sub` / `alg=none` | 401 | 401 (identische Antworten) |
+| gültiges Token, fremde E-Mail-Domain / unbestätigte E-Mail | 403 | 403 (identisch) |
+| Protected-Resource- und Authorization-Server-Metadaten | 200 | 200 |
+| `initialize`, `tools/list`, `tools/call get-pending-voucher-events` (lokale Queue) | 200 | 200 |
+| `tools/list` mit `LEXWARE_READ_ONLY=true` | 40 Tools, 0 Write | identisch (Namen, Schemas, Annotationen) |
+| `tools/list` ohne Read-only (Tiers read + drafts) | 56 Tools, 16 Write = eingefrorene Liste | identisch |
+| Read-only + `LEXWARE_ENABLE_FINALIZE=true` | – | 40 Tools, 0 Write, 0 Finalize |
+| statischer Bearer: ohne/falsches Token | – | 401 |
+| geladene SDK-Client-Dateien | 0 | 0 |
+| `sub`/E-Mail im Server-Log | 0 | 0 |
+
+Neu geladen werden nur drei Server-/Shared-Module des SDK (`server/requestBody`, `server/sseKeepAlive`,
+`shared/mediaType`).
 
 ## Prüfung der Auswirkungen
 

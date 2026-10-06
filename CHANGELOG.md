@@ -30,6 +30,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   nodemon (skybridge dev-server peer) `chokidar@4`, removing the unpatched `braces` chain. Production audit
   (`--audit-level=high`) is clean; one low advisory remains (esbuild, Windows dev server only). Analysis:
   `ai-company/audit/2026-10-06-dependency-audit.md`.
+- **MCP SDK 1.32.1:** `@modelcontextprotocol/sdk` raised from 1.29.0 to `^1.32.1` (GHSA-6qxp-vccf-f47h, high,
+  OAuth client; the server never loads the SDK client, verified by runtime trace). OAuth/bearer behaviour and
+  `tools/list` are byte-identical to 1.29.0 in a local runtime comparison.
 
 ### Fixed
 - **No PII in logs:** the OAuth verifier no longer logs `sub`, `email` or `email_verified` on every

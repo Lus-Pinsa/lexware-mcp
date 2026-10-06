@@ -1,5 +1,5 @@
 {
-  "$comment": "Core organisation of the AI company (customer-agnostic). No customer names, brands or vendor connectors here — those live in ai-company/customers/<id>/. Validated by tests/governance.test.ts. role.agent = Claude Code agent file in .claude/agents/ that executes the role today (null = planned role: worker/lead roles may be executed on demand by the generic read-only 'board-analyst'; a reviewer role with agent null is executed by 'final-auditor' so that creator != reviewer still holds — enforced by registry.ts).",
+  "$comment": "Core organisation of the AI company (customer-agnostic). No customer names, brands or vendor connectors here — those live in ai-company/customers/<id>/. Validated by tests/governance.test.ts. board.status: foundation-ready = executable roles + evidence; partial = executable but limited (missing access/data); structure-ready = roles/permissions/KPIs/limits defined only, no data source and no dedicated agent (not operational). role.agent = Claude Code agent file in .claude/agents/ that executes the role today (null = planned role: worker/lead roles may be executed on demand by the generic read-only 'board-analyst'; a reviewer role with agent null is executed by 'final-auditor' so that creator != reviewer still holds — enforced by registry.ts).",
   "version": 1,
   "phase": "foundation",
   "governance": {
@@ -166,7 +166,7 @@
       "group": "business",
       "mandate": "What will happen to liquidity: bank balance, receivables, payables, wages, rent, leasing, taxes, planned investments, cashflow forecast. Treasury != bookkeeping.",
       "riskClass": "critical",
-      "status": "foundation-ready",
+      "status": "structure-ready",
       "technicalGate": "ci",
       "lead": { "id": "treasury-lead", "title": "Treasury Lead", "profile": "analyst", "agent": "board-analyst" },
       "workers": [
@@ -188,7 +188,7 @@
       "group": "business",
       "mandate": "Supplier invoice -> article -> price -> unit -> ingredient master -> recipe quantity -> direct food cost -> variable cost -> overhead -> true cost -> contribution margin -> menu engineering. Prices are historised, never overwritten. Direct food cost and fully loaded cost are distinguished; overhead uses cost drivers, not a flat split.",
       "riskClass": "critical",
-      "status": "foundation-ready",
+      "status": "structure-ready",
       "technicalGate": "ci",
       "lead": { "id": "costing-lead", "title": "Costing Lead", "profile": "analyst", "agent": "board-analyst" },
       "workers": [
@@ -218,7 +218,7 @@
       "group": "business",
       "mandate": "Supplier prices, comparison, purchase recommendations, availability; tightly linked to Costing and Inventory.",
       "riskClass": "normal",
-      "status": "foundation-ready",
+      "status": "structure-ready",
       "technicalGate": null,
       "lead": { "id": "purchasing-lead", "title": "Purchasing Lead", "profile": "analyst", "agent": "board-analyst" },
       "workers": [
@@ -240,7 +240,7 @@
       "group": "business",
       "mandate": "Employee master data, employment type, entry/exit, registration proof, hours, leave/sickness (if a source exists), missing days, monthly completeness; payroll preparation for the tax advisor. Monthly cycle: 01-15 control, 16-18 clarify gaps, 19 final pre-check, 20 hand-over. Delivery states: PREPARED, READY_TO_SEND, SENT, DELIVERED_CONFIRMED (only with technical proof).",
       "riskClass": "critical",
-      "status": "foundation-ready",
+      "status": "structure-ready",
       "technicalGate": "ci",
       "lead": { "id": "hr-lead", "title": "HR Lead", "profile": "analyst", "agent": "board-analyst" },
       "workers": [
@@ -265,7 +265,7 @@
       "group": "business",
       "mandate": "Digital operations manager below the Cloud CEO: reservations, groups, events, food truck, staff, food cost, critical stock, prep, open orders, finance issues, cash, technical issues, daily goals, blockers. Produces the daily brief and proposes tasks to other boards.",
       "riskClass": "normal",
-      "status": "foundation-ready",
+      "status": "partial",
       "technicalGate": null,
       "lead": { "id": "daily-coo", "title": "Daily COO", "profile": "operations-reader", "agent": "daily-coo" },
       "workers": [
@@ -286,7 +286,7 @@
       "group": "business",
       "mandate": "Sales + reservations + events + weekday + season (+ weather) -> demand forecast -> minus current stock -> prep/order proposal. No fictitious stock values.",
       "riskClass": "normal",
-      "status": "foundation-ready",
+      "status": "structure-ready",
       "technicalGate": null,
       "lead": { "id": "inventory-lead", "title": "Inventory Lead", "profile": "analyst", "agent": "board-analyst" },
       "workers": [
@@ -311,7 +311,7 @@
       "group": "business",
       "mandate": "Temperature, cleaning schedules, allergens, traceability, expiry, training compliance. Reusable for other restaurants. Missing records are never back-filled.",
       "riskClass": "critical",
-      "status": "foundation-ready",
+      "status": "structure-ready",
       "technicalGate": "ci",
       "lead": { "id": "food-safety-lead", "title": "Food Safety Lead", "profile": "analyst", "agent": "board-analyst" },
       "workers": [
@@ -335,7 +335,7 @@
       "group": "business",
       "mandate": "Guest segmentation (new, returning, regulars, group bookers, corporate, food-truck leads, inactive) from lawful sources within the privacy framework. Campaign use requires defined consent rules.",
       "riskClass": "critical",
-      "status": "foundation-ready",
+      "status": "structure-ready",
       "technicalGate": "ci",
       "lead": { "id": "crm-lead", "title": "CRM Lead", "profile": "analyst", "agent": "board-analyst" },
       "workers": [
@@ -358,7 +358,7 @@
       "group": "business",
       "mandate": "Content research, planning, social posts, captions, campaigns, creative QA. Brand rules come from customer config, not core.",
       "riskClass": "normal",
-      "status": "foundation-ready",
+      "status": "structure-ready",
       "technicalGate": null,
       "lead": { "id": "marketing-lead", "title": "Marketing Lead", "profile": "analyst", "agent": "board-analyst" },
       "workers": [
@@ -383,7 +383,7 @@
       "group": "business",
       "mandate": "Technical SEO, local SEO, search intent, landing pages, CRO, ranking monitoring. May create engineering tickets; no direct production changes.",
       "riskClass": "normal",
-      "status": "foundation-ready",
+      "status": "structure-ready",
       "technicalGate": null,
       "lead": { "id": "growth-lead", "title": "Growth Lead", "profile": "analyst", "agent": "board-analyst" },
       "workers": [
@@ -408,7 +408,7 @@
       "group": "business",
       "mandate": "Groups & parties, food truck public and catering, B2B dough blanks, corporate customers, follow-up.",
       "riskClass": "normal",
-      "status": "foundation-ready",
+      "status": "structure-ready",
       "technicalGate": null,
       "lead": { "id": "sales-lead", "title": "Sales Lead", "profile": "analyst", "agent": "board-analyst" },
       "workers": [
@@ -432,7 +432,7 @@
       "group": "business",
       "mandate": "SOPs, daily routines, purchasing routines, set-up/tear-down, restaurant, food truck, production workflows, maintenance.",
       "riskClass": "normal",
-      "status": "foundation-ready",
+      "status": "structure-ready",
       "technicalGate": null,
       "lead": { "id": "operations-lead", "title": "Operations Lead", "profile": "analyst", "agent": "board-analyst" },
       "workers": [

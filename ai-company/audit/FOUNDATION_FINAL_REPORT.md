@@ -61,28 +61,28 @@ Luigi
 | Engineering | engineering-lead | typescript-engineer, integration-engineer, api-research-agent, test-engineer, refactoring-agent | code-reviewer | FOUNDATION READY |
 | Security | security-lead | appsec-, permission-, secret-, dependency-, mcp-security-reviewer | security-auditor | FOUNDATION READY |
 | QA & Audit | qa-lead | unit-, integration-, regression-, negative-test-agent, evidence-auditor | final-auditor | FOUNDATION READY |
-| DevOps | devops-lead (geplant) | github-ci-agent, render-monitor, deploy-verifier, healthcheck, runtime-log-reviewer | final-auditor | PARTIAL |
+| DevOps | devops-lead (geplant) | github-ci-agent, hosting-monitor, deploy-verifier, healthcheck, runtime-log-reviewer | final-auditor | PARTIAL |
 | Knowledge | knowledge-steward | conflict-detector, lineage-agent | final-auditor | FOUNDATION READY |
 | Finance | finance-lead | expense-agent, finance-validator, bank-reconciliation, cash, month-end | finance-auditor | FOUNDATION READY (Read-Pipeline live) |
-| Treasury | treasury-lead | cash-position, obligations, cashflow-forecast | treasury-auditor | FOUNDATION READY (Struktur) |
-| Costing & Menu Eng. | costing-lead | supplier-invoice, ingredient-matcher, unit-normalizer, price-history, recipe-bom, yield, waste, labor-cost, overhead-allocation, menu-engineering | costing-auditor | FOUNDATION READY (Struktur) |
-| Purchasing | purchasing-lead | supplier-price, comparison, recommendation, availability | purchasing-auditor | FOUNDATION READY (Struktur) |
-| HR & Payroll | hr-lead | employee-master, registration-compliance, timekeeping, payroll-prep, tax-advisor-delivery | hr-payroll-auditor | FOUNDATION READY (Struktur) |
-| Daily COO | daily-coo | daily-brief-agent, blocker-tracker | final-auditor | FOUNDATION READY |
-| Inventory & Prep | inventory-lead | stock, consumption, prep-forecast, waste, reorder | inventory-auditor | FOUNDATION READY (Struktur) |
-| Food Safety / HACCP | food-safety-lead | temperature, cleaning, allergen, traceability, expiry, training | compliance-auditor | FOUNDATION READY (Struktur) |
-| CRM | crm-lead | segmentation, retention, campaign-audience, company-customer, reactivation | privacy-auditor | FOUNDATION READY (Struktur) |
-| Marketing / Social | marketing-lead | content-research, planner, instagram, caption, campaign, creative-qa | brand-compliance-agent | FOUNDATION READY (Struktur) |
-| SEO / Growth | growth-lead | technical-, local-seo, search-intent, landing-page, cro, ranking-monitor | growth-auditor | FOUNDATION READY (Struktur) |
-| Sales | sales-lead | lead-discovery, qualification, offer-prep, follow-up, pipeline-analyst | sales-auditor | FOUNDATION READY (Struktur) |
-| Operations | operations-lead | sop, foodtruck-ops, maintenance | operations-auditor | FOUNDATION READY (Struktur) |
+| Treasury | treasury-lead | cash-position, obligations, cashflow-forecast | treasury-auditor | STRUCTURE READY |
+| Costing & Menu Eng. | costing-lead | supplier-invoice, ingredient-matcher, unit-normalizer, price-history, recipe-bom, yield, waste, labor-cost, overhead-allocation, menu-engineering | costing-auditor | STRUCTURE READY |
+| Purchasing | purchasing-lead | supplier-price, comparison, recommendation, availability | purchasing-auditor | STRUCTURE READY |
+| HR & Payroll | hr-lead | employee-master, registration-compliance, timekeeping, payroll-prep, tax-advisor-delivery | hr-payroll-auditor | STRUCTURE READY |
+| Daily COO | daily-coo | daily-brief-agent, blocker-tracker | final-auditor | PARTIAL (nur Finance-Daten) |
+| Inventory & Prep | inventory-lead | stock, consumption, prep-forecast, waste, reorder | inventory-auditor | STRUCTURE READY |
+| Food Safety / HACCP | food-safety-lead | temperature, cleaning, allergen, traceability, expiry, training | compliance-auditor | STRUCTURE READY |
+| CRM | crm-lead | segmentation, retention, campaign-audience, company-customer, reactivation | privacy-auditor | STRUCTURE READY |
+| Marketing / Social | marketing-lead | content-research, planner, instagram, caption, campaign, creative-qa | brand-compliance-agent | STRUCTURE READY |
+| SEO / Growth | growth-lead | technical-, local-seo, search-intent, landing-page, cro, ranking-monitor | growth-auditor | STRUCTURE READY |
+| Sales | sales-lead | lead-discovery, qualification, offer-prep, follow-up, pipeline-analyst | sales-auditor | STRUCTURE READY |
+| Operations | operations-lead | sop, foodtruck-ops, maintenance | operations-auditor | STRUCTURE READY |
 | Technology Radar | ai-technology-lead | release-watcher, poc-evaluator | security-auditor | FOUNDATION READY |
 
 **Ausführbare Agenten (16):** cloud-ceo, daily-coo, engineering-lead, typescript-engineer,
 test-engineer, code-reviewer, security-lead, security-auditor, qa-lead, final-auditor,
 deploy-verifier, knowledge-steward, technology-radar, finance-lead, finance-auditor, board-analyst
 (generisch, nur lesend, für geplante Business-Rollen ohne Datenquelle).
-„(Struktur)“ bedeutet: Rollen, Rechte, KPIs, Grenzen und Review-Pfad sind definiert und CI-validiert, aber **noch keine Datenquelle**.
+„STRUCTURE READY“ bedeutet: **nicht operativ einsatzbereit**. Rollen, Rechte, KPIs, Grenzen und Review-Pfad sind definiert und CI-validiert, aber **noch keine Datenquelle**.
 
 ---
 
@@ -243,18 +243,18 @@ Keine produktiven Write-Tests. `LEXWARE_ENABLE_FINALIZE=false` bleibt erhalten, 
 | Board | Status |
 |---|---|
 | Finance | FOUNDATION READY (Read-Pipeline live) |
-| Treasury | FOUNDATION READY (Struktur, keine Bankdaten) |
-| Costing | FOUNDATION READY (Struktur, kein POS und keine Rezepte) |
-| Purchasing | FOUNDATION READY (Struktur) |
-| HR | FOUNDATION READY (Struktur, keine Zeiterfassung) |
-| Daily COO | FOUNDATION READY (nur Finance-Daten verfügbar) |
-| Inventory | FOUNDATION READY (Struktur) |
-| HACCP | FOUNDATION READY (Struktur) |
-| CRM | FOUNDATION READY (Struktur) |
-| Marketing | FOUNDATION READY (Struktur, Brand-Datei leer) |
-| SEO | FOUNDATION READY (Struktur) |
-| Sales | FOUNDATION READY (Struktur) |
-| Operations | FOUNDATION READY (Struktur) |
+| Treasury | STRUCTURE READY (keine Bankdaten) |
+| Costing | STRUCTURE READY (kein POS und keine Rezepte) |
+| Purchasing | STRUCTURE READY |
+| HR | STRUCTURE READY (keine Zeiterfassung) |
+| Daily COO | PARTIAL (nur Finance-Daten verfügbar) |
+| Inventory | STRUCTURE READY |
+| HACCP | STRUCTURE READY |
+| CRM | STRUCTURE READY |
+| Marketing | STRUCTURE READY (Brand-Datei leer) |
+| SEO | STRUCTURE READY |
+| Sales | STRUCTURE READY |
+| Operations | STRUCTURE READY |
 | Engineering | FOUNDATION READY |
 | Security | FOUNDATION READY |
 | QA | FOUNDATION READY |

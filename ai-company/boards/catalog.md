@@ -15,24 +15,28 @@ nehmen ab. Das hält Kosten, Rechte und Nachvollziehbarkeit beim CEO.
 | DevOps / Deployment | PARTIAL | (devops-lead geplant), deploy-verifier | final-auditor | nein: kein Render-Zugang |
 | Data / Knowledge | FOUNDATION READY | knowledge-steward | final-auditor | ja (Doku) |
 | Finance | FOUNDATION READY | finance-lead | finance-auditor | ja, nur Read-Pipeline |
-| Treasury / Cashflow | FOUNDATION READY (Struktur) | board-analyst als treasury-lead | treasury-auditor (geplant) | nein: keine Bankdaten |
-| Costing & Menu Engineering | FOUNDATION READY (Struktur) | board-analyst als costing-lead | costing-auditor (geplant) | nein: kein POS, keine Rezepte |
-| Purchasing | FOUNDATION READY (Struktur) | board-analyst | purchasing-auditor (geplant) | nein |
-| HR & Payroll | FOUNDATION READY (Struktur) | board-analyst als hr-lead | hr-payroll-auditor (geplant) | nein: keine Zeiterfassung |
-| Daily COO / Control Tower | FOUNDATION READY | daily-coo | final-auditor | teilweise: nur Finance-Daten |
-| Inventory & Prep | FOUNDATION READY (Struktur) | board-analyst | inventory-auditor (geplant) | nein |
-| Food Safety / HACCP | FOUNDATION READY (Struktur) | board-analyst | compliance-auditor (geplant) | nein |
-| CRM / Guest Intelligence | FOUNDATION READY (Struktur) | board-analyst | privacy-auditor (geplant) | nein |
-| Marketing / Social | FOUNDATION READY (Struktur) | board-analyst | brand-compliance-agent (geplant) | nein: Brand-Datei leer |
-| SEO / Growth | FOUNDATION READY (Struktur) | board-analyst | growth-auditor (geplant) | nein |
-| Sales | FOUNDATION READY (Struktur) | board-analyst | sales-auditor (geplant) | nein |
-| Operations | FOUNDATION READY (Struktur) | board-analyst | operations-auditor (geplant) | nein |
+| Treasury / Cashflow | STRUCTURE READY | board-analyst als treasury-lead | treasury-auditor (geplant) | nein: keine Bankdaten |
+| Costing & Menu Engineering | STRUCTURE READY | board-analyst als costing-lead | costing-auditor (geplant) | nein: kein POS, keine Rezepte |
+| Purchasing | STRUCTURE READY | board-analyst | purchasing-auditor (geplant) | nein |
+| HR & Payroll | STRUCTURE READY | board-analyst als hr-lead | hr-payroll-auditor (geplant) | nein: keine Zeiterfassung |
+| Daily COO / Control Tower | PARTIAL | daily-coo | final-auditor | teilweise: nur Finance-Daten |
+| Inventory & Prep | STRUCTURE READY | board-analyst | inventory-auditor (geplant) | nein |
+| Food Safety / HACCP | STRUCTURE READY | board-analyst | compliance-auditor (geplant) | nein |
+| CRM / Guest Intelligence | STRUCTURE READY | board-analyst | privacy-auditor (geplant) | nein |
+| Marketing / Social | STRUCTURE READY | board-analyst | brand-compliance-agent (geplant) | nein: Brand-Datei leer |
+| SEO / Growth | STRUCTURE READY | board-analyst | growth-auditor (geplant) | nein |
+| Sales | STRUCTURE READY | board-analyst | sales-auditor (geplant) | nein |
+| Operations | STRUCTURE READY | board-analyst | operations-auditor (geplant) | nein |
 | AI / Technology Radar | FOUNDATION READY | technology-radar | security-auditor | ja, manuell |
 
-`status` in `org.json` beschreibt die Foundation-Reife. Die operative Reife steht in der Spalte „Operativ heute“.
-„FOUNDATION READY (Struktur)“ bedeutet: Rollen, Rechte, KPIs, harte Grenzen und Review-Pfad sind
-definiert und CI-validiert. Es gibt aber noch **keine Datenquelle**, daher liefert das Board heute nur Konzept- und
-Lückenanalysen.
+Status (`org.json` → `status`, CI-validiert):
+- **FOUNDATION READY** (`foundation-ready`): eigene ausführbare Agenten, Rechte und Review-Pfad vorhanden und belegt.
+- **PARTIAL** (`partial`): ausführbar, aber mit fehlendem Zugang oder fehlenden Daten (DevOps: kein Render-Zugang;
+  Daily COO: nur Finance-Daten).
+- **STRUCTURE READY** (`structure-ready`): **nur Organisationsstruktur, nicht operativ einsatzbereit.** Rollen, Rechte,
+  KPIs, harte Grenzen und Review-Pfad sind definiert, aber es gibt **keine Datenquelle und keinen eigenen Agenten**.
+  Das Board liefert heute nur Konzept- und Lückenanalysen über den generischen `board-analyst`. Eine Registry-Regel
+  verhindert, dass solche Boards als `foundation-ready` oder `partial` markiert werden.
 
 ## Board-spezifische Abläufe
 

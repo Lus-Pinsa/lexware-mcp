@@ -23,7 +23,7 @@ export interface Board {
   group: "foundation" | "business";
   mandate: string;
   riskClass: "critical" | "normal";
-  status: "foundation-ready" | "partial" | "not-built" | "blocked";
+  status: "foundation-ready" | "partial" | "structure-ready" | "not-built" | "blocked";
   technicalGate: string | null;
   lead: Role;
   workers: Role[];
@@ -136,6 +136,12 @@ const REQUIRED_BOARDS = [
   "seo-growth", "sales", "operations", "technology-radar",
 ];
 
+/** Allowed board statuses (see the $comment in org.json). */
+export const BOARD_STATUSES: readonly Board["status"][] = ["foundation-ready", "partial", "structure-ready", "not-built", "blocked"];
+
+/** Generic read-only agent for planned roles; a board led only by it is structure-only. */
+export const GENERIC_ANALYST_AGENT = "board-analyst";
+
 /** Agent that executes reviewer roles which have no dedicated agent yet. */
 export const REVIEWER_FALLBACK_AGENT = "final-auditor";
 
@@ -195,6 +201,14 @@ export function validateRegistry(input: {
       }
     }
     if (b.riskClass === "critical" && !b.technicalGate) v.push(`critical board "${b.id}" has no technical gate`);
+    // A board led by the generic analyst, or without any dedicated executable agent, has no data source
+    // of its own: it must not be presented as ready.
+    const dedicated = (r: Role) => r.agent !== null && r.agent !== GENERIC_ANALYST_AGENT;
+    const genericOnly = b.lead.agent === GENERIC_ANALYST_AGENT || ![b.lead, ...b.workers].some(dedicated);
+    if (!BOARD_STATUSES.includes(b.status)) v.push(`board "${b.id}" has unknown status "${b.status}"`);
+    if (genericOnly && (b.status === "foundation-ready" || b.status === "partial")) {
+      v.push(`board "${b.id}" is led only by "${b.lead.agent ?? "nobody"}" but claims status "${b.status}" (use structure-ready)`);
+    }
     if (b.kpis.length === 0) v.push(`board "${b.id}" has no KPIs`);
     if (b.hardLimits.length === 0) v.push(`board "${b.id}" has no hard limits`);
   }

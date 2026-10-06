@@ -52,6 +52,15 @@ describe("registry", () => {
     expect(v.some((m) => m.includes('board "treasury": reviewer agent "final-auditor"'))).toBe(true);
   });
 
+  it("never presents a board led only by the generic analyst as ready", () => {
+    const structureOnly = org.boards.filter((b) => b.lead.agent === "board-analyst");
+    expect(structureOnly.length).toBe(11);
+    for (const b of structureOnly) expect({ id: b.id, status: b.status }).toEqual({ id: b.id, status: "structure-ready" });
+    const broken = structuredClone(org);
+    broken.boards.find((b) => b.id === "costing")!.status = "foundation-ready";
+    expect(validateRegistry({ org: broken, profiles, agents, customer }).some((m) => m.includes('board "costing" is led only by'))).toBe(true);
+  });
+
   it("has no violations (boards, roles, profiles, agents, customer config)", () => {
     expect(validateRegistry({ org, profiles, agents, customer })).toEqual([]);
   });

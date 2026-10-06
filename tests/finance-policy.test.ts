@@ -6,6 +6,8 @@
  * and requires Security Board sign-off (see ai-company/policies/finance-write-gates.md).
  */
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { McpServer } from "skybridge/server";
 import { describe, expect, it, vi } from "vitest";
 import { type Config, loadConfig } from "../src/config.js";
@@ -124,6 +126,23 @@ describe("read-only mode", () => {
 
   it("still serves the full expense read stack", () => {
     for (const name of READ_STACK) expect(ro.has(name)).toBe(true);
+  });
+
+  it("switching production to LEXWARE_READ_ONLY=true removes exactly the write tools and keeps every read tool", () => {
+    const prod = capture((s) => registerTools(s, {} as LexwareClient, cfg(PRODUCTION)));
+    const switched = capture((s) => registerTools(s, {} as LexwareClient, cfg({ ...PRODUCTION, LEXWARE_READ_ONLY: "true" })));
+    const expected = [...prod.keys()].filter((n) => !PRODUCTION_WRITE_TOOLS.includes(n));
+    expect([...switched.keys()].sort()).toEqual(expected.sort());
+    expect(switched.has("list-event-subscriptions")).toBe(true);
+  });
+
+  it("keeps the signed webhook receiver independent of the capability tiers", () => {
+    // The receiver lives in src/server.ts (not unit-testable: it starts the server on import), so this
+    // is a structural check: the routes are registered unconditionally and the file never reads tiers.
+    const server = readFileSync(join(process.cwd(), "src/server.ts"), "utf8");
+    expect(server).toMatch(/server\.express\.post\(\s*"\/webhooks\/lexware"/);
+    expect(server).toMatch(/server\.express\.head\(\s*"\/webhooks\/lexware"/);
+    expect(server).not.toMatch(/capabilities\.(read|drafts|finalize)|LEXWARE_READ_ONLY/);
   });
 });
 

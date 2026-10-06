@@ -1,5 +1,5 @@
 import type { BinaryOptions, LexwareClient } from "./client.js";
-import { assertNoDotSegments } from "./client.js";
+import { assertSafeRequestPath } from "./client.js";
 import { UnsafeRequestPathError } from "./errors.js";
 
 /**
@@ -40,7 +40,7 @@ export function assertReadPathAllowed(path: string, allowed: readonly string[] =
   if (typeof path !== "string" || !path.startsWith("/")) throw new UnsafeRequestPathError("path must be absolute");
   if (/[?#\\\s]/.test(path)) throw new UnsafeRequestPathError("query, fragment, backslash or whitespace in path");
   if (path.includes("//")) throw new UnsafeRequestPathError("empty path segment");
-  assertNoDotSegments(path);
+  assertSafeRequestPath(path);
   const ok = allowed.some((entry) => path === entry || path.startsWith(`${entry}/`));
   if (!ok) throw new UnsafeRequestPathError("path is not on the read allowlist");
 }

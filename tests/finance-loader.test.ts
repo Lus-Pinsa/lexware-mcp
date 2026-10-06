@@ -228,6 +228,36 @@ describe("loadFinanceSnapshot — read-only, budgeted, honest about completeness
     expect(snap.completeness.attachments).toMatchObject({ needed: 1, fetched: 1 });
   });
 
+  it("non-finite options fall back to safe defaults instead of disabling the limits", async () => {
+    const { client } = fakeLexware(standardRoute([paidRow(3)]));
+    const snap = await loadFinanceSnapshot(client, {
+      window: WINDOW,
+      now: NOW,
+      maxRequests: Number.NaN,
+      maxListPages: Number.POSITIVE_INFINITY,
+      maxCharactersPerFile: Number.NaN,
+    });
+    expect(snap.completeness.budget.maxRequests).toBe(150);
+    expect(JSON.stringify(snap.completeness.budget)).not.toContain("null");
+  });
+
+  it("a non-object detail or payment response is a recorded error, consistent with the counters", async () => {
+    const route: Route = (path) => {
+      if (path === "/v1/voucherlist") return page([paidRow(3)]);
+      if (path === "/v1/posting-categories") return postingCategories();
+      if (path === `/v1/vouchers/${id(3)}`) return "not json";
+      if (path === `/v1/payments/${id(3)}`) return 42;
+      return new LexwareApiError(404, "x");
+    };
+    const snap = await loadFinanceSnapshot(fakeLexware(route).client, { window: WINDOW, now: NOW });
+    expect(snap.completeness.details).toMatchObject({ failed: 1 });
+    expect(snap.completeness.payments).toMatchObject({ failed: 1 });
+    expect(snap.errors.map((e) => [e.stage, e.kind])).toEqual([
+      ["detail", "invalid_response"],
+      ["payment", "invalid_response"],
+    ]);
+  });
+
   it.each([
     [{ from: "2026-10-31", to: "2026-09-01", basis: "voucherDate" }],
     [{ from: "2026-02-30", to: "2026-03-01", basis: "voucherDate" }],

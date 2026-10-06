@@ -37,10 +37,12 @@ export interface BinaryOptions {
 }
 
 /**
- * Refuse `.`/`..` path segments, including percent-encoded forms: the WHATWG URL parser resolves them,
- * so an id like ".." passed through encodeURIComponent would otherwise climb out of the intended resource.
+ * Refuse request paths the WHATWG URL parser would rewrite: `.`/`..` segments (including percent-encoded
+ * forms), backslashes (treated as `/`) and TAB/CR/LF (silently removed). Otherwise an id like ".." passed
+ * through encodeURIComponent, or a raw "\\", could climb out of the intended resource.
  */
-export function assertNoDotSegments(path: string): void {
+export function assertSafeRequestPath(path: string): void {
+  if (/[\\\t\r\n]/.test(path)) throw new UnsafeRequestPathError("path contains a backslash or control whitespace");
   const pathOnly = path.split(/[?#]/, 1)[0];
   for (const segment of pathOnly.split("/")) {
     let decoded = segment;
@@ -49,7 +51,12 @@ export function assertNoDotSegments(path: string): void {
     } catch {
       // Malformed escapes stay as-is; they cannot form a dot segment.
     }
-    if (decoded === "." || decoded === "..") throw new UnsafeRequestPathError("path contains a dot segment");
+    // Encoded separators (%2F, %5C) and ";" matrix parameters ("..;x") could form a dot segment on a server
+    // that decodes or strips them, so every decoded sub-segment is checked.
+    for (const part of decoded.split(/[/\\]/)) {
+      const base = part.split(";", 1)[0];
+      if (base === "." || base === "..") throw new UnsafeRequestPathError("path contains a dot segment");
+    }
   }
 }
 
@@ -127,12 +134,16 @@ export class LexwareClient {
     accept = "application/pdf",
     options: BinaryOptions = {},
   ): Promise<{ data: Buffer; contentType: string }> {
+    const { maxBytes } = options;
+    // A malformed limit must never silently mean "unlimited": refuse before sending anything.
+    if (maxBytes !== undefined && !(Number.isFinite(maxBytes) && maxBytes >= 0)) {
+      throw new RangeError("maxBytes must be a finite number >= 0");
+    }
     const res = await this.sendWithRetry("GET", path, {
       headers: { Authorization: `Bearer ${this.apiKey}`, Accept: accept },
       idempotent: true,
     });
     const contentType = res.headers.get("content-type") ?? accept;
-    const { maxBytes } = options;
     if (maxBytes === undefined) {
       try {
         return { data: Buffer.from(await res.arrayBuffer()), contentType };
@@ -282,7 +293,7 @@ export class LexwareClient {
   }
 
   private buildUrl(path: string, query?: RequestOptions["query"]): string {
-    assertNoDotSegments(path);
+    assertSafeRequestPath(path);
     const url = new URL(`${this.baseUrl}${path.startsWith("/") ? path : `/${path}`}`);
     if (query) {
       for (const [k, v] of Object.entries(query)) {

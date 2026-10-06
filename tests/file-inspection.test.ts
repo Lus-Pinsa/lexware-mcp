@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
+import { deflateSync } from "node:zlib";
 import { describe, expect, it, vi } from "vitest";
 import { LexwareApiError, ResponseTooLargeError, UnsafeRequestPathError } from "../src/lexware/errors.js";
 import {
   DEFAULT_FILE_LIMITS,
   type PdfTextExtractor,
   inspectLexwareFile,
-  pdfParseExtractor,
+  MAX_CONCURRENT_PARSERS,
+  workerPdfExtractor,
 } from "../src/lexware/file-inspection.js";
 import { fileTextResult } from "../src/tools/files.js";
 
@@ -16,9 +18,9 @@ function client(data: Buffer = PDF, contentType = "application/pdf") {
   return { getBinary: vi.fn(async () => ({ data, contentType })) };
 }
 
-function extractor(text: string, total = 1): { fn: PdfTextExtractor; destroy: ReturnType<typeof vi.fn>; calls: Array<{ maxPages: number }> } {
+function extractor(text: string, total = 1): { fn: PdfTextExtractor; destroy: ReturnType<typeof vi.fn>; calls: Array<{ maxPages: number; maxRawChars: number }> } {
   const destroy = vi.fn(async () => undefined);
-  const calls: Array<{ maxPages: number }> = [];
+  const calls: Array<{ maxPages: number; maxRawChars: number }> = [];
   const fn: PdfTextExtractor = (_data, opts) => {
     calls.push(opts);
     return { result: Promise.resolve({ text, total }), destroy };
@@ -43,7 +45,7 @@ describe("inspectLexwareFile — hardened, read-only", () => {
       textTruncated: false,
     });
     expect(r.text).toBe("Rechnung Nr. TEST-1\nBetrag 10,00 EUR");
-    expect(e.calls[0]).toEqual({ maxPages: DEFAULT_FILE_LIMITS.maxPages });
+    expect(e.calls[0]).toEqual({ maxPages: DEFAULT_FILE_LIMITS.maxPages, maxRawChars: 5000 * 4 + 1000 });
     expect(e.destroy).toHaveBeenCalledOnce();
   });
 
@@ -58,7 +60,7 @@ describe("inspectLexwareFile — hardened, read-only", () => {
   it("applies the page limit and reports truncation", async () => {
     const e = extractor("page text", 50);
     const r = await inspectLexwareFile(client(), "file-1", { maxCharacters: 5000, limits: { maxPages: 20 } }, e.fn);
-    expect(e.calls[0]).toEqual({ maxPages: 20 });
+    expect(e.calls[0]).toMatchObject({ maxPages: 20 });
     expect(r).toMatchObject({ pageCount: 50, pagesParsed: 20, pageLimitApplied: true, textTruncated: true });
   });
 
@@ -194,37 +196,129 @@ describe("fileTextResult — MCP rendering", () => {
   });
 });
 
-/**
- * Minimal hand-written PDF ("Hello LUS Test"). pdf.js repairs the deliberately approximate xref table, so this
- * exercises the real pdf-parse extractor (page limit parameter included) without any binary fixture.
- */
-function minimalPdf(): Buffer {
-  const stream = "BT /F1 24 Tf 72 720 Td (Hello LUS Test) Tj ET";
+/** Hand-written PDF with one content stream (optionally Flate-compressed); pdf.js repairs the missing xref. */
+function pdfWithStream(stream: string, compress = false): Buffer {
+  const content = compress ? deflateSync(Buffer.from(stream, "latin1")) : Buffer.from(stream, "latin1");
   const objs = [
     "<< /Type /Catalog /Pages 2 0 R >>",
     "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
     "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
-    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
   ];
-  let out = "%PDF-1.4\n";
-  const offsets: number[] = [];
-  objs.forEach((o, i) => {
-    offsets.push(out.length);
-    out += `${i + 1} 0 obj\n${o}\nendobj\n`;
-  });
-  const xref = out.length;
-  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`;
-  for (const off of offsets) out += `${String(off).padStart(10, "0")} 00000 n \n`;
-  out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
-  return Buffer.from(out, "latin1");
+  const parts: Buffer[] = [Buffer.from("%PDF-1.4\n")];
+  objs.forEach((o, i) => parts.push(Buffer.from(`${i + 1} 0 obj\n${o}\nendobj\n`)));
+  parts.push(
+    Buffer.from(`4 0 obj\n<< /Length ${content.length}${compress ? " /Filter /FlateDecode" : ""} >>\nstream\n`),
+    content,
+    Buffer.from("\nendstream\nendobj\n5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n"),
+    Buffer.from("trailer\n<< /Size 6 /Root 1 0 R >>\n%%EOF\n"),
+  );
+  return Buffer.concat(parts);
 }
 
-describe("pdfParseExtractor — real pdf-parse integration", () => {
+describe("workerPdfExtractor — real pdf-parse in an isolated worker", () => {
   it("extracts the text layer of a real PDF", async () => {
-    const r = await inspectLexwareFile(client(minimalPdf()), "file-1", { maxCharacters: 5000 }, pdfParseExtractor);
+    const r = await inspectLexwareFile(client(pdfWithStream("BT /F1 24 Tf 72 720 Td (Hello LUS Test) Tj ET")), "file-1", { maxCharacters: 5000 });
     expect(r.status).toBe("text_extracted");
-    expect(r.text).toContain("Hello LUS Test");
+    expect(r.text).toBe("Hello LUS Test");
     expect(r.pageCount).toBe(1);
   }, 20_000);
+
+  it("reports OCR_REQUIRED for a real PDF without a text layer (no page markers leak in as text)", async () => {
+    const r = await inspectLexwareFile(client(pdfWithStream("")), "file-1", { maxCharacters: 5000 });
+    expect(r).toMatchObject({ status: "ocr_required", textAvailable: false, text: "" });
+  }, 20_000);
+
+  it("a compression bomb cannot freeze the server: the event loop keeps running and the worker is terminated at the timeout", async () => {
+    // ~3 million text operators (~84 MB uncompressed) in a ~200 KB file.
+    const bomb = pdfWithStream("BT /F1 1 Tf 0 0 Td (A) Tj ET\n".repeat(3_000_000), true);
+    expect(bomb.length).toBeLessThan(1024 * 1024);
+    let beats = 0;
+    const heartbeat = setInterval(() => {
+      beats += 1;
+    }, 50);
+    const started = Date.now();
+    try {
+      const r = await inspectLexwareFile(client(bomb), "file-1", { maxCharacters: 5000, limits: { parseTimeoutMs: 1000 } });
+      const elapsed = Date.now() - started;
+      expect(["parse_timeout", "parse_error"]).toContain(r.status);
+      expect(r.sha256).toBe(sha(bomb));
+      expect(elapsed).toBeLessThan(5000);
+      // At a 50 ms interval at least ~10 beats must have fired during the 1 s parse window.
+      expect(beats).toBeGreaterThanOrEqual(8);
+    } finally {
+      clearInterval(heartbeat);
+    }
+  }, 30_000);
+
+  it("fails fast instead of queueing when the parser concurrency limit is reached", async () => {
+    const slow = pdfWithStream("BT /F1 1 Tf 0 0 Td (A) Tj ET\n".repeat(1_000_000), true);
+    const running = Array.from({ length: MAX_CONCURRENT_PARSERS }, () =>
+      inspectLexwareFile(client(slow), "file-1", { maxCharacters: 1000, limits: { parseTimeoutMs: 800 } }),
+    );
+    await new Promise((r) => setTimeout(r, 50));
+    const extra = await inspectLexwareFile(client(slow), "file-2", { maxCharacters: 1000, limits: { parseTimeoutMs: 800 } });
+    expect(extra.status).toBe("parse_error");
+    expect(extra.parseError).toMatch(/busy/i);
+    await Promise.all(running);
+    // Slots are released afterwards.
+    const after = await inspectLexwareFile(client(pdfWithStream("BT /F1 24 Tf 72 720 Td (ok) Tj ET")), "file-3", { maxCharacters: 1000 });
+    expect(after.status).toBe("text_extracted");
+  }, 30_000);
+
+  it("leaves the caller's buffer intact (bytes are copied before transfer)", async () => {
+    const bytes = pdfWithStream("BT /F1 24 Tf 72 720 Td (copy) Tj ET");
+    const before = sha(bytes);
+    await workerPdfExtractor(new Uint8Array(bytes), { maxPages: 1, maxRawChars: 100 }).result;
+    expect(sha(bytes)).toBe(before);
+  }, 20_000);
+});
+
+describe("real parser page limit", () => {
+  it("parses only the first maxPages pages of a real multi-page PDF", async () => {
+    const pages = 25;
+    const objs: string[] = ["<< /Type /Catalog /Pages 2 0 R >>"];
+    const kids = Array.from({ length: pages }, (_, i) => `${3 + i * 2} 0 R`).join(" ");
+    objs.push(`<< /Type /Pages /Kids [${kids}] /Count ${pages} >>`);
+    const fontId = 3 + pages * 2;
+    for (let i = 0; i < pages; i++) {
+      const stream = `BT /F1 12 Tf 72 720 Td (PAGEMARK${i + 1}) Tj ET`;
+      objs.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents ${4 + i * 2} 0 R /Resources << /Font << /F1 ${fontId} 0 R >> >> >>`);
+      objs.push(`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`);
+    }
+    objs.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+    let out = "%PDF-1.4\n";
+    objs.forEach((o, i) => {
+      out += `${i + 1} 0 obj\n${o}\nendobj\n`;
+    });
+    out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\n%%EOF\n`;
+    const r = await inspectLexwareFile(client(Buffer.from(out, "latin1")), "file-1", { maxCharacters: 50_000 });
+    expect(r).toMatchObject({ status: "text_extracted", pageCount: 25, pagesParsed: 20, pageLimitApplied: true, textTruncated: true });
+    expect(r.text).toContain("PAGEMARK20");
+    expect(r.text).not.toContain("PAGEMARK21");
+  }, 30_000);
+});
+
+describe("fileTextResult — parse error rendering", () => {
+  it("shows the cleaned parse error and the no-inference warning, without untrusted text", async () => {
+    const failing: PdfTextExtractor = () => ({ result: Promise.reject(new Error("Invalid PDF <structure>")), destroy: async () => undefined });
+    const out = fileTextResult(await inspectLexwareFile(client(), "file-1", { maxCharacters: 1000 }, failing));
+    expect(out.content[0].text).toContain("extractionStatus: PARSE_ERROR");
+    expect(out.content[0].text).toContain("parseError: Invalid PDF ‹structure›");
+    expect(out.content[0].text).toContain("Do not infer");
+    expect(out.content[0].text).not.toContain("<<BEGIN UNTRUSTED");
+    expect(out.structuredContent).toMatchObject({ extractionStatus: "parse_error", untrustedContent: false, parseError: "Invalid PDF ‹structure›" });
+  });
+});
+
+describe("limit overrides can never mean 'unlimited'", () => {
+  it("NaN/negative limits and maxCharacters fall back to the defaults", async () => {
+    const r = await inspectLexwareFile(
+      client(),
+      "file-1",
+      { maxCharacters: Number.NaN, limits: { maxTextCharacters: Number.NaN, maxPages: -1, parseTimeoutMs: Number.POSITIVE_INFINITY } },
+      extractor("z".repeat(300_000)).fn,
+    );
+    expect(r.limits).toEqual(DEFAULT_FILE_LIMITS);
+    expect(r.returnedCharacters).toBe(DEFAULT_FILE_LIMITS.maxTextCharacters);
+  });
 });

@@ -111,3 +111,24 @@ describe("wrapUntrustedBlock — nonce-delimited, unforgeable end marker", () =>
     expect(wrapUntrustedBlock("x", "a b<c>", "n").split("\n")[1]).toBe("<<BEGIN UNTRUSTED A_B_C_ n>>");
   });
 });
+
+describe("review round 1: additional smuggling and link vectors", () => {
+  it("removes variation selectors, fillers and musical formatting characters", () => {
+    const hidden = [0xfe0f, 0xe0101, 0x034f, 0x115f, 0x3164, 0xffa0, 0x180b, 0x1d173, 0x17b4].map((c) => cp(c)).join("");
+    const out = sanitizeUntrustedText(`A${hidden}B`, { maxChars: 100 });
+    expect(out.text).toBe("AB");
+  });
+
+  it("neutralizes schemes after punctuation, extra schemes and www. links", () => {
+    const out = neutralizeMarkup("_https://evil.example *http://x ws://a wss://b sftp://c intent://d tel:+49 sms:1 blob:e www.evil.example WWW.X.DE");
+    expect(out).not.toMatch(/(https?|wss?|sftp|intent|tel|sms|blob):(?!\])/i);
+    expect(out).toContain("_https[:]//evil.example");
+    expect(out).toContain("www[.]evil.example");
+    expect(out).toContain("WWW[.]X.DE");
+    expect(neutralizeMarkup(out)).toBe(out);
+  });
+
+  it("does not touch scheme-like words inside other words", () => {
+    expect(neutralizeMarkup("Mustertel: 1")).toBe("Mustertel: 1");
+  });
+});

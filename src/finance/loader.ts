@@ -82,7 +82,7 @@ export interface StageCounts {
 
 export interface Completeness {
   readonly list: "COMPLETE" | "PARTIAL" | "FAILED";
-  readonly listReason: "OK" | "PAGE_LIMIT" | "BUDGET" | "ERROR" | "INVALID_RESPONSE";
+  readonly listReason: "OK" | "PAGE_LIMIT" | "BUDGET" | "ERROR" | "INVALID_RESPONSE" | "INCONSISTENT_PAGING";
   readonly categories: "LOADED" | "FAILED" | "NOT_NEEDED" | "SKIPPED_BUDGET";
   readonly details: StageCounts;
   readonly payments: StageCounts & { readonly notApplicable: number };
@@ -122,11 +122,19 @@ export function assertValidWindow(window: LoadWindow): void {
   if (window.basis !== "voucherDate" && window.basis !== "createdDate") throw new RangeError("window.basis is invalid");
 }
 
+/** Best-effort, never-throwing text of an arbitrary thrown value (exotic objects included). */
+function errorText(err: unknown): string {
+  try {
+    if (err instanceof Error) return String(err.message);
+    if (typeof err === "string") return err;
+    return String(err);
+  } catch {
+    return "unprintable error";
+  }
+}
+
 function describeError(stage: Stage, err: unknown, recordId?: string): LoadError {
-  const message = cleanUntrustedText(err instanceof Error ? err.message : String(err), {
-    maxChars: MAX_ERROR_MESSAGE_CHARS,
-    singleLine: true,
-  }).text;
+  const message = cleanUntrustedText(errorText(err), { maxChars: MAX_ERROR_MESSAGE_CHARS, singleLine: true }).text;
   if (err instanceof LexwareApiError) return { stage, recordId, status: err.status, kind: err.kind, message };
   if (err instanceof UnsafeRequestPathError) return { stage, recordId, status: null, kind: "unsafe_path", message };
   if (err instanceof ResponseTooLargeError) return { stage, recordId, status: null, kind: "too_large", message };
@@ -148,8 +156,11 @@ export async function loadFinanceSnapshot(client: ReadOnlyLexwareClient, options
   assertValidWindow(options.window);
   const timeZone = options.timeZone ?? DEFAULT_TIME_ZONE;
   const now = options.now ?? (() => new Date());
-  const maxRequests = Math.min(Math.max(1, Math.floor(options.maxRequests ?? DEFAULT_MAX_REQUESTS)), MAX_REQUESTS_LIMIT);
-  const maxListPages = Math.max(1, Math.floor(options.maxListPages ?? DEFAULT_MAX_LIST_PAGES));
+  // Non-finite options fall back to the defaults: a typo must never mean "unlimited".
+  const finiteOr = (v: number | undefined, fallback: number) => (typeof v === "number" && Number.isFinite(v) ? v : fallback);
+  const maxRequests = Math.min(Math.max(1, Math.floor(finiteOr(options.maxRequests, DEFAULT_MAX_REQUESTS))), MAX_REQUESTS_LIMIT);
+  const maxListPages = Math.max(1, Math.floor(finiteOr(options.maxListPages, DEFAULT_MAX_LIST_PAGES)));
+  const maxCharactersPerFile = Math.max(0, Math.floor(finiteOr(options.maxCharactersPerFile, DEFAULT_MAX_CHARS_PER_FILE)));
   const includeDetails = options.includeDetails ?? true;
   const includePayments = options.includePayments ?? true;
   const inspectAttachments = options.inspectAttachments ?? false;
@@ -224,7 +235,16 @@ export async function loadFinanceSnapshot(client: ReadOnlyLexwareClient, options
       }
     }
     const totalPages = typeof res.totalPages === "number" ? res.totalPages : null;
-    if (res.content.length === 0 || res.last === true || (totalPages !== null && page + 1 >= totalPages)) break;
+    const stop = res.content.length === 0 || res.last === true || (totalPages !== null && page + 1 >= totalPages);
+    if (stop) {
+      // Fail closed on self-contradictory paging metadata (e.g. "last" or an empty page while more pages are announced).
+      if (totalPages !== null && page + 1 < totalPages) {
+        list = "PARTIAL";
+        listReason = "INCONSISTENT_PAGING";
+        errors.push({ stage: "list", status: null, kind: "inconsistent_paging", message: `page ${page} ended the list but totalPages is ${totalPages}` });
+      }
+      break;
+    }
   }
 
   // Local window check (Lexware's filter semantics are not relied on for inclusiveness).
@@ -289,6 +309,7 @@ export async function loadFinanceSnapshot(client: ReadOnlyLexwareClient, options
           next = applyCategories(next, categoryIndex);
         } else {
           details.failed += 1;
+          errors.push({ stage: "detail", recordId: id, status: null, kind: "invalid_response", message: "detail response is not an object or its id does not match" });
         }
         set(next);
       } catch (err) {
@@ -318,7 +339,10 @@ export async function loadFinanceSnapshot(client: ReadOnlyLexwareClient, options
         const raw = await budgeted(() => client.get<unknown>(`/v1/payments/${encodeURIComponent(id)}`));
         const next = applyPayment(r, raw, ctx());
         if (next.payment.availability === "AVAILABLE") payments.fetched += 1;
-        else payments.failed += 1;
+        else {
+          payments.failed += 1;
+          errors.push({ stage: "payment", recordId: id, status: null, kind: "invalid_response", message: "payment response is not an object" });
+        }
         set(next);
       } catch (err) {
         if (err instanceof BudgetExhausted) {
@@ -355,7 +379,7 @@ export async function loadFinanceSnapshot(client: ReadOnlyLexwareClient, options
           const result = await inspectLexwareFile(
             budgetedClient,
             f.fileId,
-            { maxCharacters: options.maxCharactersPerFile ?? DEFAULT_MAX_CHARS_PER_FILE },
+            { maxCharacters: maxCharactersPerFile },
             options.extractor,
           );
           attachments.fetched += 1;

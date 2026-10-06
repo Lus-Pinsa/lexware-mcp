@@ -44,6 +44,7 @@ export interface NormalizeContext {
 const MAX_NAME_CHARS = 200;
 const MAX_NUMBER_CHARS = 100;
 const MAX_CODE_CHARS = 60;
+const MAX_ATTACHMENT_TEXT_CHARS = 200_000;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,63}$/;
 const CURRENCY_PATTERN = /^[A-Z]{3}$/;
 
@@ -73,7 +74,8 @@ const TYPE_TABLE: Readonly<Record<string, { kind: FinanceKind; role: DocumentRol
 };
 
 export function classifyVoucherType(voucherType: string): { kind: FinanceKind; role: DocumentRole; known: boolean } {
-  const hit = TYPE_TABLE[voucherType];
+  // Own-property lookup only: "constructor" or "__proto__" must never hit the prototype chain.
+  const hit = Object.hasOwn(TYPE_TABLE, voucherType) ? TYPE_TABLE[voucherType] : undefined;
   return hit ? { ...hit, known: true } : { kind: "UNKNOWN", role: "OTHER", known: false };
 }
 
@@ -116,13 +118,20 @@ const STATUS_TABLE: Readonly<Record<string, StatusCategory>> = {
 
 export function categorizeStatus(status: string | null): { category: StatusCategory; known: boolean } {
   if (status === null) return { category: "UNKNOWN", known: false };
-  const hit = STATUS_TABLE[status];
+  const hit = Object.hasOwn(STATUS_TABLE, status) ? STATUS_TABLE[status] : undefined;
   return hit ? { category: hit, known: true } : { category: "UNKNOWN", known: false };
 }
 
-/** The voucherlist computes "overdue"; detail endpoints report the stored status "open". */
+/**
+ * Two raw statuses describe the same state when they are equal, when one is the voucherlist's computed
+ * "overdue" and the other the stored "open", or when both are known statuses of the same category
+ * (e.g. "paid" / "paidoff"). Anything else is a real disagreement.
+ */
 function statusesCompatible(a: string, b: string): boolean {
-  return a === b || (a === "overdue" && b === "open") || (a === "open" && b === "overdue");
+  if (a === b || (a === "overdue" && b === "open") || (a === "open" && b === "overdue")) return true;
+  const ca = categorizeStatus(a).category;
+  const cb = categorizeStatus(b).category;
+  return ca === cb && ca !== "OTHER" && ca !== "UNKNOWN";
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -224,8 +233,9 @@ function mergeField<T>(current: FieldValue<T>, incoming: FieldValue<T>, equal = 
   return incoming.quality === "PLACEHOLDER" ? incoming : current;
 }
 
+/** One stamp per source (the latest fetch wins), so re-applying a response does not grow the list. */
 function withSource(record: FinanceRecord, source: Source, fetchedAt: string): FinanceRecord["provenance"]["sources"] {
-  return [...record.provenance.sources, { source, fetchedAt }];
+  return [...record.provenance.sources.filter((s) => s.source !== source), { source, fetchedAt }];
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -238,6 +248,8 @@ const EVENT_ISSUES: ReadonlySet<IssueCode> = new Set<IssueCode>([
   "LINE_ITEM_SUM_MISMATCH",
   "TOTALS_INCONSISTENT",
   "DETAIL_ID_MISMATCH",
+  "ATTACHMENT_ID_INVALID",
+  "LINE_ITEM_FIELDS_MISSING",
 ]);
 
 function issue(code: IssueCode, field?: string): QualityIssue {
@@ -271,12 +283,16 @@ export function recomputeIssues(record: FinanceRecord): FinanceRecord {
   else if (record.statusCategory === "UNKNOWN") add("UNKNOWN_STATUS", "status");
   if (record.statusCategory === "UNCHECKED") add("STATUS_UNCHECKED", "status");
 
-  if (!isUsable(record.voucherNumber)) add("VOUCHER_NUMBER_MISSING", "voucherNumber");
-  if (!isUsable(record.voucherDate)) add("VOUCHER_DATE_MISSING", "voucherDate");
-  if (!isUsable(record.createdAt)) add("CREATED_DATE_MISSING", "createdAt");
+  if (record.voucherNumber.quality === "CONFLICT") add("FIELD_SOURCES_DIFFER", "voucherNumber");
+  else if (!isUsable(record.voucherNumber)) add("VOUCHER_NUMBER_MISSING", "voucherNumber");
+  if (record.voucherDate.quality === "CONFLICT") add("VOUCHER_DATE_SOURCES_DIFFER", "voucherDate");
+  else if (!isUsable(record.voucherDate)) add("VOUCHER_DATE_MISSING", "voucherDate");
+  if (record.createdAt.quality === "CONFLICT") add("FIELD_SOURCES_DIFFER", "createdAt");
+  else if (!isUsable(record.createdAt)) add("CREATED_DATE_MISSING", "createdAt");
 
   if (financial) {
-    if (!isUsable(record.dueDate)) add("DUE_DATE_MISSING", "dueDate");
+    if (record.dueDate.quality === "CONFLICT") add("FIELD_SOURCES_DIFFER", "dueDate");
+    else if (!isUsable(record.dueDate)) add("DUE_DATE_MISSING", "dueDate");
     if (record.dueDateConfidence === "POSSIBLE_DEFAULT") add("DUE_DATE_EQUALS_VOUCHER_DATE", "dueDate");
     if (record.currency.quality === "CONFLICT") add("CURRENCY_SOURCES_DIFFER", "currency");
     else if (!isUsable(record.currency)) add("CURRENCY_MISSING", "currency");
@@ -301,7 +317,8 @@ export function recomputeIssues(record: FinanceRecord): FinanceRecord {
     if (record.provenance.detail === "NOT_FETCHED") add("DETAIL_NOT_FETCHED");
     if (record.provenance.detail === "FAILED") add("DETAIL_FETCH_FAILED");
 
-    if (!isUsable(record.counterparty.contactId)) add("CONTACT_ID_MISSING", "counterparty");
+    if (record.counterparty.contactId.quality === "CONFLICT") add("CONTACT_ID_SOURCES_DIFFER", "counterparty");
+    else if (!isUsable(record.counterparty.contactId)) add("CONTACT_ID_MISSING", "counterparty");
     if (record.counterparty.matchKeyBasis === "NONE") add("COUNTERPARTY_UNIDENTIFIED", "counterparty");
     if (record.role === "CREDIT_NOTE") add("CREDIT_NOTE_SIGN_UNVERIFIED", "grossCents");
     if (record.role === "DOWN_PAYMENT_INVOICE") add("DOWN_PAYMENT_DOUBLE_COUNT_RISK", "grossCents");
@@ -310,6 +327,7 @@ export function recomputeIssues(record: FinanceRecord): FinanceRecord {
     if (record.payment.availability === "FETCH_FAILED") add("PAYMENT_FETCH_FAILED", "payment");
 
     if (record.provenance.attachments === "SKIPPED") add("ATTACHMENT_NOT_INSPECTED", "attachments");
+    if (record.provenance.attachments === "FAILED") add("ATTACHMENT_INSPECTION_FAILED", "attachments");
     for (const a of record.attachments.value ?? []) {
       const status = a.inspection?.status;
       if (status === "ocr_required" || status === "unsupported_file_type") add("ATTACHMENT_TEXT_UNAVAILABLE", "attachments");
@@ -325,7 +343,9 @@ export function recomputeIssues(record: FinanceRecord): FinanceRecord {
     seen.add(key);
     return true;
   });
-  unique.sort((a, b) => (a.code === b.code ? (a.field ?? "").localeCompare(b.field ?? "") : a.code.localeCompare(b.code)));
+  // Plain code-unit order: locale-independent and stable across runtimes.
+  const cmp = (x: string, y: string) => (x < y ? -1 : x > y ? 1 : 0);
+  unique.sort((a, b) => (a.code === b.code ? cmp(a.field ?? "", b.field ?? "") : cmp(a.code, b.code)));
   return { ...record, issues: unique };
 }
 
@@ -343,6 +363,8 @@ export function normalizeNameKey(name: string): string {
 }
 
 function buildCounterparty(contactId: FieldValue<string>, name: FieldValue<string>): Counterparty {
+  // Disagreeing contact ids: grouping by name would hide the disagreement, so the counterparty is unidentified.
+  if (contactId.quality === "CONFLICT") return { contactId, name, matchKey: null, matchKeyBasis: "NONE" };
   if (isUsable(contactId)) return { contactId, name, matchKey: `id:${contactId.value}`, matchKeyBasis: "CONTACT_ID" };
   const key = isUsable(name) ? normalizeNameKey(name.value) : "";
   return key !== ""
@@ -458,14 +480,24 @@ function mergeInstant(current: FieldValue<string>, incoming: FieldValue<string>)
   return mergeField(current, incoming, instantsEqual);
 }
 
-function readFileIds(raw: unknown, source: Source): FieldValue<ReadonlyArray<Attachment>> {
-  if (raw === undefined || raw === null) return missing("FIELD_ABSENT", source);
-  if (!Array.isArray(raw)) return missing("INVALID_TYPE", source);
+function readFileIds(raw: unknown, source: Source): { field: FieldValue<ReadonlyArray<Attachment>>; invalid: number } {
+  if (raw === undefined || raw === null) return { field: missing("FIELD_ABSENT", source), invalid: 0 };
+  if (!Array.isArray(raw)) return { field: missing("INVALID_TYPE", source), invalid: 0 };
   const files: Attachment[] = [];
+  const seen = new Set<string>();
+  let invalid = 0;
   for (const id of raw) {
-    if (typeof id === "string" && ID_PATTERN.test(id)) files.push({ fileId: id, inspection: null });
+    if (typeof id !== "string" || !ID_PATTERN.test(id)) invalid += 1;
+    else if (!seen.has(id)) {
+      seen.add(id);
+      files.push({ fileId: id, inspection: null });
+    }
   }
-  return structured(files, source);
+  return { field: structured(files, source), invalid };
+}
+
+function absentOrInvalid(raw: unknown): Reason {
+  return raw === undefined || raw === null ? "FIELD_ABSENT" : "INVALID_TYPE";
 }
 
 function finishDetail(record: FinanceRecord, source: Source, ctx: NormalizeContext, paymentTermStated: boolean): FinanceRecord {
@@ -474,6 +506,15 @@ function finishDetail(record: FinanceRecord, source: Source, ctx: NormalizeConte
     provenance: { ...record.provenance, sources: withSource(record, source, ctx.fetchedAt), detail: "FETCHED" },
   };
   return recomputeIssues({ ...next, dueDateConfidence: dueDateConfidence(next, paymentTermStated) });
+}
+
+/** net = gross − tax, only when both are usable; otherwise MISSING with the most specific reason. */
+function deriveNet(gross: FieldValue<number>, tax: FieldValue<number>, src: Source): FieldValue<number> {
+  if (isUsable(gross) && isUsable(tax)) return derived(gross.value - tax.value, "GROSS_MINUS_TAX");
+  if (gross.quality === "CONFLICT") return missing("DEPENDS_ON_DISPUTED_GROSS", src);
+  if (tax.quality === "PLACEHOLDER") return missing("UNCHECKED_TAX_PLACEHOLDER", src);
+  if (!isUsable(gross)) return missing(gross.reason ?? "FIELD_ABSENT", src);
+  return missing(tax.reason ?? "FIELD_ABSENT", src);
 }
 
 /** Mark the detail fetch as failed (record stays list-based; issue DETAIL_FETCH_FAILED). */
@@ -521,6 +562,7 @@ export function applyVoucherDetail(record: FinanceRecord, raw: unknown, ctx: Nor
     for (const it of raw.voucherItems) {
       if (!isObject(it)) {
         itemSumsUsable = false;
+        r = addEventIssue(r, "LINE_ITEM_FIELDS_MISSING", "lineItems");
         continue;
       }
       const amount = readAmount(it.amount, src);
@@ -531,6 +573,7 @@ export function applyVoucherDetail(record: FinanceRecord, raw: unknown, ctx: Nor
         itemSumTax += tax.field.value;
       } else {
         itemSumsUsable = false;
+        r = addEventIssue(r, "LINE_ITEM_FIELDS_MISSING", "lineItems");
       }
       parsed.push({
         amountCents: amount.field,
@@ -544,14 +587,15 @@ export function applyVoucherDetail(record: FinanceRecord, raw: unknown, ctx: Nor
     }
     items = structured(parsed, src);
   } else {
-    items = missing(raw.voucherItems === undefined ? "FIELD_ABSENT" : "INVALID_TYPE", src);
+    items = missing(absentOrInvalid(raw.voucherItems), src);
   }
 
   // Tax: a 0 on an unreviewed (or status-unknown) voucher without line items is Lexware's placeholder,
   // not a tax amount — treating it as 0 would overstate net and understate input VAT.
   const taxRead = readAmount(raw.totalTaxAmount, src);
   if (taxRead.precisionReduced) r = addEventIssue(r, "AMOUNT_PRECISION_REDUCED", "taxCents");
-  const noItems = items.value !== null && items.value.length === 0;
+  // Absent or malformed line items count as "no line items": the 0 is still not a confirmed tax amount.
+  const noItems = items.value === null || items.value.length === 0;
   const notReviewed = r.statusCategory === "UNCHECKED" || r.statusCategory === "UNKNOWN";
   let tax: FieldValue<number> = taxRead.field;
   if (notReviewed && noItems && isUsable(taxRead.field) && taxRead.field.value === 0) {
@@ -568,11 +612,12 @@ export function applyVoucherDetail(record: FinanceRecord, raw: unknown, ctx: Nor
     }
   }
 
-  const net: FieldValue<number> =
-    isUsable(r.grossCents) && isUsable(tax)
-      ? derived(r.grossCents.value - tax.value, "GROSS_MINUS_TAX")
-      : missing(tax.quality === "PLACEHOLDER" ? "UNCHECKED_TAX_PLACEHOLDER" : (tax.reason ?? "FIELD_ABSENT"), src);
+  // Tax and net are only meaningful relative to an agreed gross amount.
+  if (r.grossCents.quality === "CONFLICT" && isUsable(tax)) tax = missing("DEPENDS_ON_DISPUTED_GROSS", src);
+  const net = deriveNet(r.grossCents, tax, src);
 
+  const files = readFileIds(raw.files, src);
+  if (files.invalid > 0) r = addEventIssue(r, "ATTACHMENT_ID_INVALID", "attachments");
   const contactId = mergeField(r.counterparty.contactId, readId(raw.contactId, src));
   r = {
     ...r,
@@ -580,7 +625,7 @@ export function applyVoucherDetail(record: FinanceRecord, raw: unknown, ctx: Nor
     taxCents: tax,
     netCents: net,
     lineItems: items,
-    attachments: readFileIds(raw.files, src),
+    attachments: files.field,
     counterparty: buildCounterparty(contactId, r.counterparty.name),
   };
   return finishDetail(r, src, ctx, false);
@@ -647,7 +692,7 @@ export function applySalesDocumentDetail(
     }
     items = structured(parsed, source);
   } else {
-    items = missing(raw.lineItems === undefined ? "FIELD_ABSENT" : "INVALID_TYPE", source);
+    items = missing(absentOrInvalid(raw.lineItems), source);
   }
 
   const address = isObject(raw.address) ? raw.address : {};
@@ -664,12 +709,15 @@ export function applySalesDocumentDetail(
   const paymentTermStated =
     typeof paymentConditions.paymentTermDuration === "number" && Number.isInteger(paymentConditions.paymentTermDuration);
 
+  const mergedGross = mergeField(r.grossCents, gross.field);
+  // Net and tax from the document only count when the gross amount is agreed between list and document.
+  const disputed = mergedGross.quality === "CONFLICT";
   r = {
     ...r,
     currency: mergeField(r.currency, readCurrency(totals.currency, source)),
-    grossCents: mergeField(r.grossCents, gross.field),
-    netCents: net.field,
-    taxCents: tax.field,
+    grossCents: mergedGross,
+    netCents: disputed && isUsable(net.field) ? missing("DEPENDS_ON_DISPUTED_GROSS", source) : net.field,
+    taxCents: disputed && isUsable(tax.field) ? missing("DEPENDS_ON_DISPUTED_GROSS", source) : tax.field,
     taxType,
     lineItems: items,
     attachments,
@@ -706,7 +754,7 @@ export function applyPayment(record: FinanceRecord, raw: unknown, ctx: Normalize
     }
     items = structured(parsed, src);
   } else {
-    items = missing(raw.paymentItems === undefined ? "FIELD_ABSENT" : "INVALID_TYPE", src);
+    items = missing(absentOrInvalid(raw.paymentItems), src);
   }
 
   r = {
@@ -756,13 +804,21 @@ export type CategoryIndex = ReadonlyMap<string, { name: FieldValue<string>; type
 export function buildCategoryIndex(raw: unknown): CategoryIndex {
   const list = Array.isArray(raw) ? raw : isObject(raw) && Array.isArray(raw.data) ? raw.data : [];
   const index = new Map<string, { name: FieldValue<string>; type: FieldValue<CategoryType> }>();
+  const ambiguous = new Set<string>();
   for (const c of list) {
     if (!isObject(c) || typeof c.id !== "string" || !ID_PATTERN.test(c.id)) continue;
     const type: FieldValue<CategoryType> =
       c.type === "income" || c.type === "outgo"
         ? structured(c.type, "posting-categories")
         : missing(c.type === undefined ? "FIELD_ABSENT" : "INVALID_FORMAT", "posting-categories");
-    index.set(c.id, { name: readShortText(c.name, "posting-categories", MAX_NAME_CHARS), type });
+    const entry = { name: readShortText(c.name, "posting-categories", MAX_NAME_CHARS), type };
+    const prev = index.get(c.id);
+    if (prev && (prev.name.value !== entry.name.value || prev.type.value !== entry.type.value)) ambiguous.add(c.id);
+    if (!prev) index.set(c.id, entry);
+  }
+  // The same id with different name/type cannot be resolved without guessing.
+  for (const id of ambiguous) {
+    index.set(id, { name: missing("CATEGORY_AMBIGUOUS", "posting-categories"), type: missing("CATEGORY_AMBIGUOUS", "posting-categories") });
   }
   return index;
 }
@@ -808,7 +864,8 @@ export function applyAttachmentInspection(record: FinanceRecord, result: Inspect
     byteLength: result.byteLength,
     mimeType: result.mimeType,
     pageCount: result.pageCount,
-    text: result.textAvailable ? result.text : null,
+    // Defence in depth: clean again even though the inspector already did (idempotent).
+    text: result.textAvailable ? cleanUntrustedText(result.text, { maxChars: MAX_ATTACHMENT_TEXT_CHARS }).text : null,
     textTruncated: result.textTruncated,
   };
   const next = files.map((f) => (f.fileId === result.fileId ? { ...f, inspection } : f));

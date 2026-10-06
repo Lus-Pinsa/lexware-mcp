@@ -22,7 +22,9 @@ export const DEFAULT_TIME_ZONE = "Europe/Berlin";
 
 /**
  * How far a value can be trusted.
- * - STRUCTURED: read verbatim from a structured Lexware field.
+ * - STRUCTURED: read from a structured Lexware field. Text fields are cleaned as untrusted input (control and
+ *   invisible characters removed, markup/URL schemes neutralized, whitespace collapsed, length-capped), so they
+ *   are display/matching values, not byte-exact copies.
  * - DERIVED: computed deterministically from STRUCTURED values (see `reason` for the rule).
  * - UNVERIFIED: taken from untrusted content (e.g. PDF text); never a fact.
  * - PLACEHOLDER: Lexware returned a value known not to be meaningful here (kept in `raw`, `value` is null).
@@ -66,6 +68,8 @@ export const REASONS = [
   "CATEGORY_UNRESOLVED",
   "CATEGORIES_NOT_LOADED",
   "NO_LINE_ITEMS",
+  "DEPENDS_ON_DISPUTED_GROSS",
+  "CATEGORY_AMBIGUOUS",
 ] as const;
 export type Reason = (typeof REASONS)[number];
 
@@ -111,6 +115,8 @@ export const ISSUE_CODES = [
   "STATUS_SOURCES_DIFFER",
   "VOUCHER_NUMBER_MISSING",
   "VOUCHER_DATE_MISSING",
+  "VOUCHER_DATE_SOURCES_DIFFER",
+  "FIELD_SOURCES_DIFFER",
   "CREATED_DATE_MISSING",
   "DUE_DATE_MISSING",
   "DUE_DATE_EQUALS_VOUCHER_DATE",
@@ -126,8 +132,10 @@ export const ISSUE_CODES = [
   "TOTALS_INCONSISTENT",
   "LINE_ITEMS_MISSING",
   "LINE_ITEM_SUM_MISMATCH",
+  "LINE_ITEM_FIELDS_MISSING",
   "CATEGORY_UNRESOLVED",
   "CONTACT_ID_MISSING",
+  "CONTACT_ID_SOURCES_DIFFER",
   "COUNTERPARTY_UNIDENTIFIED",
   "AMOUNT_PRECISION_REDUCED",
   "CREDIT_NOTE_SIGN_UNVERIFIED",
@@ -142,6 +150,8 @@ export const ISSUE_CODES = [
   "ATTACHMENT_TEXT_UNAVAILABLE",
   "ATTACHMENT_TOO_LARGE",
   "ATTACHMENT_PARSE_FAILED",
+  "ATTACHMENT_INSPECTION_FAILED",
+  "ATTACHMENT_ID_INVALID",
 ] as const;
 export type IssueCode = (typeof ISSUE_CODES)[number];
 
@@ -154,6 +164,8 @@ export const ISSUE_SEVERITY: Readonly<Record<IssueCode, Severity>> = {
   STATUS_SOURCES_DIFFER: "WARNING",
   VOUCHER_NUMBER_MISSING: "WARNING",
   VOUCHER_DATE_MISSING: "CRITICAL",
+  VOUCHER_DATE_SOURCES_DIFFER: "CRITICAL",
+  FIELD_SOURCES_DIFFER: "WARNING",
   CREATED_DATE_MISSING: "INFO",
   DUE_DATE_MISSING: "INFO",
   DUE_DATE_EQUALS_VOUCHER_DATE: "INFO",
@@ -169,8 +181,10 @@ export const ISSUE_SEVERITY: Readonly<Record<IssueCode, Severity>> = {
   TOTALS_INCONSISTENT: "CRITICAL",
   LINE_ITEMS_MISSING: "INFO",
   LINE_ITEM_SUM_MISMATCH: "WARNING",
+  LINE_ITEM_FIELDS_MISSING: "WARNING",
   CATEGORY_UNRESOLVED: "INFO",
   CONTACT_ID_MISSING: "INFO",
+  CONTACT_ID_SOURCES_DIFFER: "WARNING",
   COUNTERPARTY_UNIDENTIFIED: "WARNING",
   AMOUNT_PRECISION_REDUCED: "WARNING",
   CREDIT_NOTE_SIGN_UNVERIFIED: "INFO",
@@ -185,6 +199,8 @@ export const ISSUE_SEVERITY: Readonly<Record<IssueCode, Severity>> = {
   ATTACHMENT_TEXT_UNAVAILABLE: "INFO",
   ATTACHMENT_TOO_LARGE: "WARNING",
   ATTACHMENT_PARSE_FAILED: "WARNING",
+  ATTACHMENT_INSPECTION_FAILED: "WARNING",
+  ATTACHMENT_ID_INVALID: "WARNING",
 };
 
 export interface QualityIssue {

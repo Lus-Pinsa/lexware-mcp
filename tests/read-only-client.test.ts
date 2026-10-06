@@ -102,7 +102,17 @@ function makeClient(fetchFn: typeof fetch) {
 }
 
 describe("LexwareClient — dot-segment guard", () => {
-  it.each(["/v1/files/..", "/v1/files/%2e%2e", "/v1/files/.", "/v1/files/%2E", `/v1/files/${encodeURIComponent("..")}`])(
+  it.each([
+    "/v1/files/..",
+    "/v1/files/%2e%2e",
+    "/v1/files/.",
+    "/v1/files/%2E",
+    `/v1/files/${encodeURIComponent("..")}`,
+    "/v1/files/a\\..\\..\\profile",
+    "/v1/files/.\t./x",
+    "/v1/files/.\n./x",
+    "/v1/files/x\r",
+  ])(
     "refuses %j without sending a request",
     async (path) => {
       const fetchFn = vi.fn();

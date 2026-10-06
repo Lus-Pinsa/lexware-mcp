@@ -31,5 +31,10 @@ export function resolveBuildInfo(env: NodeJS.ProcessEnv): BuildInfo {
   return { sha: null, shaSource: null, status: "UNKNOWN" };
 }
 
+/** Value of the `build=` field in the startup log line: the SHA, or `unknown` / `invalid_format`. */
+export function buildLogLabel(info: BuildInfo): string {
+  return info.sha ?? info.status.toLowerCase();
+}
+
 /** Process start, captured once at module load (used for uptime reporting). */
 export const PROCESS_STARTED_AT = new Date();

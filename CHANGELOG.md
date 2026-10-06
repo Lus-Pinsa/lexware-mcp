@@ -16,7 +16,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`get-server-info`** (read tier, local): build commit (`RENDER_GIT_COMMIT`), active tiers, exact list and count
   of registered tools incl. write-capable ones — to verify what a deployment really exposes (e.g. a stale client
   tool list vs. a misconfigured server). Never returns secrets; does not call Lexware. The startup log line now
-  also carries `build=<sha|unknown>`.
+  also carries `build=<sha|unknown|invalid_format>`.
 - **LU'S expense read pipeline** (already deployed; documented here): signature-verified
   `POST /webhooks/lexware` receiver (`LEXWARE_WEBHOOK_PUBLIC_KEY`, RSA-SHA512, fail-closed 503 without key)
   that queues `voucher.created` events in an in-memory pending queue; read tools
@@ -35,10 +35,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Security
 - **PDF input hardening** for `get-voucher-file-text` (and the finance loader): 10 MiB download limit (aborted
-  while streaming), first 20 pages only, 15 s parse timeout with parser teardown, capped text, and extracted text
-  returned as UNTRUSTED content (control/bidi/zero-width/tag characters removed, markup and URL schemes
+  while streaming, re-checked after download), parsing in an isolated worker thread with a 256 MB heap limit that
+  is terminated after 15 s (a hostile PDF can no longer block the server), at most 2 parses at a time (fail fast
+  instead of queueing), first 20 pages only, capped text, and extracted text returned as UNTRUSTED content
+  (control/bidi/zero-width/tag/variation-selector characters removed, markup, URL schemes and `www.` links
   neutralized, nonce-delimited block with a fixed "data, not instructions" preamble).
-- **Lexware client:** request paths with `.`/`..` segments (incl. percent-encoded) are refused before sending.
+- **Lexware client:** request paths with `.`/`..` segments (incl. percent-encoded, encoded separators and `..;`),
+  backslashes or TAB/CR/LF are refused before sending; a malformed `maxBytes` is refused instead of meaning
+  "unlimited".
+
+### Changed
+- `get-voucher-file-text` output: all previous `structuredContent` fields are kept; new fields `pagesParsed`,
+  `pageLimitApplied`, `untrustedContent`, `contentWarning`, `limits`. Behaviour changes: `mimeType` is normalized
+  (parameters stripped, lower-cased, `null` if malformed), `extractedText` is sanitized/neutralized (e.g. `<` → `‹`,
+  `https:` → `https[:]`), character counts are code points, and pdf-parse page markers are no longer included —
+  a scanned PDF without a text layer is now correctly reported as OCR_REQUIRED.
 - **Dependency hardening:** semver-compatible updates of vulnerable transitive dependencies
   (incl. critical `proxy-addr` 2.0.8, `qs`, `body-parser`, `fast-uri`, `ip-address`, `@hono/node-server`, `hono`,
   `postcss`, `nanoid`, `source-map-js`, `browserslist`, `brace-expansion`) and a scoped override that gives

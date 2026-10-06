@@ -275,18 +275,35 @@ describe("Phase 2 finance truth layer stays read-only", () => {
     expect(Object.isFrozen(facade)).toBe(true);
   });
 
-  it("finance modules contain no write path (structural scan of src/finance)", () => {
-    const dir = join(process.cwd(), "src/finance");
-    const files = readdirSync(dir).filter((f) => f.endsWith(".ts"));
-    expect(files.length).toBeGreaterThan(0);
-    for (const f of files) {
-      const src = readFileSync(join(dir, f), "utf8");
-      for (const forbidden of [/\.post\s*\(/, /\.request\s*\(/, /postMultipart/, /\bfetch\s*\(/, /node:fs/, /child_process/, /\beval\s*\(/, /new Function/]) {
-        expect({ file: f, match: forbidden.test(src) }).toEqual({ file: f, match: false });
+  it("finance modules contain no write path (recursive structural scan + import allowlist)", () => {
+    const root = join(process.cwd(), "src/finance");
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        if (e.isDirectory()) walk(join(dir, e.name));
+        else if (e.name.endsWith(".ts")) files.push(join(dir, e.name));
       }
-      // Only the GET-only facade type may be imported from the Lexware layer, never the full client class.
-      expect({ file: f, importsClient: /from "\.\.\/lexware\/client\.js"/.test(src) }).toEqual({ file: f, importsClient: false });
+    };
+    walk(root);
+    expect(files.length).toBeGreaterThan(0);
+    // Imports a finance module may use: its own modules, the GET-only facade type, file inspection, errors, untrusted-text helpers.
+    const allowedImport = /^(\.\/[a-z-]+\.js|\.\.\/lexware\/(read-only-client|file-inspection|errors)\.js|\.\.\/untrusted\.js)$/;
+    for (const f of files) {
+      const src = readFileSync(f, "utf8");
+      const rel = f.slice(root.length + 1);
+      for (const forbidden of [/\.post\s*\(/, /\.request\s*\(/, /postMultipart/, /\bfetch\s*\(/, /node:fs/, /child_process/, /\beval\s*\(/, /new Function/, /process\.env/]) {
+        expect({ file: rel, match: forbidden.test(src) }).toEqual({ file: rel, match: false });
+      }
+      for (const m of src.matchAll(/from\s+"([^"]+)"/g)) {
+        expect({ file: rel, import: m[1], allowed: allowedImport.test(m[1]) }).toEqual({ file: rel, import: m[1], allowed: true });
+      }
     }
+  });
+
+  it("get-voucher-file-text reads through the GET-only facade (not the full client)", () => {
+    const files = readFileSync(join(process.cwd(), "src/tools/files.ts"), "utf8");
+    expect(files).toMatch(/const readOnly = createReadOnlyLexwareClient\(client\)/);
+    expect(files).toMatch(/inspectLexwareFile\(\s*readOnly,/);
   });
 
   it("the finance loader runs end-to-end through the facade without any write call", async () => {

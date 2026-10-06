@@ -1,6 +1,6 @@
 import type { McpServer } from "skybridge/server";
 import { describe, expect, it, vi } from "vitest";
-import { SERVER_NAME, SERVER_VERSION, resolveBuildInfo } from "../src/build-info.js";
+import { SERVER_NAME, SERVER_VERSION, buildLogLabel, resolveBuildInfo } from "../src/build-info.js";
 import { type Config, loadConfig } from "../src/config.js";
 import type { LexwareClient } from "../src/lexware/client.js";
 import { registerTools } from "../src/tools/index.js";
@@ -48,7 +48,7 @@ describe("get-server-info", () => {
     const tool = tools.get("get-server-info");
     expect(tool?.annotations).toMatchObject({ readOnlyHint: true, openWorldHint: false });
     const out = await tool!.handler({});
-    const info = out.structuredContent as ReturnType<typeof buildServerInfo>;
+    const info = out.structuredContent as unknown as ReturnType<typeof buildServerInfo>;
     expect(info.server).toEqual({ name: SERVER_NAME, version: SERVER_VERSION });
     expect(info.build).toEqual({ sha: "abcdef1234567890abcdef1234567890abcdef12", shaSource: "RENDER_GIT_COMMIT", status: "KNOWN" });
     expect(info.capabilities).toEqual({ tiers: ["read"], effectiveReadOnly: true });
@@ -65,7 +65,7 @@ describe("get-server-info", () => {
 
   it("lists exactly the registered write-capable tools in the drafts configuration", async () => {
     const tools = capture(cfg({ LEXWARE_ENABLE_DRAFTS: "true" }), { ...SECRETS });
-    const info = (await tools.get("get-server-info")!.handler({})).structuredContent as ReturnType<typeof buildServerInfo>;
+    const info = (await tools.get("get-server-info")!.handler({})).structuredContent as unknown as ReturnType<typeof buildServerInfo>;
     const expectedWrites = [...tools.values()].filter((t) => t.annotations?.readOnlyHint !== true).map((t) => t.name).sort();
     expect(info.capabilities).toEqual({ tiers: ["read", "drafts"], effectiveReadOnly: false });
     expect(info.tools.writeCapable).toEqual(expectedWrites);
@@ -74,7 +74,7 @@ describe("get-server-info", () => {
   });
 
   it("never contains secret values (API key, token, webhook key)", async () => {
-    for (const extra of [{ LEXWARE_READ_ONLY: "true" }, { LEXWARE_ENABLE_FINALIZE: "true" }]) {
+    for (const extra of [{ LEXWARE_READ_ONLY: "true" }, { LEXWARE_ENABLE_FINALIZE: "true" }] as Array<Record<string, string>>) {
       const tools = capture(cfg(extra), { ...SECRETS });
       const out = await tools.get("get-server-info")!.handler({});
       const serialized = JSON.stringify(out);
@@ -105,6 +105,12 @@ describe("resolveBuildInfo", () => {
     expect(bad).toEqual({ sha: null, shaSource: "RENDER_GIT_COMMIT", status: "INVALID_FORMAT" });
     expect(resolveBuildInfo({ SOURCE_COMMIT: "abc1234" })).toEqual({ sha: "abc1234", shaSource: "SOURCE_COMMIT", status: "KNOWN" });
     expect(resolveBuildInfo({ GIT_COMMIT_SHA: "abc123" }).status).toBe("INVALID_FORMAT"); // too short
+  });
+
+  it("the startup log label is the SHA, 'unknown' or 'invalid_format' — never the raw value", () => {
+    expect(buildLogLabel(resolveBuildInfo({ RENDER_GIT_COMMIT: "abc1234" }))).toBe("abc1234");
+    expect(buildLogLabel(resolveBuildInfo({}))).toBe("unknown");
+    expect(buildLogLabel(resolveBuildInfo({ RENDER_GIT_COMMIT: "$(evil)" }))).toBe("invalid_format");
   });
 });
 

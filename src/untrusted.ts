@@ -22,10 +22,10 @@ const ANSI_CSI = /\u001B\[[0-?]*[ -/]*[@-~]/g;
 const ANSI_OSC = /\u001B\][^\u0007\u001B]*(?:\u0007|\u001B\\)?/g;
 // C0 controls except TAB/LF/CR, DEL, C1 controls.
 const CONTROL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g;
-// Zero-width, word joiner, BOM, soft hyphen, bidi marks/overrides/isolates, interlinear annotation.
-const INVISIBLE = /[\u00AD\u061C\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\uFFF9-\uFFFB]/g;
-// Unicode tag characters (used to smuggle hidden ASCII).
-const TAGS = /[\u{E0000}-\u{E007F}]/gu;
+// Zero-width, joiners, BOM, soft hyphen, bidi marks/overrides/isolates, variation selectors, Hangul/Khmer/Mongolian fillers.
+const INVISIBLE = /[\u00AD\u034F\u061C\u115F-\u1160\u17B4-\u17B5\u180B-\u180F\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\u3164\uFE00-\uFE0F\uFEFF\uFFA0\uFFF9-\uFFFB]/g;
+// Unicode tag characters, supplementary variation selectors and musical formatting characters (used to smuggle hidden text).
+const TAGS = /[\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}\u{1D173}-\u{1D17A}]/gu;
 
 export interface SanitizeOptions {
   /** Maximum number of characters kept. */
@@ -72,7 +72,8 @@ export function neutralizeMarkup(s: string): string {
     .replace(/>/g, "›")
     .replace(/!\[/g, "! [")
     .replace(/\]\(/g, "] (")
-    .replace(/\b(https?|ftp|file|javascript|data|vbscript|mailto):/gi, "$1[:]");
+    .replace(/(?<![A-Za-z0-9])(https?|ftps?|sftp|file|javascript|data|vbscript|mailto|wss?|intent|tel|sms|blob):/gi, "$1[:]")
+    .replace(/(?<![A-Za-z0-9])www\./gi, (m) => `${m.slice(0, 3)}[.]`);
 }
 
 /**

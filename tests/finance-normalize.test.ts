@@ -422,3 +422,141 @@ describe("quality summary and model invariants", () => {
     }
   });
 });
+
+describe("review round 1: data-integrity fixes", () => {
+  it.each([[undefined], [null], ["garbage"]])("unreviewed voucher with voucherItems=%j and tax 0: tax is a PLACEHOLDER, net unknown", (items) => {
+    const detail = uncheckedDetail(2, { voucherItems: items });
+    const r = applyVoucherDetail(row(uncheckedRow()), detail, CTX);
+    expect(r.taxCents.quality).toBe("PLACEHOLDER");
+    expect(r.netCents).toMatchObject({ value: null, quality: "MISSING", reason: "UNCHECKED_TAX_PLACEHOLDER" });
+    expect(r.lineItems.reason).toBe(items === "garbage" ? "INVALID_TYPE" : "FIELD_ABSENT");
+  });
+
+  it("a disputed gross on a bookkeeping voucher also makes tax and net unusable", () => {
+    const r = applyVoucherDetail(row(paidRow(3, { totalAmount: 100 })), paidDetail(3, { totalGrossAmount: 120 }), CTX);
+    expect(r.taxCents).toMatchObject({ value: null, quality: "MISSING", reason: "DEPENDS_ON_DISPUTED_GROSS" });
+    expect(r.netCents).toMatchObject({ value: null, quality: "MISSING", reason: "DEPENDS_ON_DISPUTED_GROSS" });
+  });
+
+  it("a disputed gross on a sales document makes the document's net and tax unusable (net can never exceed gross in sums)", () => {
+    const r = applySalesDocumentDetail(row(invoiceRow(4, { totalAmount: 100 })), invoiceDetail(), "invoice", CTX);
+    expect(r.grossCents.quality).toBe("CONFLICT");
+    expect(r.netCents).toMatchObject({ value: null, reason: "DEPENDS_ON_DISPUTED_GROSS" });
+    expect(r.taxCents).toMatchObject({ value: null, reason: "DEPENDS_ON_DISPUTED_GROSS" });
+    expect(codes(r)).toContain("GROSS_SOURCES_DIFFER");
+    assertFieldInvariant(r);
+  });
+
+  it("net's reason names the real cause when gross is missing", () => {
+    const r = applyVoucherDetail(
+      row(uncheckedRowWithoutAmount(1)),
+      uncheckedDetail(1, { voucherStatus: "unchecked", totalGrossAmount: undefined, totalTaxAmount: 5, voucherItems: [{ amount: 1, taxAmount: 5 }] }),
+      CTX,
+    );
+    expect(r.netCents).toMatchObject({ value: null, reason: "FIELD_ABSENT" });
+  });
+
+  it("disagreeing contact ids leave the counterparty unidentified and are reported as a source conflict", () => {
+    const r = applyVoucherDetail(row(paidRow()), paidDetail(3, { contactId: id(502) }), CTX);
+    expect(r.counterparty).toMatchObject({ matchKey: null, matchKeyBasis: "NONE" });
+    expect(codes(r)).toEqual(expect.arrayContaining(["CONTACT_ID_SOURCES_DIFFER", "COUNTERPARTY_UNIDENTIFIED"]));
+    expect(codes(r)).not.toContain("CONTACT_ID_MISSING");
+  });
+
+  it("source conflicts on dates and numbers are labelled as conflicts, not as missing", () => {
+    const r = applyVoucherDetail(
+      row(paidRow()),
+      paidDetail(3, { voucherDate: "2026-09-13T00:00:00.000+02:00", voucherNumber: "OTHER-1", dueDate: "2026-09-25T00:00:00.000+02:00" }),
+      CTX,
+    );
+    expect(r.issues).toContainEqual({ code: "VOUCHER_DATE_SOURCES_DIFFER", severity: "CRITICAL", field: "voucherDate" });
+    expect(r.issues).toContainEqual({ code: "FIELD_SOURCES_DIFFER", severity: "WARNING", field: "voucherNumber" });
+    expect(r.issues).toContainEqual({ code: "FIELD_SOURCES_DIFFER", severity: "WARNING", field: "dueDate" });
+    expect(codes(r)).not.toContain("VOUCHER_DATE_MISSING");
+  });
+
+  it("invalid file ids are reported instead of silently dropped", () => {
+    const r = applyVoucherDetail(row(paidRow()), paidDetail(3, { files: ["../evil", 42] }), CTX);
+    expect(r.attachments.value).toEqual([]);
+    expect(codes(r)).toEqual(expect.arrayContaining(["ATTACHMENT_ID_INVALID", "ATTACHMENT_MISSING"]));
+  });
+
+  it("a failed attachment inspection is a record-level issue", () => {
+    const base = applyVoucherDetail(row(paidRow()), paidDetail(), CTX);
+    expect(codes(markAttachmentState(base, "FAILED"))).toContain("ATTACHMENT_INSPECTION_FAILED");
+  });
+});
+
+describe("review round 1: QA gaps", () => {
+  it("UNVERIFIED values (e.g. read from PDF text) are never usable as facts", async () => {
+    const { unverified, structured, derived } = await import("../src/finance/values.js");
+    expect(isUsable(unverified(100, "pdf-text"))).toBe(false);
+    expect(isUsable(structured(100, "voucher"))).toBe(true);
+    expect(isUsable(derived(100, "GROSS_MINUS_TAX"))).toBe(true);
+  });
+
+  it("known statuses of the same category are compatible (paid / paidoff), different categories conflict", () => {
+    const same = applyVoucherDetail(row(paidRow()), paidDetail(3, { voucherStatus: "paidoff" }), CTX);
+    expect(same.status).toEqual({ value: "paid", quality: "STRUCTURED", source: "voucherlist" });
+    expect(same.statusCategory).toBe("PAID");
+    const other = applyVoucherDetail(row(paidRow(3, { voucherStatus: "sepadebit" })), paidDetail(3, { voucherStatus: "transferred" }), CTX);
+    expect(other.status.quality).toBe("CONFLICT"); // OTHER is not a meaning, so it never makes two statuses equal
+  });
+
+  it("conflict candidates are de-duplicated and merges are idempotent", () => {
+    const once = applyPayment(row(invoiceRow()), invoicePayment({ openAmount: 100 }), CTX);
+    const twice = applyPayment(once, invoicePayment({ openAmount: 100 }), CTX);
+    expect(once.openCents.candidates).toHaveLength(2);
+    expect(twice.openCents.candidates).toHaveLength(2);
+    const third = applyPayment(twice, invoicePayment({ openAmount: 50 }), CTX);
+    expect(third.openCents.candidates?.map((c) => c.value)).toEqual([20223, 10000, 5000]);
+    const detailTwice = applyVoucherDetail(applyVoucherDetail(row(paidRow()), paidDetail(), CTX), paidDetail(), CTX);
+    expect(detailTwice.grossCents).toEqual(applyVoucherDetail(row(paidRow()), paidDetail(), CTX).grossCents);
+  });
+
+  it("tax rates outside 0-100 % are refused", () => {
+    const r = applyVoucherDetail(
+      row(paidRow()),
+      paidDetail(3, { voucherItems: [{ amount: 20.14, taxAmount: 0, taxRatePercent: 150, categoryId: CATEGORY_GOODS }] }),
+      CTX,
+    );
+    expect(r.lineItems.value?.[0].taxRatePercent).toMatchObject({ value: null, reason: "INVALID_FORMAT" });
+  });
+
+  it("a line item with a missing amount or tax is reported (the consistency check could not run)", () => {
+    const r = applyVoucherDetail(
+      row(paidRow()),
+      paidDetail(3, { voucherItems: [{ amount: 20.14, taxRatePercent: 0, categoryId: CATEGORY_GOODS }] }),
+      CTX,
+    );
+    expect(codes(r)).toContain("LINE_ITEM_FIELDS_MISSING");
+    expect(codes(r)).not.toContain("LINE_ITEM_SUM_MISMATCH");
+  });
+
+  it("fuzzed detail, sales and payment responses never throw and keep the field invariant", () => {
+    let seed = 7;
+    const rnd = () => {
+      seed = (seed * 1103515245 + 12345) % 2 ** 31;
+      return seed / 2 ** 31;
+    };
+    const pick = <T>(xs: T[]) => xs[Math.floor(rnd() * xs.length)];
+    const values: unknown[] = [undefined, null, "", 0, -3, 12.345, 202.23, Number.NaN, "x", true, {}, [], [{}], [null], "2026-09-29T00:00:00.000+02:00", "EUR", "paid", "open", "unchecked", id(3), id(9)];
+    for (let i = 0; i < 1500; i++) {
+      const base = row(pick([paidRow(3), uncheckedRow(3), invoiceRow(3)]));
+      const raw: Record<string, unknown> = { id: rnd() < 0.85 ? id(3) : pick(values) };
+      for (const k of ["voucherStatus", "voucherNumber", "voucherDate", "dueDate", "createdDate", "updatedDate", "totalGrossAmount", "totalTaxAmount", "taxType", "contactId", "voucherItems", "files", "totalPrice", "taxConditions", "lineItems", "address", "paymentConditions", "openAmount", "paymentStatus", "paidDate", "paymentItems", "currency"]) {
+        if (rnd() < 0.7) raw[k] = pick(values);
+      }
+      if (rnd() < 0.3) raw.voucherItems = [{ amount: pick(values), taxAmount: pick(values), taxRatePercent: pick(values), categoryId: pick(values) }];
+      if (rnd() < 0.3) raw.totalPrice = { totalNetAmount: pick(values), totalGrossAmount: pick(values), totalTaxAmount: pick(values), currency: pick(values) };
+      for (const r of [applyVoucherDetail(base, raw, CTX), applySalesDocumentDetail(base, raw, "invoice", CTX), applyPayment(base, raw, CTX)]) {
+        assertFieldInvariant(r);
+        // Never net/tax usable while gross is disputed.
+        if (r.grossCents.quality === "CONFLICT") {
+          expect(isUsable(r.netCents)).toBe(false);
+          expect(isUsable(r.taxCents)).toBe(false);
+        }
+      }
+    }
+  });
+});

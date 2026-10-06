@@ -174,7 +174,8 @@ describe("get-voucher-file-text is read-only and fingerprints the exact bytes", 
 
     expect(res.structuredContent.sha256).toBe(createHash("sha256").update(bytes).digest("hex"));
     expect(res.structuredContent.isPdf).toBe(false);
-    expect(client.getBinary).toHaveBeenCalledWith("/v1/files/file-1", "application/pdf");
+    // The download is size-limited (10 MiB) so a hostile or huge file cannot exhaust memory.
+    expect(client.getBinary).toHaveBeenCalledWith("/v1/files/file-1", "application/pdf", { maxBytes: 10 * 1024 * 1024 });
     expect(client.post).not.toHaveBeenCalled();
     expect(client.postMultipart).not.toHaveBeenCalled();
   });

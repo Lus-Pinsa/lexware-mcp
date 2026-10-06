@@ -1,4 +1,4 @@
-import { LexwareApiError, describeErrorBody } from "./errors.js";
+import { LexwareApiError, ResponseTooLargeError, UnsafeRequestPathError, describeErrorBody } from "./errors.js";
 import { RateLimiter } from "./rate-limiter.js";
 
 export interface LexwareClientOptions {
@@ -29,6 +29,28 @@ export interface RequestOptions {
    * (Lexware does not execute a throttled call) regardless of this flag.
    */
   idempotent: boolean;
+}
+
+export interface BinaryOptions {
+  /** Abort and throw {@link ResponseTooLargeError} once the body exceeds this many bytes. */
+  maxBytes?: number;
+}
+
+/**
+ * Refuse `.`/`..` path segments, including percent-encoded forms: the WHATWG URL parser resolves them,
+ * so an id like ".." passed through encodeURIComponent would otherwise climb out of the intended resource.
+ */
+export function assertNoDotSegments(path: string): void {
+  const pathOnly = path.split(/[?#]/, 1)[0];
+  for (const segment of pathOnly.split("/")) {
+    let decoded = segment;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      // Malformed escapes stay as-is; they cannot form a dot segment.
+    }
+    if (decoded === "." || decoded === "..") throw new UnsafeRequestPathError("path contains a dot segment");
+  }
 }
 
 const RETRYABLE_STATUS = new Set([500, 502, 503, 504]);
@@ -103,17 +125,50 @@ export class LexwareClient {
   async getBinary(
     path: string,
     accept = "application/pdf",
+    options: BinaryOptions = {},
   ): Promise<{ data: Buffer; contentType: string }> {
     const res = await this.sendWithRetry("GET", path, {
       headers: { Authorization: `Bearer ${this.apiKey}`, Accept: accept },
       idempotent: true,
     });
+    const contentType = res.headers.get("content-type") ?? accept;
+    const { maxBytes } = options;
+    if (maxBytes === undefined) {
+      try {
+        return { data: Buffer.from(await res.arrayBuffer()), contentType };
+      } catch (err) {
+        throw this.bodyReadError("GET", path, err);
+      }
+    }
+
+    // Size-limited read: refuse early on a declared oversize body, otherwise stop as soon as the limit is passed.
+    const lengthHeader = res.headers.get("content-length")?.trim() ?? "";
+    const declaredBytes = /^\d+$/.test(lengthHeader) ? Number(lengthHeader) : null;
+    if (declaredBytes !== null && declaredBytes > maxBytes) {
+      await this.drain(res);
+      throw new ResponseTooLargeError(maxBytes, declaredBytes);
+    }
+    const chunks: Uint8Array[] = [];
+    let total = 0;
     try {
-      const data = Buffer.from(await res.arrayBuffer());
-      return { data, contentType: res.headers.get("content-type") ?? accept };
+      const reader = res.body?.getReader();
+      if (reader) {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          total += value.byteLength;
+          if (total > maxBytes) {
+            await reader.cancel().catch(() => undefined);
+            throw new ResponseTooLargeError(maxBytes, declaredBytes);
+          }
+          chunks.push(value);
+        }
+      }
     } catch (err) {
+      if (err instanceof ResponseTooLargeError) throw err;
       throw this.bodyReadError("GET", path, err);
     }
+    return { data: Buffer.concat(chunks, total), contentType };
   }
 
   /**
@@ -227,6 +282,7 @@ export class LexwareClient {
   }
 
   private buildUrl(path: string, query?: RequestOptions["query"]): string {
+    assertNoDotSegments(path);
     const url = new URL(`${this.baseUrl}${path.startsWith("/") ? path : `/${path}`}`);
     if (query) {
       for (const [k, v] of Object.entries(query)) {

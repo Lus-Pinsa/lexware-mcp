@@ -193,12 +193,12 @@ describe("pagedResult", () => {
 
   it("renders page 1/1 (not the impossible 1/0) for an empty result set", () => {
     const res = pagedResult(paged({}), "contact(s)");
-    expect(res.content[0].text).toBe("Found 0 contact(s); showing page 1/1.");
+    expect(res.content[0].text).toBe("Found 0 contact(s); showing page 1/1; 0 row(s) on this page.\n\nRows: []");
   });
 
   it("renders the real 1-based page/total for a populated set", () => {
     const res = pagedResult(paged({ number: 1, totalPages: 3, totalElements: 70 }), "article(s)");
-    expect(res.content[0].text).toBe("Found 70 article(s); showing page 2/3.");
+    expect(res.content[0].text).toBe("Found 70 article(s); showing page 2/3; 0 row(s) on this page.\n\nRows: []");
   });
 });
 

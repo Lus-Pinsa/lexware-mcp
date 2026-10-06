@@ -43,6 +43,10 @@ const READ_TOOLS = [
   "render-dunning-pdf",
   "render-down-payment-invoice-pdf",
   "list-recurring-templates",
+  // LU'S read-only expense pipeline: webhook queue, reconciliation, original-PDF text + SHA-256
+  "get-pending-voucher-events",
+  "reconcile-recent-vouchers",
+  "get-voucher-file-text",
 ];
 const DRAFT_TOOLS = [
   "create-contact",
@@ -60,6 +64,9 @@ const DRAFT_TOOLS = [
   "update-voucher",
   "upload-voucher-file",
   "upload-file",
+  // LU'S: fixed-target webhook setup (no URL/event input) and local pending-queue acknowledge
+  "ensure-lus-voucher-webhook",
+  "acknowledge-voucher-event",
 ];
 const FINALIZE_TOOLS = [
   "create-finalized-invoice",

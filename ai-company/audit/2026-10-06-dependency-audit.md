@@ -37,7 +37,19 @@ PR #2 hatte den Lockfile nicht verändert.
 | skybridge | high (nur über nodemon) | direkt | ja (Framework) | 1.2.4 unverändert | **behoben** (über Override) |
 | esbuild | low | in skybridge verschachtelt, 0.27.7 | nein | unverändert | **offen, low**: Advisory GHSA-g7r4-m6w7-qqqr betrifft laut Text nur den *Dev-Server unter Windows*. Fix erst mit skybridge ≥ 1.3 (eigenes Minor-Upgrade, separat zu bewerten). |
 
+Weitere Änderungen im Lockfile, alle semver-kompatibel und mit passendem sha512 laut Registry: `content-type` 2.1.0 (neue,
+verschachtelte Kopie unter `body-parser`; zur Laufzeit geladen), `side-channel` 1.1.0 → 1.1.1 (zur Laufzeit geladen),
+`esbuild` (Top-Level, vite) 0.28.1 → 0.28.2, `readdirp` 3 → 4 (über chokidar 4), `caniuse-lite`, `electron-to-chromium`,
+`node-releases`, `update-browserslist-db`. Entfernt wurden 12 Pakete, alle aus der alten chokidar-3/braces-Kette
+(`anymatch`, `binary-extensions`, `braces`, `fill-range`, `glob-parent`, `is-binary-path`, `is-extglob`, `is-glob`,
+`is-number`, `normalize-path`, `picomatch`, `to-regex-range`). Es gibt keine neuen Paketnamen.
+
 Danach: `npm audit --omit=dev --audit-level=high` mit **exit 0**, verbleibend **1 low** (esbuild, s. o.).
+
+**Warum der esbuild-Fix zurückgestellt ist:** Technisch wäre er per `npm audit fix` ohne `--force` erreichbar, weil
+skybridge 1.3+ noch innerhalb von `^1.2.4` liegt. Das wäre aber ein Minor-Upgrade des Frameworks (1.2.4 → 1.4.x) mit eigenem
+Risiko für MCP-Verhalten, Views-Build und Auth. Bei einem Low-Befund, der nur den Dev-Server unter Windows betrifft, ist das
+nicht verhältnismäßig. Empfehlung: das skybridge-Minor-Upgrade separat bewerten (Engineering + Security + QA).
 
 **Keine Schwachstelle wurde allein durch Behauptung als irrelevant eingestuft.** Alle zur Laufzeit geladenen Pakete
 sind auf gepatchte Versionen aktualisiert. Nicht geladene Pakete sind ebenfalls aktualisiert, mit Ausnahme von
@@ -50,7 +62,7 @@ esbuild (low, Windows-Dev-Server).
 | Laufzeit / MCP-Verhalten | Server-Start, `initialize`, `tools/list` mit 56 Tools (= Produktions-Tiers), 401 ohne Token | ✅ |
 | Breaking Changes | alle Updates Patch/Minor innerhalb der Eltern-Ranges; chokidar 4 nur über nodemon (Dev) | ✅ |
 | Skybridge-Kompatibilität | skybridge 1.2.4 unverändert; `skybridge dev` startet, `/status` 200, Neustart bei Dateiänderung („restarted due to file change“) | ✅ |
-| nodemon mit chokidar 4 | Funktionstest: Neustart nur für `src/*.ts`, kein Neustart außerhalb von `src` oder bei falscher Endung | ✅ |
+| nodemon mit chokidar 4 | Funktionstest: Neustart nur für `src/*.ts`, kein Neustart außerhalb von `src` oder bei falscher Endung. Einschränkung: nodemon unterstützt chokidar 4 offiziell nicht (deklariert `^3.5.2`); chokidar 4 ignoriert Glob-Muster in `ignored`, nodemon filtert vor dem Neustart aber selbst. Das betrifft nur den Dev-Server. | ✅ |
 | OAuth | `tests/oauth.test.ts` (jose unverändert 6.2.3) | ✅ |
 | Lexware-Read-Pipeline | `tests/finance-policy.test.ts`, Webhook-Route unverändert; Server lädt `pdf-parse`/`pdfjs-dist` | ✅ |
 | Tests / Build / Governance | `npm ci`, `npm run build`, `npm run typecheck:governance`, `npm test` (221/221), `secret-scan` | ✅ |
@@ -64,3 +76,18 @@ esbuild (low, Windows-Dev-Server).
    (`Requests:1|c|#version:<major.minor>`) an einen externen StatsD-Host (`node_modules/skybridge/dist/server/metric.js`).
    Laut Code enthält er keine Geschäftsdaten. Er ist standardmäßig aktiv und lässt sich mit `SKYBRIDGE_TELEMETRY_DISABLED=1`
    (oder `DO_NOT_TRACK=1`) abschalten. Empfehlung: auf Render abschalten (Owner-Aktion).
+
+## Unabhängiger Security-Review (security-auditor, nur lesend)
+
+Urteil **PASS WITH RISKS**. Bestätigt:
+- Der Scope umfasst nur Paketdateien und Doku.
+- Audit exit 0, Baseline von 18 Befunden reproduziert.
+- 53 Abhängigkeitskanten semver-geprüft; die einzige Abweichung ist der beabsichtigte Override.
+- Der Override wirkt nur auf nodemon.
+- Kein Produktionspfad importiert nodemon, chokidar oder esbuild.
+- Die Laufzeit-Trace ist reproduziert.
+- Alle sha512-Werte passen, es gibt keine neuen Paketnamen, die Menge der Pakete mit Install-Skripten ist unverändert.
+
+Restrisiken: nodemon und chokidar 4 liegen weiter im Produktions-Image (Peer von skybridge), werden aber nie geladen.
+`NODE_ENV=production` auf Render ist unbestätigt. Die Trace deckt keine lazy geladenen Module während `tools/call` ab.
+Node 24/26 und Docker sind nur über CI belegt.

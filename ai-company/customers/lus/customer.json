@@ -1,0 +1,128 @@
+{
+  "$comment": "Customer configuration for the pilot customer LU'S. Everything customer-specific lives here (not in ai-company/core). PUBLIC REPOSITORY: no secrets, no bank data, no tax IDs, no personal contact data, no voucher contents.",
+  "customerId": "lus",
+  "displayName": "LU'S — Pinsa Romana / Casual Pinsa Bar",
+  "legalEntity": "Pinsaboys UG (haftungsbeschränkt)",
+  "location": "Neunkirchen, DE",
+  "decisionOwner": "Luigi (Inhaber)",
+  "language": "de",
+  "timezone": "Europe/Berlin",
+  "phase": "foundation",
+  "enabledBoards": [
+    "engineering", "security", "qa-audit", "devops", "knowledge", "finance", "treasury", "costing",
+    "purchasing", "hr-payroll", "daily-coo", "inventory", "food-safety", "crm", "marketing",
+    "seo-growth", "sales", "operations", "technology-radar"
+  ],
+  "connectors": {
+    "code": {
+      "system": "github",
+      "repository": "Lus-Pinsa/lexware-mcp",
+      "status": "verified",
+      "capabilities": ["code.read"],
+      "verifiedOn": "2026-10-06",
+      "method": "GitHub MCP read calls (get_me, list_branches, list_workflows, list_workflow_runs)"
+    },
+    "accounting": {
+      "system": "lexware-office",
+      "via": "MCP connector 'LU'S Lexware' (self-hosted lexware-mcp on Render)",
+      "status": "verified-read",
+      "capabilities": ["accounting.read"],
+      "serverCapabilityTiers": { "read": true, "drafts": true, "finalize": false },
+      "verifiedOn": "2026-10-06",
+      "method": "read-only tool calls: get-profile, list-event-subscriptions, get-pending-voucher-events, reconcile-recent-vouchers, get-voucher, get-voucher-file-text"
+    },
+    "hosting": {
+      "system": "render",
+      "service": "lus-lexware-mcp",
+      "publicUrl": "https://lus-lexware-mcp.onrender.com",
+      "status": "not-connected",
+      "capabilities": ["hosting.read"],
+      "note": "No Render connector in the agent environment; direct HTTPS to the host is blocked by the cloud environment's network policy. Service liveness is only proven indirectly (the accounting MCP connector answers)."
+    },
+    "pos": { "system": "lightspeed", "status": "not-connected", "capabilities": ["pos.read"] },
+    "reservations": { "system": "zenchef", "status": "not-connected", "capabilities": ["reservations.read"] },
+    "banking": { "system": "unknown", "status": "not-connected", "capabilities": ["banking.read"] },
+    "timekeeping": { "system": "unknown", "status": "not-connected", "capabilities": ["timekeeping.read"] },
+    "payroll": { "system": "tax-advisor (external)", "status": "not-connected", "capabilities": ["payroll.read"] },
+    "inventory": { "system": "unknown", "status": "not-connected", "capabilities": ["inventory.read"] },
+    "haccp": { "system": "unknown", "status": "not-connected", "capabilities": ["haccp.read"] },
+    "social": { "system": "instagram", "status": "not-connected", "capabilities": ["social.read"] },
+    "seo": { "system": "google-search-console / google-business-profile", "status": "not-connected", "capabilities": ["seo.read"] },
+    "crm": { "system": "unknown", "status": "not-connected", "capabilities": ["crm.read"] },
+    "operations": { "system": "unknown", "status": "not-connected", "capabilities": ["operations.read"] }
+  },
+  "capabilityTools": {
+    "accounting.read": [
+      "mcp__LU_S_Lexware__get-profile",
+      "mcp__LU_S_Lexware__get-pending-voucher-events",
+      "mcp__LU_S_Lexware__reconcile-recent-vouchers",
+      "mcp__LU_S_Lexware__get-voucherlist",
+      "mcp__LU_S_Lexware__summarize-vouchers",
+      "mcp__LU_S_Lexware__get-voucher",
+      "mcp__LU_S_Lexware__get-vouchers",
+      "mcp__LU_S_Lexware__get-voucher-file-text",
+      "mcp__LU_S_Lexware__get-posting-categories",
+      "mcp__LU_S_Lexware__get-contact",
+      "mcp__LU_S_Lexware__list-contacts",
+      "mcp__LU_S_Lexware__get-payment",
+      "mcp__LU_S_Lexware__list-event-subscriptions"
+    ],
+    "accounting.queue-ack": ["mcp__LU_S_Lexware__acknowledge-voucher-event"],
+    "accounting.write": [
+      "mcp__LU_S_Lexware__create-voucher",
+      "mcp__LU_S_Lexware__update-voucher",
+      "mcp__LU_S_Lexware__upload-voucher-file",
+      "mcp__LU_S_Lexware__upload-file",
+      "mcp__LU_S_Lexware__create-contact",
+      "mcp__LU_S_Lexware__update-contact",
+      "mcp__LU_S_Lexware__create-article",
+      "mcp__LU_S_Lexware__update-article",
+      "mcp__LU_S_Lexware__create-draft-invoice",
+      "mcp__LU_S_Lexware__create-draft-quotation",
+      "mcp__LU_S_Lexware__create-draft-credit-note",
+      "mcp__LU_S_Lexware__create-draft-order-confirmation",
+      "mcp__LU_S_Lexware__create-draft-delivery-note",
+      "mcp__LU_S_Lexware__create-draft-dunning",
+      "mcp__LU_S_Lexware__ensure-lus-voucher-webhook"
+    ],
+    "accounting.finalize": [
+      "mcp__LU_S_Lexware__create-finalized-invoice",
+      "mcp__LU_S_Lexware__create-finalized-quotation",
+      "mcp__LU_S_Lexware__create-finalized-credit-note",
+      "mcp__LU_S_Lexware__create-finalized-order-confirmation",
+      "mcp__LU_S_Lexware__create-finalized-delivery-note",
+      "mcp__LU_S_Lexware__create-finalized-dunning",
+      "mcp__LU_S_Lexware__delete-article",
+      "mcp__LU_S_Lexware__create-event-subscription",
+      "mcp__LU_S_Lexware__delete-event-subscription"
+    ],
+    "hosting.read": []
+  },
+  "sourcesOfTruth": {
+    "accounting / vouchers / payments": { "system": "lexware-office", "freshness": "live read; webhook queue is only a hint" },
+    "webhook pending queue": { "system": "lexware-mcp RAM (volatile)", "freshness": "lost on restart/redeploy — reconcile against Lexware" },
+    "sales / POS": { "system": "lightspeed", "freshness": "DATA NOT AVAILABLE (not connected)" },
+    "reservations / guests": { "system": "zenchef", "freshness": "DATA NOT AVAILABLE (not connected)" },
+    "staff hours / payroll": { "system": "unknown", "freshness": "DATA NOT AVAILABLE (source to be defined by owner)" },
+    "recipes / ingredient master": { "system": "not yet defined", "freshness": "DATA NOT AVAILABLE" },
+    "HACCP records": { "system": "not yet defined", "freshness": "DATA NOT AVAILABLE" },
+    "code / AI-company configuration": { "system": "github Lus-Pinsa/lexware-mcp (main)", "freshness": "git history" }
+  },
+  "calendars": {
+    "payroll": [
+      { "days": "01-15", "step": "laufende Kontrolle" },
+      { "days": "16-18", "step": "fehlende Daten klären" },
+      { "days": "19", "step": "Final Pre-Check" },
+      { "days": "20", "step": "Lohnvorbereitung an Steuerberater" }
+    ]
+  },
+  "rules": {
+    "finance": "ai-company/customers/lus/finance-rules.md",
+    "brand": "ai-company/customers/lus/brand.md"
+  },
+  "costPolicy": {
+    "paidUpgradesRequireOwner": true,
+    "recurringRoutinesRequireOwner": true,
+    "preferEventDriven": true
+  }
+}

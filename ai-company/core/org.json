@@ -1,0 +1,471 @@
+{
+  "$comment": "Core organisation of the AI company (customer-agnostic). No customer names, brands or vendor connectors here — those live in ai-company/customers/<id>/. Validated by tests/governance.test.ts. role.agent = Claude Code agent file in .claude/agents/ that executes the role today (null = planned role, executed on demand by the generic 'board-analyst' read-only agent or not at all).",
+  "version": 1,
+  "phase": "foundation",
+  "governance": {
+    "maxFixRounds": 3,
+    "statuses": ["GREEN", "YELLOW", "RED", "BLOCKED"],
+    "greenRequiresEvidence": true,
+    "failClosed": true,
+    "escalationTarget": "cloud-ceo",
+    "humanDecisionOwner": "customer-owner",
+    "reviewPipeline": ["lead-plan", "specialist", "test-engineer", "domain-reviewer", "security-review", "deterministic-ci", "final-auditor", "pr-ready"],
+    "separationOfDuties": {
+      "normal": "creator != reviewer",
+      "critical": "creator != reviewer != technical-gate"
+    }
+  },
+  "executive": {
+    "ceo": { "id": "cloud-ceo", "title": "Cloud CEO (Executive Orchestrator)", "profile": "orchestrator", "agent": "cloud-ceo" },
+    "staffFunctions": [
+      { "id": "cost-governance", "title": "Resource / Cost Governance", "policy": "ai-company/policies/cost-governance.md" },
+      { "id": "escalation-desk", "title": "Escalation & Decision Log", "policy": "ai-company/policies/review-loop-and-escalation.md" }
+    ]
+  },
+  "boards": [
+    {
+      "id": "engineering",
+      "name": "Engineering Board",
+      "group": "foundation",
+      "mandate": "Software development, MCP server, APIs, GitHub, integrations.",
+      "riskClass": "critical",
+      "status": "foundation-ready",
+      "technicalGate": "ci",
+      "lead": { "id": "engineering-lead", "title": "Engineering Lead", "profile": "lead", "agent": "engineering-lead" },
+      "workers": [
+        { "id": "typescript-engineer", "title": "TypeScript Engineer", "profile": "builder", "agent": "typescript-engineer" },
+        { "id": "integration-engineer", "title": "Integration Engineer", "profile": "builder", "agent": "typescript-engineer" },
+        { "id": "api-research-agent", "title": "API Research Agent", "profile": "researcher", "agent": "technology-radar" },
+        { "id": "test-engineer", "title": "Test Engineer", "profile": "builder", "agent": "test-engineer" },
+        { "id": "refactoring-agent", "title": "Refactoring Agent", "profile": "builder", "agent": "typescript-engineer" }
+      ],
+      "reviewer": { "id": "code-reviewer", "title": "Independent Code Reviewer", "profile": "reviewer", "agent": "code-reviewer" },
+      "kpis": [
+        { "id": "ci-pass-rate", "name": "CI pass rate on PRs", "source": "code.read" },
+        { "id": "open-blockers", "name": "Open engineering blockers", "source": "code.read" }
+      ],
+      "hardLimits": ["no push to main", "no production writes", "no secret access", "no gate removal"]
+    },
+    {
+      "id": "security",
+      "name": "Security Board",
+      "group": "foundation",
+      "mandate": "Least privilege, auth, tool permissions, API security, secret leakage, prompt/tool injection, finance write gates, dependency risk, security regression.",
+      "riskClass": "critical",
+      "status": "foundation-ready",
+      "technicalGate": "ci",
+      "lead": { "id": "security-lead", "title": "Security Lead", "profile": "reviewer", "agent": "security-lead" },
+      "workers": [
+        { "id": "appsec-reviewer", "title": "AppSec Reviewer", "profile": "reviewer", "agent": "security-lead" },
+        { "id": "permission-auditor", "title": "Permission Auditor", "profile": "reviewer", "agent": "security-lead" },
+        { "id": "secret-auditor", "title": "Secret/Credential Auditor", "profile": "reviewer", "agent": "security-lead" },
+        { "id": "dependency-security-agent", "title": "Dependency Security Agent", "profile": "reviewer", "agent": "security-lead" },
+        { "id": "mcp-security-reviewer", "title": "MCP Security Reviewer", "profile": "reviewer", "agent": "security-lead" }
+      ],
+      "reviewer": { "id": "security-auditor", "title": "Independent Security Auditor", "profile": "reviewer", "agent": "security-auditor" },
+      "kpis": [
+        { "id": "open-high-findings", "name": "Open high/critical findings", "source": "code.read" },
+        { "id": "prod-dependency-vulns", "name": "High/critical production dependency advisories", "source": "code.read" }
+      ],
+      "hardLimits": ["read-only by default", "never removes a gate", "no finance writes"]
+    },
+    {
+      "id": "qa-audit",
+      "name": "QA & Audit Board",
+      "group": "foundation",
+      "mandate": "Evidence-based quality: a status becomes GREEN only with a real test or robust technical proof.",
+      "riskClass": "critical",
+      "status": "foundation-ready",
+      "technicalGate": "ci",
+      "lead": { "id": "qa-lead", "title": "QA Lead", "profile": "lead", "agent": "qa-lead" },
+      "workers": [
+        { "id": "unit-test-agent", "title": "Unit Test Agent", "profile": "builder", "agent": "test-engineer" },
+        { "id": "integration-test-agent", "title": "Integration Test Agent", "profile": "builder", "agent": "test-engineer" },
+        { "id": "regression-test-agent", "title": "Regression Test Agent", "profile": "builder", "agent": "test-engineer" },
+        { "id": "negative-test-agent", "title": "Negative Test Agent", "profile": "builder", "agent": "test-engineer" },
+        { "id": "evidence-auditor", "title": "Evidence Auditor", "profile": "lead", "agent": "qa-lead" }
+      ],
+      "reviewer": { "id": "final-auditor", "title": "Final Independent Auditor", "profile": "reviewer", "agent": "final-auditor" },
+      "kpis": [
+        { "id": "tests-passing", "name": "Passing / total tests", "source": "code.read" },
+        { "id": "unproven-green-claims", "name": "GREEN claims without evidence (target 0)", "source": "code.read" }
+      ],
+      "hardLimits": ["no GREEN without evidence"]
+    },
+    {
+      "id": "devops",
+      "name": "DevOps / Deployment Board",
+      "group": "foundation",
+      "mandate": "CI, deployments, health checks, runtime logs. Development and production are separated; builders are not production administrators.",
+      "riskClass": "critical",
+      "status": "partial",
+      "technicalGate": "ci",
+      "lead": { "id": "devops-lead", "title": "DevOps Lead", "profile": "lead", "agent": null },
+      "workers": [
+        { "id": "github-ci-agent", "title": "GitHub CI Agent", "profile": "reviewer", "agent": null },
+        { "id": "render-monitor", "title": "Hosting Monitor", "profile": "deploy-verifier", "agent": "deploy-verifier" },
+        { "id": "deploy-verifier", "title": "Deploy Verifier", "profile": "deploy-verifier", "agent": "deploy-verifier" },
+        { "id": "healthcheck-agent", "title": "Healthcheck Agent", "profile": "deploy-verifier", "agent": "deploy-verifier" },
+        { "id": "runtime-log-reviewer", "title": "Runtime Log Reviewer", "profile": "deploy-verifier", "agent": "deploy-verifier" }
+      ],
+      "reviewer": { "ref": "final-auditor" },
+      "kpis": [
+        { "id": "service-health", "name": "Health check status", "source": "hosting.read" },
+        { "id": "deploy-failures", "name": "Failed deploys (30 days)", "source": "hosting.read" }
+      ],
+      "hardLimits": ["no deploy/restart/env change by agents", "no secret reads"]
+    },
+    {
+      "id": "knowledge",
+      "name": "Data / Knowledge Governance Board",
+      "group": "foundation",
+      "mandate": "Source of truth, master files, business rules, versioning, conflict detection, data lineage, timestamps, stale information.",
+      "riskClass": "normal",
+      "status": "foundation-ready",
+      "technicalGate": null,
+      "lead": { "id": "knowledge-steward", "title": "Knowledge Steward", "profile": "doc-maintainer", "agent": "knowledge-steward" },
+      "workers": [
+        { "id": "conflict-detector", "title": "Conflict Detector", "profile": "analyst", "agent": "board-analyst" },
+        { "id": "lineage-agent", "title": "Data Lineage Agent", "profile": "analyst", "agent": "board-analyst" }
+      ],
+      "reviewer": { "ref": "final-auditor" },
+      "kpis": [
+        { "id": "open-conflicts", "name": "Open knowledge conflicts", "source": "code.read" },
+        { "id": "stale-facts", "name": "Facts past freshness limit", "source": "code.read" }
+      ],
+      "hardLimits": ["primary system always wins over copies", "no confidential values in the public repo"]
+    },
+    {
+      "id": "finance",
+      "name": "Finance Board",
+      "group": "business",
+      "mandate": "What happened: vouchers, expense review, reconciliation, cash, month-end. Phase 1 = read-only pipeline.",
+      "riskClass": "critical",
+      "status": "foundation-ready",
+      "technicalGate": "ci",
+      "lead": { "id": "finance-lead", "title": "Finance Lead", "profile": "finance-reader", "agent": "finance-lead" },
+      "workers": [
+        { "id": "expense-agent", "title": "Expense Agent", "profile": "finance-reader", "agent": "finance-lead" },
+        { "id": "finance-validator", "title": "Finance Validator", "profile": "finance-reader", "agent": "finance-lead" },
+        { "id": "bank-reconciliation-agent", "title": "Bank Reconciliation Agent", "profile": "finance-reader", "agent": null },
+        { "id": "cash-agent", "title": "Cash Agent", "profile": "finance-reader", "agent": null },
+        { "id": "month-end-agent", "title": "Month-End Agent", "profile": "finance-reader", "agent": null }
+      ],
+      "reviewer": { "id": "finance-auditor", "title": "Finance Auditor", "profile": "finance-reader", "agent": "finance-auditor" },
+      "kpis": [
+        { "id": "open-vouchers", "name": "Open/unchecked vouchers", "source": "accounting.read" },
+        { "id": "voucher-traffic-light", "name": "Vouchers GREEN/YELLOW/RED", "source": "accounting.read" },
+        { "id": "closing-status", "name": "Month-end closing status", "source": "accounting.read" },
+        { "id": "payment-matching", "name": "Payment matching rate", "source": "banking.read" }
+      ],
+      "hardLimits": ["no booking/changing/uploading/deleting vouchers", "no finalize", "no payments", "no cash-book entries", "no queue acknowledge without owner approval"]
+    },
+    {
+      "id": "treasury",
+      "name": "Treasury / Cashflow Board",
+      "group": "business",
+      "mandate": "What will happen to liquidity: bank balance, receivables, payables, wages, rent, leasing, taxes, planned investments, cashflow forecast. Treasury != bookkeeping.",
+      "riskClass": "critical",
+      "status": "foundation-ready",
+      "technicalGate": "ci",
+      "lead": { "id": "treasury-lead", "title": "Treasury Lead", "profile": "analyst", "agent": "board-analyst" },
+      "workers": [
+        { "id": "cash-position-agent", "title": "Cash Position Agent", "profile": "analyst", "agent": null },
+        { "id": "obligations-agent", "title": "Obligations Agent", "profile": "analyst", "agent": null },
+        { "id": "cashflow-forecast-agent", "title": "Cashflow Forecast Agent", "profile": "analyst", "agent": null }
+      ],
+      "reviewer": { "id": "treasury-auditor", "title": "Treasury Auditor", "profile": "reviewer", "agent": null },
+      "kpis": [
+        { "id": "cash-position", "name": "Cash position", "source": "banking.read" },
+        { "id": "forecast-14-30-60", "name": "14/30/60-day forecast", "source": "banking.read" },
+        { "id": "liquidity-risks", "name": "Liquidity risks", "source": "banking.read" }
+      ],
+      "hardLimits": ["no payment approvals", "no transfers"]
+    },
+    {
+      "id": "costing",
+      "name": "Costing & Menu Engineering Board",
+      "group": "business",
+      "mandate": "Supplier invoice -> article -> price -> unit -> ingredient master -> recipe quantity -> direct food cost -> variable cost -> overhead -> true cost -> contribution margin -> menu engineering. Prices are historised, never overwritten. Direct food cost and fully loaded cost are distinguished; overhead uses cost drivers, not a flat split.",
+      "riskClass": "critical",
+      "status": "foundation-ready",
+      "technicalGate": "ci",
+      "lead": { "id": "costing-lead", "title": "Costing Lead", "profile": "analyst", "agent": "board-analyst" },
+      "workers": [
+        { "id": "supplier-invoice-agent", "title": "Supplier Invoice Agent", "profile": "analyst", "agent": null },
+        { "id": "ingredient-matcher", "title": "Ingredient Matcher", "profile": "analyst", "agent": null },
+        { "id": "unit-normalizer", "title": "Unit Normalizer", "profile": "analyst", "agent": null },
+        { "id": "ingredient-price-history-agent", "title": "Ingredient Price History Agent", "profile": "analyst", "agent": null },
+        { "id": "recipe-bom-agent", "title": "Recipe / BOM Agent", "profile": "analyst", "agent": null },
+        { "id": "yield-agent", "title": "Yield Agent", "profile": "analyst", "agent": null },
+        { "id": "costing-waste-agent", "title": "Waste Agent (Costing)", "profile": "analyst", "agent": null },
+        { "id": "labor-cost-agent", "title": "Labor Cost Agent", "profile": "analyst", "agent": null },
+        { "id": "overhead-allocation-agent", "title": "Overhead Allocation Agent", "profile": "analyst", "agent": null },
+        { "id": "menu-engineering-agent", "title": "Menu Engineering Agent", "profile": "analyst", "agent": null }
+      ],
+      "reviewer": { "id": "costing-auditor", "title": "Costing Auditor", "profile": "reviewer", "agent": null },
+      "kpis": [
+        { "id": "food-cost-pct", "name": "Food cost %", "source": "pos.read" },
+        { "id": "contribution-margin", "name": "Contribution margin per dish", "source": "pos.read" },
+        { "id": "cost-trend", "name": "Ingredient cost trend", "source": "accounting.read" },
+        { "id": "supplier-price-changes", "name": "Supplier price changes", "source": "accounting.read" }
+      ],
+      "hardLimits": ["never change selling prices", "never overwrite purchase prices (historise)"]
+    },
+    {
+      "id": "purchasing",
+      "name": "Purchasing Board",
+      "group": "business",
+      "mandate": "Supplier prices, comparison, purchase recommendations, availability; tightly linked to Costing and Inventory.",
+      "riskClass": "normal",
+      "status": "foundation-ready",
+      "technicalGate": null,
+      "lead": { "id": "purchasing-lead", "title": "Purchasing Lead", "profile": "analyst", "agent": "board-analyst" },
+      "workers": [
+        { "id": "supplier-price-agent", "title": "Supplier Price Agent", "profile": "analyst", "agent": null },
+        { "id": "supplier-comparison-agent", "title": "Supplier Comparison Agent", "profile": "analyst", "agent": null },
+        { "id": "purchase-recommendation-agent", "title": "Purchase Recommendation Agent", "profile": "analyst", "agent": null },
+        { "id": "availability-agent", "title": "Availability Agent", "profile": "analyst", "agent": null }
+      ],
+      "reviewer": { "id": "purchasing-auditor", "title": "Purchasing Auditor", "profile": "reviewer", "agent": null },
+      "kpis": [
+        { "id": "price-variance", "name": "Supplier price variance", "source": "accounting.read" },
+        { "id": "savings-potential", "name": "Savings potential (evidence-based)", "source": "accounting.read" }
+      ],
+      "hardLimits": ["no orders without a defined approval process"]
+    },
+    {
+      "id": "hr-payroll",
+      "name": "HR & Payroll Board",
+      "group": "business",
+      "mandate": "Employee master data, employment type, entry/exit, registration proof, hours, leave/sickness (if a source exists), missing days, monthly completeness; payroll preparation for the tax advisor. Monthly cycle: 01-15 control, 16-18 clarify gaps, 19 final pre-check, 20 hand-over. Delivery states: PREPARED, READY_TO_SEND, SENT, DELIVERED_CONFIRMED (only with technical proof).",
+      "riskClass": "critical",
+      "status": "foundation-ready",
+      "technicalGate": "ci",
+      "lead": { "id": "hr-lead", "title": "HR Lead", "profile": "analyst", "agent": "board-analyst" },
+      "workers": [
+        { "id": "employee-master-agent", "title": "Employee Master Agent", "profile": "analyst", "agent": null },
+        { "id": "registration-compliance-agent", "title": "Registration Compliance Agent", "profile": "analyst", "agent": null },
+        { "id": "timekeeping-agent", "title": "Timekeeping Agent", "profile": "analyst", "agent": null },
+        { "id": "payroll-prep-agent", "title": "Payroll Prep Agent", "profile": "analyst", "agent": null },
+        { "id": "tax-advisor-delivery-agent", "title": "Tax Advisor Delivery Agent", "profile": "analyst", "agent": null }
+      ],
+      "reviewer": { "id": "hr-payroll-auditor", "title": "HR / Payroll Auditor", "profile": "reviewer", "agent": null },
+      "kpis": [
+        { "id": "missing-hours", "name": "Missing working hours", "source": "timekeeping.read" },
+        { "id": "payroll-readiness", "name": "Payroll readiness", "source": "timekeeping.read" },
+        { "id": "registration-proof", "name": "Registration proof present", "source": "payroll.read" },
+        { "id": "personnel-cost", "name": "Personnel cost", "source": "payroll.read" }
+      ],
+      "hardLimits": ["never invent hours", "never claim 'correctly registered' without proof (RED / REGISTRATION NOT PROVABLE)", "never claim 'sent' without proof", "no automatic staff registration"]
+    },
+    {
+      "id": "daily-coo",
+      "name": "Daily COO / Control Tower",
+      "group": "business",
+      "mandate": "Digital operations manager below the Cloud CEO: reservations, groups, events, food truck, staff, food cost, critical stock, prep, open orders, finance issues, cash, technical issues, daily goals, blockers. Produces the daily brief and proposes tasks to other boards.",
+      "riskClass": "normal",
+      "status": "foundation-ready",
+      "technicalGate": null,
+      "lead": { "id": "daily-coo", "title": "Daily COO", "profile": "operations-reader", "agent": "daily-coo" },
+      "workers": [
+        { "id": "daily-brief-agent", "title": "Daily Brief Agent", "profile": "operations-reader", "agent": "daily-coo" },
+        { "id": "blocker-tracker", "title": "Blocker Tracker", "profile": "analyst", "agent": null }
+      ],
+      "reviewer": { "ref": "final-auditor" },
+      "kpis": [
+        { "id": "daily-readiness", "name": "Daily readiness", "source": "reservations.read" },
+        { "id": "open-blockers-today", "name": "Open blockers", "source": "code.read" },
+        { "id": "forecast-vs-actual", "name": "Forecast vs actual", "source": "pos.read" }
+      ],
+      "hardLimits": ["proposes, never executes other boards' actions", "no external messages"]
+    },
+    {
+      "id": "inventory",
+      "name": "Inventory & Prep Forecasting Board",
+      "group": "business",
+      "mandate": "Sales + reservations + events + weekday + season (+ weather) -> demand forecast -> minus current stock -> prep/order proposal. No fictitious stock values.",
+      "riskClass": "normal",
+      "status": "foundation-ready",
+      "technicalGate": null,
+      "lead": { "id": "inventory-lead", "title": "Inventory Lead", "profile": "analyst", "agent": "board-analyst" },
+      "workers": [
+        { "id": "stock-agent", "title": "Stock Agent", "profile": "analyst", "agent": null },
+        { "id": "consumption-agent", "title": "Consumption Agent", "profile": "analyst", "agent": null },
+        { "id": "prep-forecast-agent", "title": "Prep Forecast Agent", "profile": "analyst", "agent": null },
+        { "id": "inventory-waste-agent", "title": "Waste Agent (Inventory)", "profile": "analyst", "agent": null },
+        { "id": "reorder-agent", "title": "Reorder Agent", "profile": "analyst", "agent": null }
+      ],
+      "reviewer": { "id": "inventory-auditor", "title": "Inventory Auditor", "profile": "reviewer", "agent": null },
+      "kpis": [
+        { "id": "stockouts", "name": "Stockouts", "source": "inventory.read" },
+        { "id": "waste", "name": "Waste", "source": "inventory.read" },
+        { "id": "stock-value", "name": "Stock value", "source": "inventory.read" },
+        { "id": "forecast-accuracy", "name": "Forecast accuracy", "source": "pos.read" }
+      ],
+      "hardLimits": ["missing data -> DATA NOT AVAILABLE", "no orders"]
+    },
+    {
+      "id": "food-safety",
+      "name": "Food Safety / HACCP / Compliance Board",
+      "group": "business",
+      "mandate": "Temperature, cleaning schedules, allergens, traceability, expiry, training compliance. Reusable for other restaurants. Missing records are never back-filled.",
+      "riskClass": "critical",
+      "status": "foundation-ready",
+      "technicalGate": "ci",
+      "lead": { "id": "food-safety-lead", "title": "Food Safety Lead", "profile": "analyst", "agent": "board-analyst" },
+      "workers": [
+        { "id": "temperature-compliance-agent", "title": "Temperature Compliance Agent", "profile": "analyst", "agent": null },
+        { "id": "cleaning-schedule-agent", "title": "Cleaning Schedule Agent", "profile": "analyst", "agent": null },
+        { "id": "allergen-agent", "title": "Allergen Agent", "profile": "analyst", "agent": null },
+        { "id": "traceability-agent", "title": "Traceability Agent", "profile": "analyst", "agent": null },
+        { "id": "expiry-agent", "title": "Expiry Agent", "profile": "analyst", "agent": null },
+        { "id": "training-compliance-agent", "title": "Training Compliance Agent", "profile": "analyst", "agent": null }
+      ],
+      "reviewer": { "id": "compliance-auditor", "title": "Compliance Auditor", "profile": "reviewer", "agent": null },
+      "kpis": [
+        { "id": "haccp-completeness", "name": "HACCP record completeness", "source": "haccp.read" },
+        { "id": "open-deviations", "name": "Open deviations", "source": "haccp.read" }
+      ],
+      "hardLimits": ["never invent or back-date HACCP records (RED / DOCUMENTATION MISSING)"]
+    },
+    {
+      "id": "crm",
+      "name": "CRM / Guest Intelligence Board",
+      "group": "business",
+      "mandate": "Guest segmentation (new, returning, regulars, group bookers, corporate, food-truck leads, inactive) from lawful sources within the privacy framework. Campaign use requires defined consent rules.",
+      "riskClass": "critical",
+      "status": "foundation-ready",
+      "technicalGate": "ci",
+      "lead": { "id": "crm-lead", "title": "CRM Lead", "profile": "analyst", "agent": "board-analyst" },
+      "workers": [
+        { "id": "guest-segmentation-agent", "title": "Guest Segmentation Agent", "profile": "analyst", "agent": null },
+        { "id": "retention-agent", "title": "Retention Agent", "profile": "analyst", "agent": null },
+        { "id": "campaign-audience-agent", "title": "Campaign Audience Agent", "profile": "analyst", "agent": null },
+        { "id": "company-customer-agent", "title": "Company Customer Agent", "profile": "analyst", "agent": null },
+        { "id": "reactivation-agent", "title": "Reactivation Agent", "profile": "analyst", "agent": null }
+      ],
+      "reviewer": { "id": "privacy-auditor", "title": "Privacy Auditor", "profile": "reviewer", "agent": null },
+      "kpis": [
+        { "id": "segment-sizes", "name": "Segment sizes", "source": "reservations.read" },
+        { "id": "retention-rate", "name": "Returning guest rate", "source": "reservations.read" }
+      ],
+      "hardLimits": ["no contacting guests", "consent rules required before any campaign use"]
+    },
+    {
+      "id": "marketing",
+      "name": "Marketing / Social Board",
+      "group": "business",
+      "mandate": "Content research, planning, social posts, captions, campaigns, creative QA. Brand rules come from customer config, not core.",
+      "riskClass": "normal",
+      "status": "foundation-ready",
+      "technicalGate": null,
+      "lead": { "id": "marketing-lead", "title": "Marketing Lead", "profile": "analyst", "agent": "board-analyst" },
+      "workers": [
+        { "id": "content-research-agent", "title": "Content Research Agent", "profile": "researcher", "agent": null },
+        { "id": "content-planner", "title": "Content Planner", "profile": "analyst", "agent": null },
+        { "id": "instagram-agent", "title": "Instagram Agent", "profile": "analyst", "agent": null },
+        { "id": "caption-agent", "title": "Caption Agent", "profile": "analyst", "agent": null },
+        { "id": "campaign-agent", "title": "Campaign Agent", "profile": "analyst", "agent": null },
+        { "id": "creative-qa", "title": "Creative QA", "profile": "analyst", "agent": null }
+      ],
+      "reviewer": { "id": "brand-compliance-agent", "title": "Brand Compliance Agent", "profile": "reviewer", "agent": null },
+      "kpis": [
+        { "id": "reach", "name": "Reach", "source": "social.read" },
+        { "id": "marketing-leads", "name": "Leads", "source": "social.read" },
+        { "id": "attributed-revenue", "name": "Attributed revenue (only where robust)", "source": "pos.read" }
+      ],
+      "hardLimits": ["no publishing in Phase 1"]
+    },
+    {
+      "id": "seo-growth",
+      "name": "SEO / Growth Board",
+      "group": "business",
+      "mandate": "Technical SEO, local SEO, search intent, landing pages, CRO, ranking monitoring. May create engineering tickets; no direct production changes.",
+      "riskClass": "normal",
+      "status": "foundation-ready",
+      "technicalGate": null,
+      "lead": { "id": "growth-lead", "title": "Growth Lead", "profile": "analyst", "agent": "board-analyst" },
+      "workers": [
+        { "id": "technical-seo-agent", "title": "Technical SEO Agent", "profile": "researcher", "agent": null },
+        { "id": "local-seo-agent", "title": "Local SEO Agent", "profile": "researcher", "agent": null },
+        { "id": "search-intent-agent", "title": "Search Intent Agent", "profile": "researcher", "agent": null },
+        { "id": "landing-page-agent", "title": "Landing Page Agent", "profile": "analyst", "agent": null },
+        { "id": "cro-agent", "title": "CRO Agent", "profile": "analyst", "agent": null },
+        { "id": "ranking-monitor", "title": "Ranking Monitor", "profile": "researcher", "agent": null }
+      ],
+      "reviewer": { "id": "growth-auditor", "title": "Growth Auditor", "profile": "reviewer", "agent": null },
+      "kpis": [
+        { "id": "rankings", "name": "Rankings", "source": "seo.read" },
+        { "id": "organic-leads", "name": "Organic leads", "source": "seo.read" },
+        { "id": "organic-conversion", "name": "Organic conversion", "source": "seo.read" }
+      ],
+      "hardLimits": ["no direct website changes; engineering tickets only"]
+    },
+    {
+      "id": "sales",
+      "name": "Sales Board",
+      "group": "business",
+      "mandate": "Groups & parties, food truck public and catering, B2B dough blanks, corporate customers, follow-up.",
+      "riskClass": "normal",
+      "status": "foundation-ready",
+      "technicalGate": null,
+      "lead": { "id": "sales-lead", "title": "Sales Lead", "profile": "analyst", "agent": "board-analyst" },
+      "workers": [
+        { "id": "lead-discovery-agent", "title": "Lead Discovery Agent", "profile": "researcher", "agent": null },
+        { "id": "qualification-agent", "title": "Qualification Agent", "profile": "analyst", "agent": null },
+        { "id": "offer-preparation-agent", "title": "Offer Preparation Agent", "profile": "analyst", "agent": null },
+        { "id": "follow-up-agent", "title": "Follow-up Agent", "profile": "analyst", "agent": null },
+        { "id": "pipeline-analyst", "title": "Pipeline Analyst", "profile": "analyst", "agent": null }
+      ],
+      "reviewer": { "id": "sales-auditor", "title": "Sales Auditor", "profile": "reviewer", "agent": null },
+      "kpis": [
+        { "id": "sales-leads", "name": "Leads", "source": "crm.read" },
+        { "id": "conversion", "name": "Conversion", "source": "crm.read" },
+        { "id": "order-value", "name": "Order value", "source": "accounting.read" }
+      ],
+      "hardLimits": ["no contacting customers in Phase 1", "offers are drafts for the owner"]
+    },
+    {
+      "id": "operations",
+      "name": "Operations Board",
+      "group": "business",
+      "mandate": "SOPs, daily routines, purchasing routines, set-up/tear-down, restaurant, food truck, production workflows, maintenance.",
+      "riskClass": "normal",
+      "status": "foundation-ready",
+      "technicalGate": null,
+      "lead": { "id": "operations-lead", "title": "Operations Lead", "profile": "analyst", "agent": "board-analyst" },
+      "workers": [
+        { "id": "sop-agent", "title": "SOP Agent", "profile": "analyst", "agent": null },
+        { "id": "foodtruck-ops-agent", "title": "Food Truck Ops Agent", "profile": "analyst", "agent": null },
+        { "id": "maintenance-agent", "title": "Maintenance Agent", "profile": "analyst", "agent": null }
+      ],
+      "reviewer": { "id": "operations-auditor", "title": "Operations Auditor", "profile": "reviewer", "agent": null },
+      "kpis": [
+        { "id": "sop-coverage", "name": "SOP coverage", "source": "code.read" },
+        { "id": "open-maintenance", "name": "Open maintenance items", "source": "operations.read" }
+      ],
+      "hardLimits": ["documentation and proposals only"]
+    },
+    {
+      "id": "technology-radar",
+      "name": "AI / Technology Radar",
+      "group": "foundation",
+      "mandate": "Keep the AI system current: monitor official release notes, rate benefit/risk, route through security review -> engineering PoC -> QA -> owner approval -> production. Never buys or installs anything.",
+      "riskClass": "normal",
+      "status": "foundation-ready",
+      "technicalGate": null,
+      "lead": { "id": "ai-technology-lead", "title": "AI Technology Lead", "profile": "researcher", "agent": "technology-radar" },
+      "workers": [
+        { "id": "release-watcher", "title": "Release Watcher", "profile": "researcher", "agent": "technology-radar" },
+        { "id": "poc-evaluator", "title": "PoC Evaluator", "profile": "analyst", "agent": null }
+      ],
+      "reviewer": { "ref": "security-auditor" },
+      "kpis": [
+        { "id": "radar-entries", "name": "Radar entries per month", "source": "code.read" },
+        { "id": "adopted-after-review", "name": "Adopted only after security review (target 100%)", "source": "code.read" }
+      ],
+      "hardLimits": ["no purchases", "no installs without the pipeline"]
+    }
+  ]
+}

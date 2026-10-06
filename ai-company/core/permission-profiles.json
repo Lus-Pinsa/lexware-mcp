@@ -1,0 +1,79 @@
+{
+  "$comment": "Least-privilege profiles (core, customer-agnostic). Every role in org.json references exactly one profile. claudeTools = maximum Claude Code tool set an agent file of this profile may declare. connectorCapabilities = abstract capabilities; the customer config maps them to concrete MCP tools. Domain values: no | read-only | branch-only. 'write' is forbidden for prod/finance/deploy in Phase 1 and secrets must be 'no' (enforced by tests/governance.test.ts).",
+  "version": 1,
+  "phase": "foundation",
+  "domains": ["read", "repoWrite", "prod", "finance", "deploy", "secrets"],
+  "profiles": {
+    "orchestrator": {
+      "description": "Cloud CEO. Plans, delegates, merges results. Orchestration knowledge without production rights.",
+      "claudeTools": ["Read", "Grep", "Glob", "Agent"],
+      "connectorCapabilities": [],
+      "domains": { "read": "read-only", "repoWrite": "no", "prod": "no", "finance": "no", "deploy": "no", "secrets": "no" }
+    },
+    "lead": {
+      "description": "Board lead. Plans and accepts work; runs read-only commands; does not build.",
+      "claudeTools": ["Read", "Grep", "Glob", "Bash"],
+      "connectorCapabilities": [],
+      "domains": { "read": "read-only", "repoWrite": "no", "prod": "no", "finance": "no", "deploy": "no", "secrets": "no" }
+    },
+    "builder": {
+      "description": "Specialist that edits code/tests on a feature branch and opens PRs. No main, no production, no secrets, no gate files.",
+      "claudeTools": ["Read", "Grep", "Glob", "Edit", "Write", "Bash"],
+      "connectorCapabilities": [],
+      "domains": { "read": "read-only", "repoWrite": "branch-only", "prod": "no", "finance": "no", "deploy": "no", "secrets": "no" }
+    },
+    "doc-maintainer": {
+      "description": "Maintains documentation/config under ai-company/ on a branch. No code, no gates, no shell.",
+      "claudeTools": ["Read", "Grep", "Glob", "Edit", "Write"],
+      "connectorCapabilities": [],
+      "domains": { "read": "read-only", "repoWrite": "branch-only", "prod": "no", "finance": "no", "deploy": "no", "secrets": "no" }
+    },
+    "reviewer": {
+      "description": "Independent reviewer/auditor. Reads, searches, runs tests and reports. Never edits.",
+      "claudeTools": ["Read", "Grep", "Glob", "Bash"],
+      "connectorCapabilities": [],
+      "domains": { "read": "read-only", "repoWrite": "no", "prod": "no", "finance": "no", "deploy": "no", "secrets": "no" }
+    },
+    "researcher": {
+      "description": "Reads official external sources. No shell, no edits, no purchases.",
+      "claudeTools": ["Read", "Grep", "Glob", "WebFetch", "WebSearch"],
+      "connectorCapabilities": [],
+      "domains": { "read": "read-only", "repoWrite": "no", "prod": "no", "finance": "no", "deploy": "no", "secrets": "no" }
+    },
+    "deploy-verifier": {
+      "description": "Reads deployment status, health checks and logs. Cannot deploy or change configuration.",
+      "claudeTools": ["Read", "Grep", "Glob", "WebFetch"],
+      "connectorCapabilities": ["hosting.read"],
+      "domains": { "read": "read-only", "repoWrite": "no", "prod": "read-only", "finance": "no", "deploy": "no", "secrets": "no" }
+    },
+    "finance-reader": {
+      "description": "Finance board (Phase 1). Reads accounting data via the accounting connector's read tools only.",
+      "claudeTools": ["Read", "Grep", "Glob"],
+      "connectorCapabilities": ["accounting.read"],
+      "domains": { "read": "read-only", "repoWrite": "no", "prod": "read-only", "finance": "read-only", "deploy": "no", "secrets": "no" }
+    },
+    "operations-reader": {
+      "description": "Daily COO. Reads operational sources (currently only the accounting queue/reconciliation) to build the daily brief.",
+      "claudeTools": ["Read", "Grep", "Glob"],
+      "connectorCapabilities": ["accounting.read"],
+      "domains": { "read": "read-only", "repoWrite": "no", "prod": "read-only", "finance": "read-only", "deploy": "no", "secrets": "no" }
+    },
+    "analyst": {
+      "description": "Planned business roles without connected data sources. Concept and gap analysis only.",
+      "claudeTools": ["Read", "Grep", "Glob"],
+      "connectorCapabilities": [],
+      "domains": { "read": "read-only", "repoWrite": "no", "prod": "no", "finance": "no", "deploy": "no", "secrets": "no" }
+    },
+    "office-agent": {
+      "description": "Future customer-facing office agent. Only explicitly granted domain tools; may never modify its own program code.",
+      "claudeTools": [],
+      "connectorCapabilities": [],
+      "domains": { "read": "read-only", "repoWrite": "no", "prod": "no", "finance": "no", "deploy": "no", "secrets": "no" }
+    }
+  },
+  "forbiddenInPhase1": {
+    "domainValues": { "prod": ["write"], "finance": ["write"], "deploy": ["write"], "secrets": ["read-only", "write"], "repoWrite": ["write"] },
+    "capabilities": ["accounting.write", "accounting.finalize", "accounting.queue-ack", "hosting.write", "payments.execute", "social.publish", "messaging.send", "purchasing.order", "pos.write"],
+    "claudeToolsForReviewers": ["Edit", "Write", "NotebookEdit"]
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "$comment": "Template for a new restaurant customer. Copy to ai-company/customers/<id>/customer.json, fill in, and map connector capabilities to the MCP tools of that customer's deployment. Keep secrets and personal data out of the repository.",
+  "customerId": "<id>",
+  "displayName": "<Restaurant name>",
+  "legalEntity": "<legal entity>",
+  "location": "<city, country>",
+  "decisionOwner": "<owner role>",
+  "language": "de",
+  "timezone": "Europe/Berlin",
+  "phase": "foundation",
+  "enabledBoards": ["engineering", "security", "qa-audit", "devops", "knowledge", "finance", "daily-coo", "technology-radar"],
+  "connectors": {
+    "accounting": { "system": "<accounting system>", "status": "not-connected", "capabilities": ["accounting.read"] },
+    "pos": { "system": "<POS>", "status": "not-connected", "capabilities": ["pos.read"] },
+    "reservations": { "system": "<reservation system>", "status": "not-connected", "capabilities": ["reservations.read"] }
+  },
+  "capabilityTools": {
+    "accounting.read": [],
+    "accounting.write": [],
+    "accounting.finalize": [],
+    "accounting.queue-ack": [],
+    "hosting.read": []
+  },
+  "sourcesOfTruth": {},
+  "calendars": {},
+  "rules": {},
+  "costPolicy": { "paidUpgradesRequireOwner": true, "recurringRoutinesRequireOwner": true, "preferEventDriven": true }
+}

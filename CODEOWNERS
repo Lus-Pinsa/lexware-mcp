@@ -1,2 +1,14 @@
-# Default owners for everything in this repo.
-* @marselsel
+# Default owner for everything in this repo (LU'S deployment of lexware-mcp).
+* @Lus-Pinsa
+
+# Safety gates and finance write boundary: changes always need the owner's review.
+/.claude/settings.json           @Lus-Pinsa
+/.claude/hooks/                  @Lus-Pinsa
+/.github/                        @Lus-Pinsa
+/CODEOWNERS                      @Lus-Pinsa
+/src/config.ts                   @Lus-Pinsa
+/src/tools/index.ts              @Lus-Pinsa
+/tests/finance-policy.test.ts    @Lus-Pinsa
+/tests/governance.test.ts        @Lus-Pinsa
+/ai-company/core/                @Lus-Pinsa
+/ai-company/policies/            @Lus-Pinsa

@@ -245,3 +245,63 @@ describe("analyzeOpenItems — totals and determinism", () => {
     expect(usableSum).toBe(expected);
   });
 });
+
+describe("review round 1: open items", () => {
+  // As after a detail merge with a disagreeing voucher date: PR 1 then rates the due date LEXWARE_FIELD.
+  const voucherDateConflict = (r: FinanceRecord): FinanceRecord => ({
+    ...r,
+    dueDateConfidence: "LEXWARE_FIELD",
+    voucherDate: { value: null, quality: "CONFLICT", source: null, reason: "SOURCES_DISAGREE", candidates: [{ source: "voucherlist", value: "2026-09-01" }, { source: "voucher", value: "2026-09-03" }] },
+  });
+
+  it("a Lexware due date without a usable voucher date is never confirmed overdue (it may be the default)", () => {
+    const missingVoucherDate = item(fromRow(without(row(1, { voucherStatus: "open", dueDate: "2026-10-01" }), "voucherDate")));
+    expect(missingVoucherDate.dueDateBasis).toBe("LEXWARE_FIELD");
+    expect(missingVoucherDate).toMatchObject({ status: "POSSIBLY_OVERDUE", dueDateReliable: false, daysPastDue: null });
+    expect(missingVoucherDate.reasons).toContain("DUE_DATE_BASIS_UNVERIFIABLE");
+    const disputed = item(rec(2, { voucherStatus: "open", dueDate: "2026-10-01" }, voucherDateConflict));
+    expect(disputed.status).toBe("POSSIBLY_OVERDUE");
+    expect(disputed.reasons).toContain("DUE_DATE_BASIS_UNVERIFIABLE");
+    const notYetDue = item(fromRow(without(row(3, { voucherStatus: "open", dueDate: "2026-10-30" }), "voucherDate")));
+    expect(notYetDue.status).toBe("DUE_DATE_UNRELIABLE");
+  });
+
+  it("a stated payment term stays reliable even without a voucher date", () => {
+    const i = item(fromRow(without(row(1, { voucherType: "invoice", voucherStatus: "overdue", dueDate: "2026-10-01" }), "voucherDate")), AS_OF);
+    expect(i.status).toBe("POSSIBLY_OVERDUE");
+    const withTerm = item(rec(2, { voucherType: "invoice", voucherStatus: "overdue", dueDate: "2026-10-01" }, (r) => paymentTerm(voucherDateConflict(r))));
+    expect(withTerm).toMatchObject({ status: "OVERDUE_CONFIRMED", daysPastDue: 6 });
+  });
+
+  it("a failed payment fetch is a visible reason", () => {
+    const i = item(
+      rec(1, {}, (r) => ({
+        ...r,
+        payment: { ...r.payment, availability: "FETCH_FAILED" },
+        provenance: { ...r.provenance, payment: "FAILED" },
+      })),
+    );
+    expect(i.paymentInfo).toBe("FETCH_FAILED");
+    expect(i.reasons).toContain("PAYMENT_INFO_FETCH_FAILED");
+  });
+
+  it("down-payment invoices carry the double-count reason; same-day age is 0; an unusable currency is never totalled", () => {
+    expect(item(rec(1, { voucherType: "downpaymentinvoice" })).reasons).toContain("DOWN_PAYMENT_DOUBLE_COUNT_RISK");
+    expect(item(rec(2, { voucherDate: AS_OF, dueDate: "2026-10-20" })).ageDays).toBe(0);
+    const noCurrency = item(fromRow(without(row(3), "currency")));
+    expect(noCurrency.amountUsable).toBe(false);
+    expect(noCurrency.reasons).toContain("CURRENCY_NOT_USABLE");
+  });
+
+  it("orders items of the same status by due date, items without one last", () => {
+    const a = analyzeOpenItems(
+      [
+        rec(1, { voucherDate: "2026-09-01", dueDate: "2026-10-25" }),
+        rec(2, { voucherDate: "2026-09-01", dueDate: "2026-10-20" }),
+        rec(3, { voucherDate: "2026-09-01", dueDate: "2026-10-30" }),
+      ],
+      AS_OF,
+    );
+    expect(a.items.map((i) => i.dueDate)).toEqual(["2026-10-20", "2026-10-25", "2026-10-30"]);
+  });
+});

@@ -5,8 +5,9 @@
  * - Every result names the rule that fired (the reproducible "confidence") and the evidence per dimension.
  * - Only usable (STRUCTURED/DERIVED) values are compared. MISSING, PLACEHOLDER, CONFLICT and UNVERIFIED values are
  *   "not comparable" and never count as a match.
- * - Every rule needs at least two independent signals, one of them a file hash, voucher number or counterparty:
- *   an equal amount alone (even on the same day) never makes a duplicate.
+ * - A shared attachment hash (E1: the same file) is conclusive on its own; every other rule needs at least two
+ *   independent signals, one of them the voucher number or the counterparty. An equal amount alone (even on the same
+ *   day) never makes a duplicate.
  */
 import { daysBetween } from "./calendar.js";
 import { compareCodeUnits, grossAmount, uniqueById, voucherDay } from "./facts.js";

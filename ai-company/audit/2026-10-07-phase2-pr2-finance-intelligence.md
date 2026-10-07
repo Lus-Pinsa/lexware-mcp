@@ -74,14 +74,16 @@ Regeln (erste zutreffende gewinnt; die Regel-ID ist die reproduzierbare „Confi
 | S1 | gleiche Gegenpartei + gleicher Betrag + innerhalb 14 Tagen, Nummern nicht verschieden | POSSIBLE_DUPLICATE |
 | — | sonst | NOT_DUPLICATE |
 
-Garantie: Jede Regel braucht mindestens zwei unabhängige Merkmale, darunter Hash, Nummer oder Gegenpartei. Ein gleicher
-Betrag allein (auch mit gleichem Datum) erzeugt nie eine Dublette. Die Engine verändert, markiert oder löscht keine Belege.
+Garantie: Ein gemeinsamer Datei-Hash (E1, dieselbe Datei) ist allein beweiskräftig. Jede andere Regel braucht mindestens
+zwei unabhängige Merkmale, darunter Belegnummer oder Gegenpartei. Ein gleicher Betrag allein (auch mit gleichem Datum)
+erzeugt nie eine Dublette. Die Engine verändert, markiert oder löscht keine Belege.
 
 ## 2. Offene Posten (`src/finance/open-items.ts`)
 
 Richtung: EXPENSE → Verbindlichkeit, REVENUE → Forderung; Gutschriften und unbekannte Belegtypen → Richtung unbekannt
 (nie in Forderungs-/Verbindlichkeitssummen). Fälligkeit gilt nur als belastbar bei `dueDateConfidence` PAYMENT_TERM
-oder LEXWARE_FIELD.
+oder bei LEXWARE_FIELD mit belastbarem Belegdatum (ohne Belegdatum ist nicht erkennbar, ob die Fälligkeit nur der
+Default ist; Grund DUE_DATE_BASIS_UNVERIFIABLE, Behandlung wie „Fälligkeit = Belegdatum“).
 
 | Lexware-Status | Bedingung | Klasse |
 |---|---|---|
@@ -96,6 +98,9 @@ oder LEXWARE_FIELD.
 | overdue | Fälligkeit fehlt oder Konflikt | POSSIBLY_OVERDUE |
 | open | Fälligkeit fehlt oder Konflikt | DUE_DATE_UNRELIABLE |
 | unchecked, Status mit unverifizierter Bedeutung (z. B. sepadebit), unbekannt, Konflikt | — | STATUS_UNKNOWN |
+
+Hinweis: Status mit unverifizierter Zahlungsbedeutung (z. B. sepadebit, transferred) gelten als gebuchte Belege (ihre
+Beträge zählen zu den geprüften Ausgaben), ihr Zahlungsstand bleibt aber unbekannt (STATUS_UNKNOWN bei offenen Posten).
 | draft, voided, nicht-finanziell | — | ausgeschlossen (gezählt) |
 
 Je Posten: Brutto, offener Betrag (mit Qualität), Fälligkeit und deren Grundlage, Alter in Tagen ab Belegdatum (nur wenn
@@ -122,9 +127,10 @@ relativ „nicht definiert“.
 Regel (konfigurierbar, Standard): |relative Änderung| ≥ 30 % **und** |absolute Änderung| ≥ 250,00 €. Die Schwellen werden
 exakt geprüft (ganzzahlig/BigInt, keine Rundung). Bewertet wird nur gleichartig: MTD gegen Vormonat gleicher Zeitraum,
 für belastbare Ausgaben, Lexware-Rechnungserlöse und je Lieferant (nur EUR). Nicht bewertet (mit Grund) wird, wenn die
-Belegliste unvollständig ist, die Basis 0 ist, ein Wert nicht berechenbar ist oder bei Ausgaben/Lieferanten der Anteil
-ungeprüfter Einkaufsbelege in einem der Zeiträume über 10 % liegt (sonst entstünden Schein-Rückgänge durch den
-Belegeingang).
+Belegliste unvollständig ist, die Basis 0 ist, ein Wert nicht berechenbar ist, der Anteil ungeprüfter Belege der
+Kennzahl in einem der Zeiträume über 10 % liegt, oder geprüfte Belege der Kennzahl wegen unklarem Status, kritischem
+Befund oder fehlendem Betrag nicht summiert werden konnten (EXCLUDED_DOCUMENTS). Sonst entstünden Schein-Rückgänge
+durch fehlende Daten. Lieferanten-Auffälligkeiten werden nur bewertet, wenn die Ausgaben-Kennzahl bewertbar ist.
 
 ## 5. Datenqualität (`src/finance/data-quality.ts`)
 
@@ -134,7 +140,7 @@ Kein Score, sondern eine Einstufung aus konkreten, gezählten Befunden mit dokum
 |---|---|
 | NO_DATA | Liste vollständig, aber keine finanzrelevanten Belege im Umfang |
 | POOR | Belegliste nicht vollständig geladen, oder ≥ 10 % der geprüften Belege mit CRITICAL-Befund |
-| LIMITED | mindestens ein geprüfter Beleg mit CRITICAL-Befund, oder ≥ 25 % ungeprüfte Belege, oder ≥ 25 % ohne identifizierte Gegenpartei, oder Detail-/Zahlungsabrufe fehlgeschlagen, oder ≥ 50 % der offenen Posten ohne belastbare Fälligkeit |
+| LIMITED | mindestens ein geprüfter Beleg mit CRITICAL-Befund, ein Quellenkonflikt, ein unbekannter Status oder ein fehlgeschlagener Detail-/Zahlungsabruf, oder ≥ 25 % ungeprüfte Belege, oder ≥ 25 % ohne identifizierte Gegenpartei, oder ≥ 50 % der offenen Posten ohne belastbare Fälligkeit |
 | GOOD | sonst |
 
 Gezählte Befunde: fehlender Betrag, Quellenkonflikt, fehlende Gegenpartei, ungeprüfter Beleg, unzuverlässige
@@ -150,8 +156,11 @@ Status:
 
 - **ROT:** Belegliste nicht vollständig geladen; oder Datenqualität POOR; oder exakte Dublette zwischen zwei geprüften
   Belegen.
-- **GELB:** sonst, sobald mindestens ein Punkt „Owner Attention“ besteht (Dubletten-Verdacht, belastbar oder möglicherweise
-  überfällige Posten, Posten ohne belastbare Fälligkeit, Auffälligkeiten, Datenqualität LIMITED).
+- **GELB:** sonst, sobald mindestens ein Punkt „Owner Attention“ besteht: Datenqualität LIMITED, Dubletten-Kandidaten
+  (auch exakte Dubletten mit ungeprüftem Beleg), unvollständige Dublettenprüfung, belastbar oder möglicherweise
+  überfällige Posten, Posten ohne belastbare Fälligkeit, Widersprüche zwischen Status und offenem Betrag,
+  Auffälligkeiten, ungeprüfte Belege im Ladefenster, oder keine Belege im Ladefenster (NO_DATA: eher Zugangs- oder
+  Konfigurationsproblem als „alles erledigt“). Praktisch macht jeder ungeprüfte Beleg im Belegeingang den Brief GELB.
 - **GRÜN:** sonst. Der Brief nennt dann die Prüfungen und Zählungen, auf denen GRÜN beruht.
 
 ## 7. MCP-Tools (Read-Tier, `src/tools/finance-intelligence.ts`)
@@ -176,7 +185,7 @@ Detailabrufe sind gezielt (offene Verkaufsbelege; Dubletten-Kandidaten bei Hash-
 | Zeitraum | MTD; Monatsgrenzen; Jahreswechsel; Februar/Schaltjahr; Europe/Berlin; Division durch 0; fehlende/Konflikt-Werte; Überlauf; Auffälligkeitsgrenzen exakt |
 | Datenqualität | jede Schwelle an der Grenze; NO_DATA; unvollständige Liste |
 | Brief | deterministisch und byte-identisch (auch permutiert); keine verbotenen Formulierungen; PARTIAL; FAILED; Warnungen; Fremdtext-Begrenzer |
-| Policy | neue Tools read-only (auch READ_ONLY-Modus); Write-Liste unverändert; keine Mutation; keine Secrets; keine Uhr/kein Zufall in Fachmodulen; keine Geschäftsdaten in Fixtures |
+| Policy | neue Tools read-only (auch READ_ONLY-Modus); Write-Liste unverändert; keine Mutation; keine Secrets; keine Uhr/kein Zufall in Fachmodulen. Keine Geschäftsdaten in Fixtures: secret-scan (Muster) plus manuelle Prüfung, kein eigener automatischer Test |
 
 ## Evidenz
 

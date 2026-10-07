@@ -104,3 +104,27 @@ describe("assessDataQuality — grade from counted findings", () => {
     expect(() => assessDataQuality({ records: [], listComplete: true, fetchFailures: -1 })).toThrow(RangeError);
   });
 });
+
+describe("review round 1: data quality", () => {
+  it("below the share thresholds the counterparty and due-date findings do not limit the grade", () => {
+    const fiveWithOneUnidentified = [clean(1), clean(2), clean(3), clean(4), fromRow(without(row(5, { voucherStatus: "paid", openAmount: 0 }), "contactName"))];
+    expect(assess(fiveWithOneUnidentified).findings.find((f) => f.code === "COUNTERPARTY_MISSING")).toMatchObject({ count: 1, of: 5, effect: "NONE" });
+    const open = [
+      rec(1, { voucherStatus: "open", dueDate: "2026-10-20" }),
+      rec(2, { voucherStatus: "open", dueDate: "2026-10-21", contactName: "Testlieferant B" }),
+      rec(3, { voucherStatus: "overdue", voucherDate: "2026-09-01", dueDate: "2026-09-01", contactName: "Testlieferant C" }),
+    ];
+    const r = assess(open, { openItems: analyzeOpenItems(open, "2026-10-07") });
+    expect(r.findings.find((f) => f.code === "DUE_DATE_UNRELIABLE")).toEqual({ code: "DUE_DATE_UNRELIABLE", count: 1, of: 3, effect: "NONE" });
+  });
+
+  it("failed fetches recorded on the records count even when the loader total is 0", () => {
+    const failed = rec(2, {}, (r) => ({ ...r, provenance: { ...r.provenance, detail: "FAILED" } }));
+    expect(assess([clean(1), failed]).triggeredBy).toContain("FETCH_FAILED");
+  });
+
+  it("a repeated id counts once", () => {
+    const a = clean(1);
+    expect(assess([a, a, clean(2)]).scope.records).toBe(2);
+  });
+});

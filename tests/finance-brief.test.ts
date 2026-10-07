@@ -9,7 +9,7 @@ import { fromRow, paymentTerm, rec, rng, row, shuffle, without } from "./fixture
 
 const AS_OF = "2026-10-07";
 
-function input(records: FinanceRecord[], list: "COMPLETE" | "PARTIAL" | "FAILED" = "COMPLETE"): BriefInput {
+function input(records: FinanceRecord[], list: "COMPLETE" | "PARTIAL" | "FAILED" = "COMPLETE", maxPairs?: number): BriefInput {
   const openItems = analyzeOpenItems(records, AS_OF);
   return {
     asOf: AS_OF,
@@ -19,7 +19,7 @@ function input(records: FinanceRecord[], list: "COMPLETE" | "PARTIAL" | "FAILED"
     dataQuality: assessDataQuality({ records, listComplete: list === "COMPLETE", fetchFailures: 0, openItems }),
     periods: comparePeriods(records, AS_OF, { dataComplete: list === "COMPLETE" }),
     openItems,
-    duplicates: analyzeDuplicates(records),
+    duplicates: analyzeDuplicates(records, maxPairs === undefined ? {} : { maxPairs }),
     records,
   };
 }
@@ -149,5 +149,103 @@ describe("buildDailyBrief", () => {
     const b = buildDailyBrief({ ...input(records), maxListItems: 3 });
     expect(b.ownerAttention.filter((a) => a.text.startsWith("… und")).length).toBeGreaterThan(0);
     expect(() => buildDailyBrief({ ...input(records), maxListItems: 0 })).toThrow(RangeError);
+  });
+});
+
+describe("review round 1: every status reason on its own", () => {
+  const open = (n: number, o: Record<string, unknown> = {}) =>
+    // Dated before the compared periods, so the open items cannot also move the month comparison.
+    rec(n, { voucherStatus: "open", voucherDate: "2026-08-01", dueDate: "2026-10-20", contactName: `Testlieferant O${n}`, voucherNumber: `TEST-O${n}1`, ...o });
+  const cases: Array<[string, () => BriefInput, string, string[]]> = [
+    ["ANOMALY", () => input([paid(1, { voucherDate: "2026-10-02", totalAmount: 2000 }), paid(2, { voucherDate: "2026-09-02", totalAmount: 1000, voucherNumber: "TEST-2222" })]), "GELB", ["ANOMALY"]],
+    ["STATUS_CONTRADICTION", () => input([rec(1, { voucherStatus: "open", openAmount: 0, dueDate: "2026-10-20" })]), "GELB", ["STATUS_CONTRADICTION"]],
+    ["DUE_DATE_UNRELIABLE", () => input([open(1, { voucherDate: AS_OF, dueDate: AS_OF }), open(2), open(3)]), "GELB", ["DUE_DATE_UNRELIABLE"]],
+    ["POSSIBLY_OVERDUE", () => input([open(1, { voucherStatus: "overdue", dueDate: "2026-08-01" }), open(2), open(3)]), "GELB", ["POSSIBLY_OVERDUE"]],
+    [
+      "OVERDUE_CONFIRMED",
+      () => input([rec(1, { voucherType: "invoice", voucherStatus: "overdue", voucherDate: "2026-09-01", dueDate: "2026-09-01", contactName: "Testkunde A", totalAmount: 50, openAmount: 50 }, paymentTerm)]),
+      "GELB",
+      ["OVERDUE_CONFIRMED"],
+    ],
+    ["DUPLICATE_CANDIDATES", () => input([paid(1, { voucherNumber: "TEST-1001" }), paid(2, { voucherNumber: "TEST-1001", voucherDate: "2026-09-02" })]), "GELB", ["DUPLICATE_CANDIDATES"]],
+    [
+      "DUPLICATE_ANALYSIS_INCOMPLETE",
+      () => input([paid(1, { voucherDate: "2026-08-01", voucherNumber: undefined }), paid(2, { voucherDate: "2026-09-01", voucherNumber: undefined }), paid(3, { voucherDate: "2026-10-02", voucherNumber: undefined })], "COMPLETE", 1),
+      "GELB",
+      ["DUPLICATE_ANALYSIS_INCOMPLETE"],
+    ],
+    [
+      "UNREVIEWED_DOCUMENTS",
+      () => input([paid(1), paid(2, { contactName: "Testlieferant B", voucherNumber: "TEST-2" }), paid(3, { contactName: "Testlieferant C", voucherNumber: "TEST-3" }), paid(4, { contactName: "Testlieferant D", voucherNumber: "TEST-4" }), fromRow(without(row(5, { voucherStatus: "unchecked", contactName: "Testlieferant E" }), "openAmount"))]),
+      "GELB",
+      ["UNREVIEWED_DOCUMENTS"],
+    ],
+    ["NO_DATA", () => input([]), "GELB", ["NO_DATA"]],
+    ["DATA_QUALITY_POOR", () => input([rec(1, { voucherStatus: "paid", openAmount: 0, dueDate: "2026-10-20" }, (r) => ({ ...r, grossCents: { value: null, quality: "CONFLICT", source: null, reason: "SOURCES_DISAGREE", candidates: [{ source: "voucherlist", value: 1 }, { source: "voucher", value: 2 }] } }))]), "ROT", ["DATA_QUALITY_POOR"]],
+  ];
+
+  it.each(cases)("%s alone sets the expected status", (_name, build, status, reasons) => {
+    const b = buildDailyBrief(build());
+    expect(b.statusReasons).toEqual(reasons);
+    expect(b.status).toBe(status);
+    expect(b.ownerAttention.length).toBeGreaterThan(0);
+  });
+});
+
+describe("review round 1: brief properties", () => {
+  const FORBIDDEN = /\b(wurde|wurden|ist|sind)\s+(bezahlt|gebucht|gelöscht|überwiesen|storniert|beglichen)\b/i;
+
+  it("property: random fleets never yield forbidden claims, bare 'Umsatz', broken numbers or inconsistent status", () => {
+    const random = rng(2026);
+    const statuses = ["open", "overdue", "paid", "unchecked", "sepadebit", "voided", "draft"];
+    const types = ["purchaseinvoice", "invoice", "salesinvoice", "purchasecreditnote", "downpaymentinvoice", "quotation"];
+    let sawOpenConfirmedLine = false;
+    for (let run = 0; run < 60; run += 1) {
+      const records: FinanceRecord[] = [];
+      const size = 1 + Math.floor(random() * 25);
+      for (let n = 1; n <= size; n += 1) {
+        const month = random() < 0.5 ? "09" : "10";
+        const voucherDay = `2026-${month}-${String(1 + Math.floor(random() * 7)).padStart(2, "0")}`;
+        let r = rec(n, {
+          voucherType: types[Math.floor(random() * types.length)],
+          voucherStatus: statuses[Math.floor(random() * statuses.length)],
+          voucherDate: voucherDay,
+          dueDate: random() < 0.5 ? voucherDay : `2026-10-${String(10 + Math.floor(random() * 15)).padStart(2, "0")}`,
+          voucherNumber: random() < 0.8 ? `TEST-${Math.floor(random() * 6)}00` : undefined,
+          contactName: random() < 0.85 ? `Testlieferant ${Math.floor(random() * 4)}` : undefined,
+          totalAmount: Math.round(random() * 200000) / 100,
+          openAmount: random() < 0.5 ? 0 : Math.round(random() * 200000) / 100,
+        });
+        if (random() < 0.15) r = rec(n, {}, paymentTerm);
+        records.push(r);
+      }
+      const list = random() < 0.15 ? "PARTIAL" : "COMPLETE";
+      const b = buildDailyBrief(input(records, list));
+      expect(b.text).not.toMatch(FORBIDDEN);
+      expect(b.text).not.toMatch(/Infinity|NaN|undefined|\[object|null/);
+      const prefix = "Kassen-/POS-";
+      for (const m of b.text.matchAll(/Umsatz/g)) expect(b.text.slice((m.index ?? 0) - prefix.length, m.index)).toBe(prefix);
+      expect(b.text.split("\n").filter((l) => l.startsWith("STATUS:"))).toEqual([`STATUS: ${b.status}`]);
+      expect(b.status === "GRÜN").toBe(b.statusReasons.length === 0);
+      expect(b.ownerAttention.length === 0).toBe(b.statusReasons.length === 0);
+      if (list === "PARTIAL") expect(b.status).toBe("ROT");
+      if (b.text.includes("belastbar noch nicht fällig")) sawOpenConfirmedLine = true;
+    }
+    expect(sawOpenConfirmedLine).toBe(true);
+  });
+
+  it("repeated ids with different content render byte-identical text in any order", () => {
+    const x1 = paid(1, { voucherNumber: "TEST-1001" });
+    const x2 = paid(1, { voucherNumber: "TEST-1001", contactName: "Testlieferant Anders" });
+    const y = paid(2, { voucherNumber: "TEST-1001" });
+    expect(buildDailyBrief(input([x1, x2, y])).text).toBe(buildDailyBrief(input([y, x2, x1])).text);
+  });
+
+  it("lists at most maxListItems entries and counts the rest exactly", () => {
+    const records = Array.from({ length: 8 }, (_, i) => paid(i + 1, { voucherNumber: "TEST-1001", voucherDate: "2026-10-02" }));
+    const b = buildDailyBrief({ ...input(records), maxListItems: 3 });
+    const dup = b.ownerAttention.filter((a) => a.reason === "EXACT_DUPLICATE_REVIEWED" || a.reason === "DUPLICATE_CANDIDATES");
+    expect(dup).toHaveLength(4);
+    expect(dup[3].text).toBe("… und 25 weitere"); // 8 records → 28 pairs
   });
 });

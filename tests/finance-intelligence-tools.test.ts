@@ -85,7 +85,7 @@ function fake(options: { rows?: unknown[]; failList?: boolean; pages?: number } 
   return { client: client as unknown as LexwareClient, raw: client, calls };
 }
 
-function tools(client: LexwareClient, extractor?: PdfTextExtractor) {
+function tools(client: LexwareClient, extractor?: PdfTextExtractor, now: Date = NOW) {
   const handlers: Record<string, Handler> = {};
   const configs: Record<string, { annotations?: Record<string, boolean> }> = {};
   const server = {
@@ -94,7 +94,7 @@ function tools(client: LexwareClient, extractor?: PdfTextExtractor) {
       configs[cfg.name] = cfg;
     },
   } as unknown as McpServer;
-  registerFinanceIntelligenceTools(server, client, { now: () => NOW, extractor });
+  registerFinanceIntelligenceTools(server, client, { now: () => now, extractor });
   return { handlers, configs };
 }
 
@@ -253,5 +253,61 @@ describe("get-finance-daily-brief", () => {
     expect(res.structuredContent.completeness.list).toBe("PARTIAL");
     expect(res.structuredContent.status).toBe("ROT");
     expect(res.content[0].text).toContain("Untergrenzen");
+  });
+});
+
+describe("review round 1: tool limits and wiring", () => {
+  const sameSupplierInbox = (count: number) =>
+    Array.from({ length: count }, (_, i) => listRow(100 + i, { voucherStatus: "unchecked", voucherNumber: undefined, openAmount: undefined, voucherDate: "2026-10-02" }));
+
+  it("caps the returned duplicate findings and documents, keeping the counts complete", async () => {
+    const res = await tools(fake({ rows: sameSupplierInbox(20) }).client).handlers["analyze-voucher-duplicates"]({ maxFindings: 5 });
+    const sc = res.structuredContent;
+    expect(sc.analysis.counts.POSSIBLE_DUPLICATE).toBe(190); // 20 × 19 / 2
+    expect(sc.analysis.findings).toHaveLength(5);
+    expect(sc.findingsOmitted).toBe(185);
+    const listedIds = new Set(sc.analysis.findings.flatMap((f: { recordIds: string[] }) => f.recordIds));
+    expect(sc.documents.every((d: { id: string }) => listedIds.has(d.id))).toBe(true);
+    const defaults = await tools(fake({ rows: sameSupplierInbox(20) }).client).handlers["analyze-voucher-duplicates"]({});
+    expect(defaults.structuredContent.analysis.findings).toHaveLength(100);
+  });
+
+  it("hashes at most 25 candidate documents per call", async () => {
+    const f = fake({ rows: sameSupplierInbox(30) });
+    const extractor: PdfTextExtractor = () => ({ result: Promise.resolve({ text: "x", total: 1 }), destroy: async () => undefined });
+    const res = await tools(f.client, extractor).handlers["analyze-voucher-duplicates"]({ verifyFileHashes: true, maxRequests: 500 });
+    expect(f.calls.filter((c) => c.path.startsWith("/v1/vouchers/")).length).toBe(25);
+    expect(res.structuredContent.hashVerification).toMatchObject({ performed: true, candidates: 25, candidatesNotVerified: 5 });
+  });
+
+  it("validates thresholds and dates before any Lexware request", async () => {
+    const f = fake();
+    const { handlers } = tools(f.client);
+    expect((await handlers["compare-finance-periods"]({ minRelativeChangePercent: 30.001 })).isError).toBe(true);
+    expect((await handlers["compare-finance-periods"]({ asOf: "0050-01-15" })).isError).toBe(true);
+    expect((await handlers["get-finance-snapshot"]({ from: "0050-01-01", to: "0050-01-31" })).isError).toBe(true);
+    expect(f.calls).toEqual([]);
+  });
+
+  it("caps listed anomalies and reports how many were left out", async () => {
+    const rows = [
+      ...Array.from({ length: 60 }, (_, i) => listRow(200 + i, { contactName: `Testlieferant ${i}`, voucherNumber: `TEST-A${i}1`, voucherDate: "2026-10-02", totalAmount: 1000 })),
+      ...Array.from({ length: 60 }, (_, i) => listRow(400 + i, { contactName: `Testlieferant ${i}`, voucherNumber: `TEST-B${i}1`, voucherDate: "2026-09-02", totalAmount: 100 })),
+    ];
+    const res = await tools(fake({ rows }).client).handlers["compare-finance-periods"]({});
+    expect(res.structuredContent.comparison.anomalies).toHaveLength(50);
+    expect(res.structuredContent.anomaliesOmitted).toBe(11); // 1 metric + 60 suppliers
+  });
+
+  it("uses the Europe/Berlin day: 22:30 UTC on 6 October is already 7 October", async () => {
+    const f = fake();
+    await tools(f.client, undefined, new Date("2026-10-06T22:30:00.000Z")).handlers["compare-finance-periods"]({});
+    expect(f.calls[0].query).toMatchObject({ voucherDateTo: "2026-10-07" });
+  });
+
+  it("an incomplete list switches the brief's comparison to 'not evaluated'", async () => {
+    const res = await tools(fake({ pages: 3 }).client).handlers["get-finance-daily-brief"]({ maxRequests: 1 });
+    expect(res.content[0].text).toContain("nicht bewertet (Belegliste unvollständig)");
+    expect(res.structuredContent.anomalies).toBe(0);
   });
 });

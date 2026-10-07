@@ -9,7 +9,7 @@ import { analyzeDuplicates } from "../finance/duplicates.js";
 import { type Completeness, type FinanceSnapshot, type LoadOptions, loadFinanceSnapshot } from "../finance/loader.js";
 import { DEFAULT_TIME_ZONE, type FieldValue, type FinanceRecord, REVENUE_SCOPE_NOTE } from "../finance/model.js";
 import { analyzeOpenItems } from "../finance/open-items.js";
-import { comparePeriods } from "../finance/periods.js";
+import { comparePeriods, resolveAnomalyConfig } from "../finance/periods.js";
 import type { LexwareClient } from "../lexware/client.js";
 import type { PdfTextExtractor } from "../lexware/file-inspection.js";
 import { createReadOnlyLexwareClient } from "../lexware/read-only-client.js";
@@ -35,7 +35,14 @@ export interface FinanceToolDeps {
 
 const DEFAULT_TOOL_MAX_REQUESTS = 120;
 const MAX_TOOL_REQUESTS = 500;
+/** Maximum distance between from and to (an inclusive window therefore spans at most 732 days). */
 const MAX_WINDOW_DAYS = 731;
+/** Earliest accepted day: older data is not Lexware Office data, and very small years confuse Date arithmetic. */
+const MIN_DAY = "2000-01-01";
+/** Duplicate candidates whose attachments are hashed in one call (each download is up to 10 MiB). */
+const MAX_HASH_CANDIDATES = 25;
+const DEFAULT_MAX_FINDINGS = 100;
+const MAX_ANOMALIES_LISTED = 50;
 
 const dayParam = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "expected YYYY-MM-DD");
 const maxRequestsParam = jsonNum(z.number().int().min(1).max(MAX_TOOL_REQUESTS))
@@ -50,6 +57,7 @@ function errorResult(message: string) {
 
 function requireWindow(from: string, to: string): void {
   if (!isValidDay(from) || !isValidDay(to)) throw new InputError("from/to must be valid YYYY-MM-DD days");
+  if (from < MIN_DAY) throw new InputError(`from must not be before ${MIN_DAY}`);
   if (from > to) throw new InputError("from must not be after to");
   if (daysBetween(from, to) > MAX_WINDOW_DAYS) throw new InputError(`the window must not exceed ${MAX_WINDOW_DAYS} days`);
 }
@@ -180,15 +188,18 @@ export function registerFinanceIntelligenceTools(server: McpServer, client: Lexw
         "candidate documents to compare SHA-256. Never changes, marks or deletes a document.",
       annotations: RO,
       inputSchema: {
-        lookbackDays: jsonNum(z.number().int().min(1).max(366)).optional().describe("Days back from today (default 90)."),
+        lookbackDays: jsonNum(z.number().int().min(1).max(366)).optional().describe("Window from today minus N days through today (default 90)."),
         windowDays: jsonNum(z.number().int().min(0).max(60)).optional().describe("Day window of the weaker rules (default 14)."),
         verifyFileHashes: jsonBool(z.boolean())
           .optional()
-          .describe("Download the attachments of candidate documents to compare file hashes (default false; costs requests)."),
+          .describe(
+            `Download the attachments of up to ${MAX_HASH_CANDIDATES} candidate documents to compare file hashes (default false; costs requests).`,
+          ),
+        maxFindings: jsonNum(z.number().int().min(1).max(500)).optional().describe(`Findings returned (default ${DEFAULT_MAX_FINDINGS}; counts stay complete).`),
         maxRequests: maxRequestsParam,
       },
     },
-    async ({ lookbackDays, windowDays, verifyFileHashes, maxRequests }) => {
+    async ({ lookbackDays, windowDays, verifyFileHashes, maxFindings, maxRequests }) => {
       const now = clock();
       const today = dayInTimeZone(now, DEFAULT_TIME_ZONE);
       const window = { from: addDays(today, -(lookbackDays ?? 90)), to: today, basis: "voucherDate" as const };
@@ -199,7 +210,9 @@ export function registerFinanceIntelligenceTools(server: McpServer, client: Lexw
       let analysis = analyzeDuplicates(listOnly.records, config);
       let hashVerification: Record<string, unknown> = { performed: false, reason: "NOT_REQUESTED" };
       if (verifyFileHashes) {
-        const candidates = new Set(analysis.findings.flatMap((f) => [...f.recordIds]));
+        // Most severe findings first; at most MAX_HASH_CANDIDATES documents are downloaded.
+        const allCandidates = [...new Set(analysis.findings.flatMap((f) => [...f.recordIds]))];
+        const candidates = new Set(allCandidates.slice(0, MAX_HASH_CANDIDATES));
         const remaining = budget - listOnly.completeness.budget.used;
         if (candidates.size === 0) hashVerification = { performed: false, reason: "NO_CANDIDATES" };
         else if (remaining < 2) hashVerification = { performed: false, reason: "BUDGET" };
@@ -220,12 +233,15 @@ export function registerFinanceIntelligenceTools(server: McpServer, client: Lexw
           hashVerification = {
             performed: true,
             candidates: candidates.size,
+            candidatesNotVerified: allCandidates.length - candidates.size,
             attachments: snapshot.completeness.attachments,
-            note: "File hashes are compared for duplicate candidates only.",
+            note: `File hashes are compared for duplicate candidates only (at most ${MAX_HASH_CANDIDATES} documents per call).`,
           };
         }
       }
-      const ids = new Set(analysis.findings.flatMap((f) => [...f.recordIds]));
+      const findingLimit = maxFindings ?? DEFAULT_MAX_FINDINGS;
+      const listed = analysis.findings.slice(0, findingLimit);
+      const ids = new Set(listed.flatMap((f) => [...f.recordIds]));
       const dataQuality = assessDataQuality({
         records: snapshot.records,
         listComplete: snapshot.completeness.list === "COMPLETE",
@@ -233,7 +249,8 @@ export function registerFinanceIntelligenceTools(server: McpServer, client: Lexw
       });
       const result = {
         ...loadMeta(snapshot),
-        analysis,
+        analysis: { ...analysis, findings: listed },
+        findingsOmitted: analysis.findings.length - listed.length,
         documents: snapshot.records.filter((r) => ids.has(r.id)).map(snapshotRow),
         hashVerification,
         dataQuality,
@@ -258,7 +275,7 @@ export function registerFinanceIntelligenceTools(server: McpServer, client: Lexw
         "Totals use only usable open amounts. Credit notes have an unverified direction and are not totalled.",
       annotations: RO,
       inputSchema: {
-        lookbackDays: jsonNum(z.number().int().min(1).max(730)).optional().describe("Days back from today (default 180)."),
+        lookbackDays: jsonNum(z.number().int().min(1).max(730)).optional().describe("Window from today minus N days through today (default 180)."),
         direction: z.enum(["all", "receivable", "payable"]).optional().describe("Filter the returned items (totals stay complete)."),
         includePaid: jsonBool(z.boolean()).optional().describe("Also list PAID_CONFIRMED items (default false; always counted)."),
         verifyDueDates: jsonBool(z.boolean())
@@ -341,24 +358,23 @@ export function registerFinanceIntelligenceTools(server: McpServer, client: Lexw
       const day = asOf ?? today;
       if (!isValidDay(day)) return errorResult("asOf must be a valid YYYY-MM-DD day");
       if (day > today) return errorResult("asOf must not be in the future");
-      const window = { from: previousMonthStart(day), to: day, basis: "voucherDate" as const };
-      let comparison: ReturnType<typeof comparePeriods>;
-      const snapshot = await load(
-        { window, includeDetails: includeDetails ?? false, includePayments: false, maxRequests: maxRequests ?? DEFAULT_TOOL_MAX_REQUESTS },
-        now,
-      );
+      if (day < MIN_DAY) return errorResult(`asOf must not be before ${MIN_DAY}`);
+      const config = {
+        ...(minRelativeChangePercent === undefined ? {} : { minRelativeChangePercent }),
+        ...(minAbsoluteChangeCents === undefined ? {} : { minAbsoluteChangeCents }),
+      };
       try {
-        comparison = comparePeriods(snapshot.records, day, {
-          dataComplete: snapshot.completeness.list === "COMPLETE",
-          config: {
-            ...(minRelativeChangePercent === undefined ? {} : { minRelativeChangePercent }),
-            ...(minAbsoluteChangeCents === undefined ? {} : { minAbsoluteChangeCents }),
-          },
-        });
+        resolveAnomalyConfig(config); // invalid input never costs a Lexware request
       } catch (err) {
         if (err instanceof RangeError) return errorResult(err.message);
         throw err;
       }
+      const window = { from: previousMonthStart(day), to: day, basis: "voucherDate" as const };
+      const snapshot = await load(
+        { window, includeDetails: includeDetails ?? false, includePayments: false, maxRequests: maxRequests ?? DEFAULT_TOOL_MAX_REQUESTS },
+        now,
+      );
+      const comparison = comparePeriods(snapshot.records, day, { dataComplete: snapshot.completeness.list === "COMPLETE", config });
       const dataQuality = assessDataQuality({
         records: snapshot.records,
         listComplete: snapshot.completeness.list === "COMPLETE",
@@ -367,7 +383,8 @@ export function registerFinanceIntelligenceTools(server: McpServer, client: Lexw
       const result = {
         ...loadMeta(snapshot),
         statusNote: "Statuses and open amounts are as of the fetch time, not as of asOf.",
-        comparison,
+        comparison: { ...comparison, anomalies: comparison.anomalies.slice(0, MAX_ANOMALIES_LISTED) },
+        anomaliesOmitted: Math.max(0, comparison.anomalies.length - MAX_ANOMALIES_LISTED),
         dataQuality,
       };
       const summary =

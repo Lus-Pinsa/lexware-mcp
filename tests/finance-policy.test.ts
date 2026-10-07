@@ -383,12 +383,19 @@ describe("Phase 2 finance intelligence stays read-only", () => {
     for (const forbidden of [/\bclient\.(get|getBinary|post|request|postMultipart)\b/, /\.post\s*\(/, /postMultipart/, /\.request\s*\(/, /process\.env/, /pending-voucher-events/, /\bfetch\s*\(/, /node:fs/]) {
       expect({ forbidden: String(forbidden), match: forbidden.test(src) }).toEqual({ forbidden: String(forbidden), match: false });
     }
+    // The full client appears exactly twice outside imports: in the signature and when it is wrapped.
+    const code = src
+      .split("\n")
+      .filter((line) => !/^\s*(import|\*|\/\*|\/\/)/.test(line))
+      .join("\n");
+    expect(code.match(/\bclient\b/g)).toHaveLength(2);
+    expect(code).toMatch(/registerFinanceIntelligenceTools\(server: McpServer, client: LexwareClient,/);
   });
 
   it("the business logic modules are pure: no clock, no randomness, no locale-dependent formatting", () => {
     for (const name of PURE_MODULES) {
       const src = readFileSync(join(process.cwd(), `src/finance/${name}.ts`), "utf8");
-      for (const forbidden of [/Date\.now/, /new Date\(\s*\)/, /Math\.random/, /\bIntl\./, /toLocale[A-Za-z]*\(/, /from\s+["']\.\.\/lexware\//, /from\s+["']\.\/loader\.js["']/]) {
+      for (const forbidden of [/Date\.now/, /new Date\(\s*\)/, /Math\.random/, /\bIntl\b/, /toLocale[A-Za-z]*\(/, /localeCompare/, /performance\.now/, /hrtime/, /from\s+["']\.\.\/lexware\//, /from\s+["']\.\/loader\.js["']/]) {
         expect({ module: name, forbidden: String(forbidden), match: forbidden.test(src) }).toEqual({ module: name, forbidden: String(forbidden), match: false });
       }
     }

@@ -38,6 +38,7 @@ export type Direction = "RECEIVABLE" | "PAYABLE" | "UNKNOWN";
 
 export const OPEN_ITEM_REASONS = [
   "DUE_DATE_POSSIBLE_DEFAULT",
+  "DUE_DATE_BASIS_UNVERIFIABLE",
   "DUE_DATE_MISSING",
   "DUE_DATE_CONFLICT",
   "LEXWARE_STATUS_OVERDUE_NOT_CONFIRMED",
@@ -97,8 +98,19 @@ function directionOf(record: FinanceRecord): { direction: Direction; reason?: Op
   return { direction: "UNKNOWN", reason: "DIRECTION_UNKNOWN_VOUCHER_TYPE" };
 }
 
+/**
+ * A due date is reliable with a stated payment term, or when it is a Lexware due date that differs from a KNOWN
+ * voucher date. Without a usable voucher date a LEXWARE_FIELD due date may still be the default (= voucher date).
+ */
 function dueReliable(record: FinanceRecord): boolean {
-  return isUsable(record.dueDate) && (record.dueDateConfidence === "PAYMENT_TERM" || record.dueDateConfidence === "LEXWARE_FIELD");
+  if (!isUsable(record.dueDate)) return false;
+  if (record.dueDateConfidence === "PAYMENT_TERM") return true;
+  return record.dueDateConfidence === "LEXWARE_FIELD" && isUsable(record.voucherDate);
+}
+
+/** A Lexware due date whose voucher date is missing or disputed: it cannot be told apart from a default. */
+function dueBasisUnverifiable(record: FinanceRecord): boolean {
+  return isUsable(record.dueDate) && record.dueDateConfidence === "LEXWARE_FIELD" && !isUsable(record.voucherDate);
 }
 
 export type OpenItemExclusion = "NON_FINANCIAL" | "VOIDED" | "DRAFT";
@@ -168,8 +180,8 @@ export function classifyOpenItem(record: FinanceRecord, asOf: string): { item: O
         } else {
           status = "OPEN_CONFIRMED";
         }
-      } else if (record.dueDateConfidence === "POSSIBLE_DEFAULT" && dueDay !== null) {
-        reasons.add("DUE_DATE_POSSIBLE_DEFAULT");
+      } else if ((record.dueDateConfidence === "POSSIBLE_DEFAULT" || dueBasisUnverifiable(record)) && dueDay !== null) {
+        reasons.add(record.dueDateConfidence === "POSSIBLE_DEFAULT" ? "DUE_DATE_POSSIBLE_DEFAULT" : "DUE_DATE_BASIS_UNVERIFIABLE");
         if (dueDay < asOf) status = "POSSIBLY_OVERDUE";
         else status = "DUE_DATE_UNRELIABLE";
         if (lexwareSaysOverdue) reasons.add("LEXWARE_STATUS_OVERDUE_NOT_CONFIRMED");

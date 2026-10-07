@@ -13,7 +13,7 @@ import { addCents } from "./amounts.js";
 import { type DayRange, formatDayDe } from "./calendar.js";
 import type { DataQualityFindingCode, DataQualityGrade, DataQualityReport } from "./data-quality.js";
 import type { DuplicateAnalysis, DuplicateRuleId, PairResult } from "./duplicates.js";
-import { compareCodeUnits, grossAmount } from "./facts.js";
+import { compareCodeUnits, grossAmount, uniqueById } from "./facts.js";
 import { type FinanceRecord, REVENUE_SCOPE_NOTE } from "./model.js";
 import type { OpenItem, OpenItemReason, OpenItemsAnalysis, StatusTotal } from "./open-items.js";
 import type { Anomaly, CurrencySum, MoneyComparison, NotEvaluated, PeriodComparison } from "./periods.js";
@@ -34,6 +34,7 @@ export const BRIEF_REASONS = [
   "STATUS_CONTRADICTION",
   "ANOMALY",
   "UNREVIEWED_DOCUMENTS",
+  "NO_DATA",
 ] as const;
 export type BriefReason = (typeof BRIEF_REASONS)[number];
 
@@ -78,7 +79,7 @@ export interface DailyBrief {
 }
 
 // ---------------------------------------------------------------------------------------------------------
-// Formatting (deterministic, no Intl)
+// Formatting (deterministic, no locale API)
 // ---------------------------------------------------------------------------------------------------------
 
 /** 123456 → "1.234,56 €" (other currencies keep their ISO code); null → "nicht berechenbar". */
@@ -175,6 +176,7 @@ const NOT_EVALUATED_TEXT: Readonly<Record<NotEvaluated["reason"], string>> = {
   BASE_ZERO: "Vergleichsbasis 0, relative Änderung nicht definiert",
   NOT_COMPUTABLE: "Wert nicht berechenbar",
   UNREVIEWED_SHARE_TOO_HIGH: "zu viele ungeprüfte Belege in einem der Zeiträume",
+  EXCLUDED_DOCUMENTS: "geprüfte Belege ohne belastbaren Betrag oder mit kritischem Datenbefund im Vergleich",
 };
 
 const CONTRADICTION_REASONS: ReadonlySet<OpenItemReason> = new Set<OpenItemReason>([
@@ -289,7 +291,8 @@ function itemsWithLimit(items: AttentionItem[], limit: number, moreReason: Brief
 export function buildDailyBrief(input: BriefInput): DailyBrief {
   const limit = input.maxListItems ?? 5;
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new RangeError("maxListItems must be an integer between 1 and 100");
-  const byId = new Map(input.records.map((r) => [r.id, r] as const));
+  // Same deterministic copy per id as the analyses use, so repeated ids cannot change the text.
+  const byId = new Map(uniqueById(input.records).records.map((r) => [r.id, r] as const));
   const reasons = new Set<BriefReason>();
   const attention: AttentionItem[] = [];
   const info: string[] = [];
@@ -308,7 +311,12 @@ export function buildDailyBrief(input: BriefInput): DailyBrief {
     });
   }
 
-  // Data quality.
+  // Data quality. An empty but complete load is not "all clear": it more likely means a wrong organisation,
+  // missing permissions or a misconfiguration than a month without documents.
+  if (dq.grade === "NO_DATA" && input.load.list === "COMPLETE") {
+    reasons.add("NO_DATA");
+    attention.push({ reason: "NO_DATA", text: `Keine finanzrelevanten Belege im Ladefenster ${rangeText(input.load.window)}: Lexware-Zugang und Organisation prüfen.` });
+  }
   if (dq.grade === "POOR") reasons.add("DATA_QUALITY_POOR");
   if (dq.grade === "LIMITED") reasons.add("DATA_QUALITY_LIMITED");
   if (dq.grade === "POOR" || dq.grade === "LIMITED") {
@@ -447,6 +455,7 @@ const REASON_TEXT: Readonly<Record<BriefReason, string>> = {
   STATUS_CONTRADICTION: "Widersprüche Status/Betrag",
   ANOMALY: "Auffälligkeiten",
   UNREVIEWED_DOCUMENTS: "ungeprüfte Belege",
+  NO_DATA: "keine Belege im Ladefenster",
 };
 
 function renderText(

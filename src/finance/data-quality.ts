@@ -14,7 +14,7 @@
  * - GOOD:    none of the above.
  */
 import { percentToHundredths } from "./amounts.js";
-import { hasCriticalIssue } from "./facts.js";
+import { hasCriticalIssue, uniqueById } from "./facts.js";
 import type { FinanceRecord, IssueCode } from "./model.js";
 import { OPEN_STATES, type OpenItemsAnalysis } from "./open-items.js";
 import { isUsable } from "./values.js";
@@ -115,7 +115,7 @@ export function resolveDataQualityConfig(config: Partial<DataQualityConfig> = {}
 export function assessDataQuality(input: DataQualityInput, config: Partial<DataQualityConfig> = {}): DataQualityReport {
   const cfg = resolveDataQualityConfig(config);
   if (!Number.isSafeInteger(input.fetchFailures) || input.fetchFailures < 0) throw new RangeError("fetchFailures must be a non-negative integer");
-  const inScope = input.records.filter(
+  const inScope = uniqueById(input.records).records.filter(
     (r) => (r.kind === "EXPENSE" || r.kind === "REVENUE" || r.kind === "UNKNOWN") && r.statusCategory !== "VOIDED" && r.statusCategory !== "DRAFT",
   );
   const reviewed = inScope.filter((r) => r.statusCategory !== "UNCHECKED");

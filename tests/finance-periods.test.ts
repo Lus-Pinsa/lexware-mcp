@@ -19,7 +19,7 @@ import {
 } from "../src/finance/calendar.js";
 import type { FinanceRecord } from "../src/finance/model.js";
 import { REVENUE_SCOPE_NOTE } from "../src/finance/model.js";
-import { comparePeriods, comparisonPeriods, resolveAnomalyConfig } from "../src/finance/periods.js";
+import { DEFAULT_ANOMALY_CONFIG, comparePeriods, comparisonPeriods, resolveAnomalyConfig } from "../src/finance/periods.js";
 import { fromRow, grossConflict, rec, rng, row, shuffle, statusConflict, without } from "./fixtures/intelligence-fixtures.js";
 
 describe("calendar", () => {
@@ -300,5 +300,57 @@ describe("comparePeriods", () => {
     );
     const expected = included.reduce((s, r) => s + (r.grossCents.value ?? 0), 0);
     expect(base.current.reliableExpenses.byCurrency[0]?.cents ?? 0).toBe(expected);
+  });
+});
+
+describe("review round 1: periods and anomaly rule", () => {
+  it("documents excluded from a sum (missing amount, CRITICAL, unknown status) block the anomaly rule instead of faking a drop", () => {
+    const noAmount = fromRow(without(row(1, { voucherDate: "2026-10-02", voucherStatus: "paid", openAmount: 0 }), "totalAmount"));
+    const c = comparePeriods([noAmount, purchase(2, "2026-09-02", 1000)], AS_OF, { dataComplete: true });
+    expect(c.anomalies).toEqual([]);
+    expect(c.notEvaluated).toContainEqual({ subject: { type: "METRIC", metric: "reliableExpenses" }, reason: "EXCLUDED_DOCUMENTS" });
+    expect(c.notEvaluated).toContainEqual({ subject: { type: "SUPPLIERS" }, reason: "EXCLUDED_DOCUMENTS" });
+  });
+
+  it("the anomaly baseline is the same days of the previous month, not the full month", () => {
+    const base = [purchase(2, "2026-09-02", 1000), purchase(3, "2026-09-20", 5000, { contactName: "Testlieferant B" })];
+    const equal = comparePeriods([purchase(1, "2026-10-02", 1000), ...base], AS_OF, { dataComplete: true });
+    expect(equal.anomalies.filter((a) => a.subject.type === "METRIC")).toEqual([]); // vs full month it would be −83 %
+    const doubled = comparePeriods([purchase(1, "2026-10-02", 2000), ...base], AS_OF, { dataComplete: true });
+    expect(doubled.anomalies.find((a) => a.subject.type === "METRIC")).toMatchObject({ comparison: 100000, relativeTenthsOfPercent: 1000 });
+  });
+
+  it("the relative threshold applies on its own (>= 250 € but < 30 % is no anomaly) and the defaults are pinned", () => {
+    const c = comparePeriods([purchase(1, "2026-10-02", 2000), purchase(2, "2026-09-02", 1700)], AS_OF, { dataComplete: true });
+    expect(c.anomalies.filter((a) => a.subject.type === "METRIC")).toEqual([]);
+    expect(DEFAULT_ANOMALY_CONFIG).toEqual({ minRelativeChangePercent: 30, minAbsoluteChangeCents: 25000, currency: "EUR", maxUnreviewedSharePercent: 10, topSuppliers: 5 });
+  });
+
+  it("the unreviewed-share rule allows exactly 10 % and blocks above it", () => {
+    const reviewed = (from: number, count: number) => Array.from({ length: count }, (_, i) => purchase(from + i, "2026-10-02", 100, { contactName: `Testlieferant ${from + i}` }));
+    const unchecked = (n: number) => purchase(n, "2026-10-02", 100, { voucherStatus: "unchecked", contactName: `Testlieferant ${n}` });
+    const prev = Array.from({ length: 10 }, (_, i) => purchase(100 + i, "2026-09-02", 10, { contactName: `Testlieferant ${100 + i}` }));
+    const atTen = comparePeriods([...reviewed(1, 9), unchecked(50), ...prev], AS_OF, { dataComplete: true });
+    expect(atTen.notEvaluated.some((n) => n.reason === "UNREVIEWED_SHARE_TOO_HIGH")).toBe(false);
+    const above = comparePeriods([...reviewed(1, 8), unchecked(50), unchecked(51), ...prev], AS_OF, { dataComplete: true });
+    expect(above.notEvaluated).toContainEqual({ subject: { type: "METRIC", metric: "reliableExpenses" }, reason: "UNREVIEWED_SHARE_TOO_HIGH" });
+  });
+
+  it("an open credit note (unknown direction) is listed nowhere in open receivables/payables and does not break the comparison", () => {
+    const c = comparePeriods([purchase(1, "2026-10-02", 50, { voucherType: "purchasecreditnote", voucherStatus: "open", openAmount: 50 })], AS_OF, { dataComplete: true });
+    expect(c.current.openNow.PAYABLE.items).toBe(0);
+    expect(c.current.openNow.RECEIVABLE.items).toBe(0);
+  });
+
+  it("February at record level: the 29th of a leap year is in the previous same period of 31 March", () => {
+    const c = comparePeriods([purchase(1, "2024-03-31", 10), purchase(2, "2024-02-29", 20)], "2024-03-31", { dataComplete: true });
+    expect(c.previousSamePeriod.reliableExpenses.byCurrency).toEqual([{ currency: "EUR", cents: 2000, records: 1 }]);
+    expect(c.current.reliableExpenses.byCurrency).toEqual([{ currency: "EUR", cents: 1000, records: 1 }]);
+  });
+
+  it("other currencies never trigger the EUR rule", () => {
+    const c = comparePeriods([purchase(1, "2026-10-02", 5000, { currency: "CHF" }), purchase(2, "2026-09-02", 100, { currency: "CHF" })], AS_OF, { dataComplete: true });
+    expect(c.anomalies).toEqual([]);
+    expect(c.vsPreviousSamePeriod.money.find((m) => m.metric === "reliableExpenses" && m.currency === "CHF")?.absoluteDiff).toBe(490000);
   });
 });

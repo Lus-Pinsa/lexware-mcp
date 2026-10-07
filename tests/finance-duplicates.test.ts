@@ -342,3 +342,44 @@ describe("analyzeDuplicates", () => {
     expect(JSON.stringify(records)).toBe(before);
   });
 });
+
+describe("review round 1: duplicates", () => {
+  it("same number with another supplier AND another amount is not a duplicate; S3 needs the day window", () => {
+    expect(classifyPair(rec(1, { voucherNumber: "TEST-1001" }), rec(2, { voucherNumber: "TEST-1001", contactName: "Testlieferant B", totalAmount: 120 })).classification).toBe("NOT_DUPLICATE");
+    const far = classifyPair(rec(1, { voucherNumber: "TEST-1001" }), rec(2, { voucherNumber: "TEST-1001", contactName: "Testlieferant B", voucherDate: "2026-11-20" }));
+    expect(far.classification).toBe("NOT_DUPLICATE");
+    expect(far.reasonCodes).toContain("OUTSIDE_DAY_WINDOW");
+  });
+
+  it("the day distance is symmetric (the lower id on the later day)", () => {
+    const later = fromRow(without(row(1, { voucherDate: "2026-10-16" }), "voucherNumber"));
+    const earlier = fromRow(without(row(2, { voucherDate: "2026-10-01" }), "voucherNumber"));
+    const r = classifyPair(later, earlier);
+    expect(r.evidence).toMatchObject({ dayDistance: 15, voucherDay: "OUTSIDE_WINDOW" });
+    expect(r.classification).toBe("NOT_DUPLICATE");
+  });
+
+  it("negative credit-note amounts classify like any amount", () => {
+    const a = rec(1, { voucherNumber: "TEST-1001", voucherType: "purchasecreditnote", totalAmount: -50 });
+    const b = rec(2, { voucherNumber: "TEST-1001", voucherType: "purchasecreditnote", totalAmount: -50 });
+    expect(classifyPair(a, b)).toMatchObject({ classification: "EXACT_DUPLICATE", rule: "E2" });
+  });
+
+  it("orders findings by plain code units of the ids (mixed case)", () => {
+    const records = ["b-1", "B-1", "a-1"].map((id, i) => rec(10 + i, { id, voucherNumber: "TEST-1001" }));
+    expect(analyzeDuplicates(records).findings.map((f) => f.recordIds.join("|"))).toEqual(["B-1|a-1", "B-1|b-1", "a-1|b-1"]);
+  });
+
+  it("repeated ids with different content give the same result in any order", () => {
+    const x1 = rec(1, { voucherNumber: "TEST-1001" });
+    const x2 = rec(1, { voucherNumber: "TEST-1001", totalAmount: 999 });
+    const y = rec(2, { voucherNumber: "TEST-1001" });
+    expect(analyzeDuplicates([x1, x2, y])).toEqual(analyzeDuplicates([y, x2, x1]));
+  });
+
+  it("only well-formed SHA-256 values count as file hashes", () => {
+    const a = withHashes(rec(1, { voucherNumber: "TEST-1111" }), "A".repeat(64));
+    const b = withHashes(rec(2, { voucherNumber: "TEST-2222", contactName: "Testlieferant B" }), "A".repeat(64));
+    expect(classifyPair(a, b).evidence.fileHash).toBe("NOT_COMPARABLE");
+  });
+});

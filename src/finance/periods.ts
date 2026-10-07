@@ -152,7 +152,7 @@ export interface Anomaly {
 
 export interface NotEvaluated {
   readonly subject: AnomalySubject;
-  readonly reason: "DATA_INCOMPLETE" | "BASE_ZERO" | "NOT_COMPUTABLE" | "UNREVIEWED_SHARE_TOO_HIGH";
+  readonly reason: "DATA_INCOMPLETE" | "BASE_ZERO" | "NOT_COMPUTABLE" | "UNREVIEWED_SHARE_TOO_HIGH" | "EXCLUDED_DOCUMENTS";
   /** For SUPPLIERS entries: how many suppliers share this reason. */
   readonly count?: number;
 }
@@ -456,6 +456,14 @@ function countComparisons(cur: PeriodMetrics, cmp: PeriodMetrics): CountComparis
   }));
 }
 
+/**
+ * Reviewed documents that could not be summed (unknown status, CRITICAL issue, unusable amount): their absence would
+ * look like a drop (or hide a rise), so the anomaly rule is not applied while any exist.
+ */
+function excludedReviewed(metric: MoneyMetric): number {
+  return metric.excluded.STATUS_UNKNOWN + metric.excluded.CRITICAL_ISSUE + metric.excluded.AMOUNT_NOT_USABLE;
+}
+
 /** unreviewed × 100 > share × total, exactly (0 documents never exceed). */
 function unreviewedShareExceeds(counts: { total: number; unreviewed: number }, hundredths: number): boolean {
   return counts.total > 0 && BigInt(counts.unreviewed) * 10_000n > BigInt(hundredths) * BigInt(counts.total);
@@ -502,11 +510,15 @@ export function comparePeriods(
     { metric: "lexwareInvoiceRevenue", share: "salesInvoices" },
   ];
   let suppliersEvaluable = true;
+  let suppliersBlockedBy: NotEvaluated["reason"] = "DATA_INCOMPLETE";
   for (const { metric, share } of metricSubjects) {
     const subject: AnomalySubject = { type: "METRIC", metric };
     if (!options.dataComplete) {
       notEvaluated.push({ subject, reason: "DATA_INCOMPLETE" });
-      if (metric === "reliableExpenses") suppliersEvaluable = false;
+      if (metric === "reliableExpenses") {
+        suppliersEvaluable = false;
+        suppliersBlockedBy = "DATA_INCOMPLETE";
+      }
       continue;
     }
     if (
@@ -514,7 +526,18 @@ export function comparePeriods(
       unreviewedShareExceeds(same.metrics[share], cfg.unreviewedHundredths)
     ) {
       notEvaluated.push({ subject, reason: "UNREVIEWED_SHARE_TOO_HIGH" });
-      if (metric === "reliableExpenses") suppliersEvaluable = false;
+      if (metric === "reliableExpenses") {
+        suppliersEvaluable = false;
+        suppliersBlockedBy = "UNREVIEWED_SHARE_TOO_HIGH";
+      }
+      continue;
+    }
+    if (excludedReviewed(cur.metrics[metric]) > 0 || excludedReviewed(same.metrics[metric]) > 0) {
+      notEvaluated.push({ subject, reason: "EXCLUDED_DOCUMENTS" });
+      if (metric === "reliableExpenses") {
+        suppliersEvaluable = false;
+        suppliersBlockedBy = "EXCLUDED_DOCUMENTS";
+      }
       continue;
     }
     const result = evaluate(
@@ -552,10 +575,7 @@ export function comparePeriods(
       if (skipped[reason] > 0) notEvaluated.push({ subject: { type: "SUPPLIERS" }, reason, count: skipped[reason] });
     }
   } else {
-    notEvaluated.push({
-      subject: { type: "SUPPLIERS" },
-      reason: options.dataComplete ? "UNREVIEWED_SHARE_TOO_HIGH" : "DATA_INCOMPLETE",
-    });
+    notEvaluated.push({ subject: { type: "SUPPLIERS" }, reason: suppliersBlockedBy });
   }
 
   return {

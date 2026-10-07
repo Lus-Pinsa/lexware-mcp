@@ -100,7 +100,7 @@ describe("loadFinanceSnapshot — read-only, budgeted, honest about completeness
     expect(byId.get(id(2))?.taxCents.quality).toBe("PLACEHOLDER");
     expect(byId.get(id(3))?.lineItems.value?.[0].categoryName.value).toBe("Wareneingang Test");
     expect(byId.get(id(3))?.payment.availability).toBe("AVAILABLE");
-    expect(byId.get(id(4))?.netCents.value).toBe(18900);
+    expect(byId.get(id(4))?.netCents.value).toBe(10000);
     expect(byId.get(id(2))?.payment.availability).toBe("SKIPPED");
     expect(byId.get(id(5))?.kind).toBe("NON_FINANCIAL");
     expect(snap.quality).toMatchObject({ records: 5, financialRecords: 4, unreviewedRecords: 2 });

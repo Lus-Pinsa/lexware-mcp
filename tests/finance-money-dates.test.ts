@@ -6,10 +6,10 @@ const BERLIN = "Europe/Berlin";
 
 describe("parseAmountToCents — exact cents, never a silent 0", () => {
   it.each([
-    [318.3, 31830],
-    [20.14, 2014],
-    [202.23, 20223],
-    [4430.34, 443034],
+    [0.29, 29],
+    [4.35, 435],
+    [1.15, 115],
+    [8765.43, 876543],
     [0.1, 10],
     [0, 0],
     [-12.5, -1250],
@@ -60,10 +60,10 @@ describe("parseAmountToCents — exact cents, never a silent 0", () => {
 
 describe("parseLexwareDate — business calendar days in Europe/Berlin", () => {
   it("reads a Lexware timestamp with offset", () => {
-    expect(parseLexwareDate("2026-09-29T09:29:53.000+02:00", BERLIN)).toEqual({
+    expect(parseLexwareDate("2026-09-29T14:05:20.000+02:00", BERLIN)).toEqual({
       ok: true,
       day: "2026-09-29",
-      instant: "2026-09-29T07:29:53.000Z",
+      instant: "2026-09-29T12:05:20.000Z",
     });
   });
 
@@ -94,8 +94,8 @@ describe("parseLexwareDate — business calendar days in Europe/Berlin", () => {
     ["   ", "EMPTY_STRING"],
     [20260929, "INVALID_TYPE"],
     ["next tuesday", "INVALID_FORMAT"],
-    ["2026-09-29T09:29:53", "TIMEZONE_ABSENT"],
-    ["2026-09-29T09:29:53.000", "TIMEZONE_ABSENT"],
+    ["2026-09-29T14:05:20", "TIMEZONE_ABSENT"],
+    ["2026-09-29T14:05:20.000", "TIMEZONE_ABSENT"],
   ])("refuses %s (%s)", (input, reason) => {
     expect(parseLexwareDate(input, BERLIN)).toEqual({ ok: false, reason });
   });

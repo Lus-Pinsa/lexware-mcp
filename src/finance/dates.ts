@@ -1,7 +1,7 @@
 /**
  * Calendar-day handling for Lexware timestamps.
  *
- * Lexware returns timestamps with an explicit offset (e.g. `2026-09-29T09:29:53.000+02:00`). The business
+ * Lexware returns timestamps with an explicit offset (e.g. `2026-09-29T14:05:20.000+02:00`). The business
  * day of such an instant is computed in the configured time zone (default Europe/Berlin), so a voucher
  * dated just after midnight on the 1st belongs to the new month regardless of the server's own time zone.
  * Timestamps without an offset are ambiguous and are refused, never guessed.

@@ -77,9 +77,9 @@ describe("voucherlist rows — explicit missing values, never a silent 0", () =>
   it("keeps provenance and converts amounts/dates exactly", () => {
     const r = row(invoiceRow());
     expect(r).toMatchObject({ kind: "REVENUE", role: "INVOICE", statusCategory: "OVERDUE", voucherType: "invoice" });
-    expect(r.grossCents).toEqual({ value: 20223, quality: "STRUCTURED", source: "voucherlist" });
+    expect(r.grossCents).toEqual({ value: 10700, quality: "STRUCTURED", source: "voucherlist" });
     expect(r.voucherDate.value).toBe("2026-09-29");
-    expect(r.createdAt.value).toBe("2026-09-29T07:29:56.000Z");
+    expect(r.createdAt.value).toBe("2026-09-29T12:05:30.000Z");
     expect(r.counterparty).toMatchObject({ matchKeyBasis: "CONTACT_ID", matchKey: `id:${id(601)}` });
     expect(r.provenance).toMatchObject({ detail: "NOT_FETCHED", payment: "NOT_FETCHED", sources: [{ source: "voucherlist", fetchedAt: CTX.fetchedAt }] });
     // Due date equal to the voucher date without a stated payment term is only a weak due date.
@@ -136,7 +136,7 @@ describe("voucherlist rows — explicit missing values, never a silent 0", () =>
   });
 
   it("empty strings and wrong types become MISSING with a reason", () => {
-    const r = row({ ...paidRow(), voucherNumber: "", currency: "eur", totalAmount: "20.14", archived: "no" });
+    const r = row({ ...paidRow(), voucherNumber: "", currency: "eur", totalAmount: "4.35", archived: "no" });
     expect(r.voucherNumber).toMatchObject({ quality: "MISSING", reason: "EMPTY_STRING" });
     expect(r.currency).toMatchObject({ quality: "MISSING", reason: "INVALID_FORMAT" });
     expect(r.grossCents).toMatchObject({ quality: "MISSING", reason: "INVALID_TYPE" });
@@ -144,8 +144,8 @@ describe("voucherlist rows — explicit missing values, never a silent 0", () =>
   });
 
   it("reports precision loss on amounts with more than two decimals", () => {
-    const r = row({ ...paidRow(), totalAmount: 20.145 });
-    expect(r.grossCents.value).toBe(2015);
+    const r = row({ ...paidRow(), totalAmount: 4.355 });
+    expect(r.grossCents.value).toBe(436);
     expect(r.issues).toContainEqual({ code: "AMOUNT_PRECISION_REDUCED", severity: "WARNING", field: "grossCents" });
   });
 
@@ -179,7 +179,7 @@ describe("bookkeeping voucher detail", () => {
   it("a booked voucher with line items: tax 0 is real, net is DERIVED, categories resolve by id", () => {
     let r = applyVoucherDetail(row(paidRow()), paidDetail(), CTX);
     expect(r.taxCents).toEqual({ value: 0, quality: "STRUCTURED", source: "voucher" });
-    expect(r.netCents).toEqual({ value: 2014, quality: "DERIVED", source: "derived", reason: "GROSS_MINUS_TAX" });
+    expect(r.netCents).toEqual({ value: 435, quality: "DERIVED", source: "derived", reason: "GROSS_MINUS_TAX" });
     expect(codes(r)).toContain("CATEGORY_UNRESOLVED"); // categories not applied yet
     r = applyCategories(r, buildCategoryIndex(postingCategories()));
     const li = r.lineItems.value?.[0];
@@ -190,7 +190,7 @@ describe("bookkeeping voucher detail", () => {
   });
 
   it("unknown category ids and missing category data are reported", () => {
-    const detail = paidDetail(3, { voucherItems: [{ amount: 20.14, taxAmount: 0, taxRatePercent: 0, categoryId: CATEGORY_UNKNOWN }] });
+    const detail = paidDetail(3, { voucherItems: [{ amount: 4.35, taxAmount: 0, taxRatePercent: 0, categoryId: CATEGORY_UNKNOWN }] });
     const base = applyVoucherDetail(row(paidRow()), detail, CTX);
     const unresolved = applyCategories(base, buildCategoryIndex(postingCategories()));
     expect(unresolved.lineItems.value?.[0].categoryName.reason).toBe("CATEGORY_UNRESOLVED");
@@ -256,7 +256,7 @@ describe("bookkeeping voucher detail", () => {
   });
 
   it("list 'overdue' and detail 'open' are compatible; a real disagreement is a CONFLICT", () => {
-    const compatible = applyVoucherDetail(row(paidRow(3, { voucherStatus: "overdue", openAmount: 20.14 })), paidDetail(3, { voucherStatus: "open" }), CTX);
+    const compatible = applyVoucherDetail(row(paidRow(3, { voucherStatus: "overdue", openAmount: 4.35 })), paidDetail(3, { voucherStatus: "open" }), CTX);
     expect(compatible.status).toEqual({ value: "overdue", quality: "STRUCTURED", source: "voucherlist" });
     expect(compatible.statusCategory).toBe("OVERDUE");
     const conflicting = applyVoucherDetail(row(paidRow()), paidDetail(3, { voucherStatus: "open" }), CTX);
@@ -280,16 +280,16 @@ describe("bookkeeping voucher detail", () => {
 describe("sales document detail (Lexware invoicing)", () => {
   it("reads net/tax/gross from totalPrice and confirms the due date via the payment term", () => {
     const r = applySalesDocumentDetail(row(invoiceRow()), invoiceDetail(), "invoice", CTX);
-    expect(r.grossCents).toEqual({ value: 20223, quality: "STRUCTURED", source: "voucherlist" });
-    expect(r.netCents).toEqual({ value: 18900, quality: "STRUCTURED", source: "invoice" });
-    expect(r.taxCents).toEqual({ value: 1323, quality: "STRUCTURED", source: "invoice" });
+    expect(r.grossCents).toEqual({ value: 10700, quality: "STRUCTURED", source: "voucherlist" });
+    expect(r.netCents).toEqual({ value: 10000, quality: "STRUCTURED", source: "invoice" });
+    expect(r.taxCents).toEqual({ value: 700, quality: "STRUCTURED", source: "invoice" });
     expect(r.taxType.value).toBe("net");
     expect(r.dueDateConfidence).toBe("PAYMENT_TERM");
     expect(codes(r)).not.toContain("DUE_DATE_EQUALS_VOUCHER_DATE");
     expect(r.statusCategory).toBe("OVERDUE");
     expect(r.attachments.value).toEqual([{ fileId: id(9004), inspection: null }]);
     expect(r.lineItems.value).toHaveLength(1); // the text-only line has no amount
-    expect(r.lineItems.value?.[0]).toMatchObject({ amountBasis: "net", amountCents: { value: 18900 }, taxRatePercent: { value: 7 } });
+    expect(r.lineItems.value?.[0]).toMatchObject({ amountBasis: "net", amountCents: { value: 10000 }, taxRatePercent: { value: 7 } });
     expect(codes(r)).not.toContain("LINE_ITEMS_MISSING");
     assertFieldInvariant(r);
   });
@@ -297,7 +297,7 @@ describe("sales document detail (Lexware invoicing)", () => {
   it("flags totals that do not add up", () => {
     const r = applySalesDocumentDetail(
       row(invoiceRow()),
-      invoiceDetail(4, { totalPrice: { currency: "EUR", totalNetAmount: 189, totalGrossAmount: 202.23, totalTaxAmount: 10 } }),
+      invoiceDetail(4, { totalPrice: { currency: "EUR", totalNetAmount: 100, totalGrossAmount: 107, totalTaxAmount: 10 } }),
       "invoice",
       CTX,
     );
@@ -307,7 +307,7 @@ describe("sales document detail (Lexware invoicing)", () => {
   it("detects a currency disagreement", () => {
     const r = applySalesDocumentDetail(
       row(invoiceRow()),
-      invoiceDetail(4, { totalPrice: { currency: "CHF", totalNetAmount: 189, totalGrossAmount: 202.23, totalTaxAmount: 13.23 } }),
+      invoiceDetail(4, { totalPrice: { currency: "CHF", totalNetAmount: 100, totalGrossAmount: 107, totalTaxAmount: 7 } }),
       "invoice",
       CTX,
     );
@@ -322,7 +322,7 @@ describe("payments", () => {
     expect(r.payment.availability).toBe("AVAILABLE");
     expect(r.payment.paymentStatus.value).toBe("balanced");
     expect(r.payment.paidDate.value).toBe("2026-09-14");
-    expect(r.payment.items.value?.[0]).toMatchObject({ amountCents: { value: 2014 }, postingDate: { value: "2026-09-14" } });
+    expect(r.payment.items.value?.[0]).toMatchObject({ amountCents: { value: 435 }, postingDate: { value: "2026-09-14" } });
     expect(r.openCents).toEqual({ value: 0, quality: "STRUCTURED", source: "voucherlist" });
     assertFieldInvariant(r);
   });
@@ -509,7 +509,7 @@ describe("review round 1: QA gaps", () => {
     expect(once.openCents.candidates).toHaveLength(2);
     expect(twice.openCents.candidates).toHaveLength(2);
     const third = applyPayment(twice, invoicePayment({ openAmount: 50 }), CTX);
-    expect(third.openCents.candidates?.map((c) => c.value)).toEqual([20223, 10000, 5000]);
+    expect(third.openCents.candidates?.map((c) => c.value)).toEqual([10700, 10000, 5000]);
     const detailTwice = applyVoucherDetail(applyVoucherDetail(row(paidRow()), paidDetail(), CTX), paidDetail(), CTX);
     expect(detailTwice.grossCents).toEqual(applyVoucherDetail(row(paidRow()), paidDetail(), CTX).grossCents);
   });
@@ -517,7 +517,7 @@ describe("review round 1: QA gaps", () => {
   it("tax rates outside 0-100 % are refused", () => {
     const r = applyVoucherDetail(
       row(paidRow()),
-      paidDetail(3, { voucherItems: [{ amount: 20.14, taxAmount: 0, taxRatePercent: 150, categoryId: CATEGORY_GOODS }] }),
+      paidDetail(3, { voucherItems: [{ amount: 4.35, taxAmount: 0, taxRatePercent: 150, categoryId: CATEGORY_GOODS }] }),
       CTX,
     );
     expect(r.lineItems.value?.[0].taxRatePercent).toMatchObject({ value: null, reason: "INVALID_FORMAT" });
@@ -526,7 +526,7 @@ describe("review round 1: QA gaps", () => {
   it("a line item with a missing amount or tax is reported (the consistency check could not run)", () => {
     const r = applyVoucherDetail(
       row(paidRow()),
-      paidDetail(3, { voucherItems: [{ amount: 20.14, taxRatePercent: 0, categoryId: CATEGORY_GOODS }] }),
+      paidDetail(3, { voucherItems: [{ amount: 4.35, taxRatePercent: 0, categoryId: CATEGORY_GOODS }] }),
       CTX,
     );
     expect(codes(r)).toContain("LINE_ITEM_FIELDS_MISSING");
@@ -540,7 +540,7 @@ describe("review round 1: QA gaps", () => {
       return seed / 2 ** 31;
     };
     const pick = <T>(xs: T[]) => xs[Math.floor(rnd() * xs.length)];
-    const values: unknown[] = [undefined, null, "", 0, -3, 12.345, 202.23, Number.NaN, "x", true, {}, [], [{}], [null], "2026-09-29T00:00:00.000+02:00", "EUR", "paid", "open", "unchecked", id(3), id(9)];
+    const values: unknown[] = [undefined, null, "", 0, -3, 12.345, 107, Number.NaN, "x", true, {}, [], [{}], [null], "2026-09-29T00:00:00.000+02:00", "EUR", "paid", "open", "unchecked", id(3), id(9)];
     for (let i = 0; i < 1500; i++) {
       const base = row(pick([paidRow(3), uncheckedRow(3), invoiceRow(3)]));
       const raw: Record<string, unknown> = { id: rnd() < 0.85 ? id(3) : pick(values) };
@@ -565,7 +565,7 @@ describe("review round 2: sales document consistency", () => {
   it("checks net + tax against the list gross when the document has no gross", () => {
     const r = applySalesDocumentDetail(
       row(invoiceRow(4, { totalAmount: 300 })),
-      invoiceDetail(4, { totalPrice: { currency: "EUR", totalNetAmount: 189, totalTaxAmount: 13.23 } }),
+      invoiceDetail(4, { totalPrice: { currency: "EUR", totalNetAmount: 100, totalTaxAmount: 7 } }),
       "invoice",
       CTX,
     );

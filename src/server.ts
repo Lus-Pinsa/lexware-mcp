@@ -20,6 +20,7 @@ import {
 } from "./oauth.js";
 import { registerTools } from "./tools/index.js";
 import { addPendingVoucherEvent } from "./pending-voucher-events.js";
+import { evaluateLexwareWebhook } from "./lexware/webhook.js";
 /**
  * Base64 file uploads
  * (upload-file / upload-voucher-file)
@@ -149,6 +150,9 @@ const server = new McpServer(
 const bodyParsingConfigured =
   deferMcpBodyParsing(server.express);
 
+// Do not advertise the framework in every response.
+server.express.disable("x-powered-by");
+
 /* ============================================================
    HEALTH CHECK
    ============================================================ */
@@ -165,13 +169,6 @@ server.express.get(
 /* ============================================================
    LEXWARE WEBHOOK
    ============================================================ */
-
-type LexwareWebhookPayload = {
-  organizationId: string;
-  eventType: string;
-  resourceId: string;
-  eventDate: string;
-};
 
 /**
  * Lexware signs webhook payloads.
@@ -311,71 +308,35 @@ server.express.post(
       return;
     }
 
-    let payload: LexwareWebhookPayload;
+    // A valid signature proves Lexware signed it, not that it concerns OUR organization: validate shape,
+    // types, lengths and (when configured) the organizationId before anything is queued or logged.
+    const decision = evaluateLexwareWebhook(rawBody, config.webhookOrganizationId);
 
-    try {
-      payload =
-        JSON.parse(
-          rawBody.toString("utf8"),
-        ) as LexwareWebhookPayload;
-    } catch {
-      console.error(
-        "[lexware-webhook] invalid JSON",
-      );
-
+    if (decision.action === "reject") {
+      console.error(`[lexware-webhook] rejected reason=${decision.reason}`);
       res.sendStatus(400);
       return;
     }
 
-    if (
-      !payload.organizationId ||
-      !payload.eventType ||
-      !payload.resourceId ||
-      !payload.eventDate
-    ) {
+    if (decision.action === "ignore") {
+      // Fields passed strict patterns, so they are safe to log; foreign organization ids are not logged.
       console.error(
-        "[lexware-webhook] incomplete payload",
+        decision.reason === "foreign_organization"
+          ? "[lexware-webhook] ignored reason=foreign_organization"
+          : `[lexware-webhook] ignored event=${decision.event.eventType} resourceId=${decision.event.resourceId}`,
       );
-
-      res.sendStatus(400);
-      return;
-    }
-
-    /**
-     * Phase 1:
-     * Only voucher.created is processed.
-     *
-     * Other Lexware events are acknowledged
-     * but ignored.
-     */
-    if (
-      payload.eventType !==
-      "voucher.created"
-    ) {
-      console.error(
-        `[lexware-webhook] ignored event=${payload.eventType} resourceId=${payload.resourceId}`,
-      );
-
       res.sendStatus(204);
       return;
     }
 
     const pending = addPendingVoucherEvent({
-  resourceId: payload.resourceId,
-  eventDate: payload.eventDate,
-});
+      resourceId: decision.event.resourceId,
+      eventDate: decision.event.eventDate,
+    });
 
-console.error(
-  `[lexware-webhook] NEW VOUCHER resourceId=${payload.resourceId} eventDate=${payload.eventDate} pending=${pending.count} added=${pending.added}`,
-);
-
-    /**
-     * IMPORTANT:
-     * For now we only RECEIVE the event.
-     *
-     * Next step:
-     * resourceId → pending queue → MCP tool → Claude
-     */
+    console.error(
+      `[lexware-webhook] NEW VOUCHER resourceId=${decision.event.resourceId} eventDate=${decision.event.eventDate} pending=${pending.count} added=${pending.added}`,
+    );
 
     res.sendStatus(204);
   },
@@ -394,15 +355,12 @@ server.use(
         "/.well-known/",
       )
     ) {
+      // Pre-auth line: no client-controlled header text (log forging, noise), just method/path/auth presence.
       console.error(
-        `[debug] ${req.method} ${req.path} auth=${
+        `[debug] ${req.method} ${JSON.stringify(req.path.slice(0, 200))} auth=${
           req.headers.authorization
             ? "yes"
             : "no"
-        } accept=${
-          req.headers.accept ?? ""
-        } ua=${
-          req.headers["user-agent"] ?? ""
         }`,
       );
     }
@@ -526,7 +484,16 @@ if (
     .allowedEmailDomains.length === 0
 ) {
   console.error(
-    "[lexware-mcp] WARNING: OAuth mode with no OAUTH_ALLOWED_EMAIL_DOMAINS.",
+    "[lexware-mcp] WARNING: OAuth mode accepts ANY user of the IdP (OAUTH_ALLOW_ANY_USER=true).",
+  );
+}
+
+if (
+  getLexwareWebhookPublicKey() &&
+  config.webhookOrganizationId === undefined
+) {
+  console.error(
+    "[lexware-mcp] WARNING: LEXWARE_ORGANIZATION_ID is not set — signed webhooks of ANY Lexware organization are accepted.",
   );
 }
 

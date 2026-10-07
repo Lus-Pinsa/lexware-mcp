@@ -60,7 +60,7 @@ Live: Ruleset `main-protection` (ID 24603540), aktiv auf `~DEFAULT_BRANCH`, `byp
 | Freigaben | 0 (ein Maintainer; eine Selbstfreigabe ist technisch nicht möglich) | 0 | bewusst |
 | Bypass-Liste | leer | leer | ✅ (Admins können das Ruleset dennoch ändern) |
 | Tag-Schutz | Tag-Ruleset | keiner (keine Tags oder Releases) | ⚠️ |
-| Dokumentiertes Ruleset | = live | `ai-company/github/ruleset-main.json` ohne zwei live gesetzte Felder | ⚠️ |
+| Dokumentiertes Ruleset | Soll-Datei | `ai-company/github/ruleset-main.json` ist jetzt das **Soll** (mit allen Pflicht-Checks, `integration_id` 15368 = GitHub Actions, verifiziert über die Check-Runs auf `8f938aa`, Code-Scanning-Regel, nur Squash). Der Live-Stand weicht ab, bis O-1 umgesetzt ist. | ⚠️ |
 
 ## 4. Repository-Sicherheitseinstellungen
 

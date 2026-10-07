@@ -7,6 +7,10 @@
 
 /** Minimum length for `MCP_AUTH_TOKEN`. A 32-hex-char token is 32 chars. */
 export const MIN_TOKEN_LENGTH = 16;
+/** Tokens shorter than this still start, with a startup warning (`openssl rand -hex 32` gives 64). */
+export const RECOMMENDED_TOKEN_LENGTH = 32;
+/** Shape of a Lexware organization id (a UUID in practice); also bounds what can reach the logs. */
+export const ORGANIZATION_ID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
 
 /** Thrown when the environment is misconfigured. Message is safe to print. */
 export class ConfigError extends Error {
@@ -66,6 +70,11 @@ export interface Config {
   port: number;
   debugLogging: boolean;
   capabilities: Capabilities;
+  /**
+   * Expected Lexware `organizationId` of incoming webhooks (`LEXWARE_ORGANIZATION_ID`). When set, events of
+   * any other organization are ignored; when unset, every correctly signed event is accepted (logged warning).
+   */
+  webhookOrganizationId?: string;
   /** Non-fatal configuration notices to log at startup (e.g. a flag that was overridden). */
   warnings: string[];
 }
@@ -164,6 +173,14 @@ function resolveAuth(env: NodeJS.ProcessEnv): AuthConfig {
       .split(",")
       .map((d) => d.trim().toLowerCase())
       .filter(Boolean);
+    // Fail closed: without an allowlist every account the IdP accepts (incl. self-signup) could read the
+    // whole Lexware organization. Running open to any IdP user must be an explicit decision.
+    if (allowedEmailDomains.length === 0 && !parseBool(env.OAUTH_ALLOW_ANY_USER, false)) {
+      throw new ConfigError(
+        "OAuth mode requires OAUTH_ALLOWED_EMAIL_DOMAINS (comma-separated). To accept any user of the IdP " +
+          "instead, set OAUTH_ALLOW_ANY_USER=true explicitly.",
+      );
+    }
     const userinfoUrl = normalizeUrl(
       env.OAUTH_USERINFO_URL,
       `${issuerBase}/oauth2/userinfo`,
@@ -250,6 +267,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const enableDrafts = readOnly ? false : draftsRequested || enableFinalize;
 
   const warnings: string[] = [];
+  if (auth.mode === "static" && auth.token.length < RECOMMENDED_TOKEN_LENGTH) {
+    warnings.push(
+      `MCP_AUTH_TOKEN is shorter than ${RECOMMENDED_TOKEN_LENGTH} characters — rotate it to a random value ` +
+        "(e.g. `openssl rand -hex 32`).",
+    );
+  }
+  const webhookOrganizationId = env.LEXWARE_ORGANIZATION_ID?.trim() || undefined;
+  if (webhookOrganizationId !== undefined && !ORGANIZATION_ID_PATTERN.test(webhookOrganizationId)) {
+    throw new ConfigError("LEXWARE_ORGANIZATION_ID must be a Lexware organization id (letters, digits, '-').");
+  }
   if (!readOnly && !draftsRequested && enableFinalize) {
     warnings.push(
       "LEXWARE_ENABLE_DRAFTS=false was overridden to true because LEXWARE_ENABLE_FINALIZE=true — the " +
@@ -269,6 +296,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port: parsePort(env.PORT),
     debugLogging: parseBool(env.LEXWARE_DEBUG_LOGGING, false),
     capabilities: { read: true, drafts: enableDrafts, finalize: enableFinalize },
+    ...(webhookOrganizationId !== undefined ? { webhookOrganizationId } : {}),
     warnings,
   };
 }

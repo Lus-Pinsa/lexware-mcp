@@ -6,6 +6,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+- **Security Architecture Gate** (before Phase 2 PR 3): threat model (STRIDE), attack-surface audit, data
+  classification, public-history exposure assessment, supply-chain/GitHub/Render posture, and binding contracts for
+  persistence, multi-tenancy and WhatsApp/voice channels, plus an incident-response plan (`ai-company/security/`).
+- Webhook bodies are validated after the signature check (object shape, string types, bounded id/date formats);
+  optional `LEXWARE_ORGANIZATION_ID` ignores signed events of other Lexware organizations; the in-memory event
+  queue is capped at 1000 (oldest dropped); webhook logs carry only validated fields.
+- OAuth mode refuses to start without `OAUTH_ALLOWED_EMAIL_DOMAINS` unless `OAUTH_ALLOW_ANY_USER=true` is explicit.
+- Lexware error texts are cleaned like other untrusted text (control/invisible characters, markup, URLs, line
+  breaks; capped) before reaching the model.
+- Binary downloads (`download-file`, `render-*-pdf`, `get-document-file`, `get-voucher-file`) are capped at 15 MiB.
+- Startup warning for static tokens shorter than 32 characters; `X-Powered-By` disabled; the pre-auth request log
+  no longer contains client headers.
+- Docker image: Node 24 LTS (the line CI tests on) pinned by digest, skybridge telemetry disabled; Dependabot no
+  longer proposes Node major bumps automatically.
+- `secret-scan` additionally detects Render deploy hooks, Google/Stripe/npm tokens, URL credentials, bearer
+  literals and future persistence secrets.
+
 ### Added
 - **Finance intelligence (Phase 2, PR 2)** — five READ-tier tools on pure, deterministic modules in `src/finance/`
   (no clock, no randomness, no LLM text; same input → byte-identical brief):

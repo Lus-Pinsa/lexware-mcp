@@ -58,7 +58,7 @@ describe("get-server-info", () => {
     expect(info.tools.names).toContain("get-server-info");
     expect(info.tools.names).not.toContain("acknowledge-voucher-event");
     expect(info.runtime).toMatchObject({ startedAt: "2026-10-06T10:00:00.000Z", uptimeSeconds: 90 });
-    expect(info.webhook.publicKeyConfigured).toBe(true);
+    expect(info.webhook).toEqual({ publicKeyConfigured: true, organizationBindingConfigured: false });
     expect(info.secretsIncluded).toBe(false);
     expect(out.content[0].text).toContain("registered tools: 46 (write-capable: 0)");
   });
@@ -94,6 +94,14 @@ describe("get-server-info", () => {
     expect(info.auth).toEqual({ mode: "oauth", oauthEmailDomainAllowlistEntries: 2 });
     expect(JSON.stringify(info)).not.toContain("second.example.test");
     expect(info.webhook.publicKeyConfigured).toBe(false);
+  });
+
+  it("reports whether webhook organization binding is configured, never the organization id", () => {
+    const id = "00000000-0000-4000-8000-0000000000aa";
+    const config = loadConfig({ LEXWARE_API_KEY: "k", MCP_AUTH_TOKEN: "t".repeat(40), LEXWARE_ORGANIZATION_ID: id } as NodeJS.ProcessEnv);
+    const info = buildServerInfo(config, [], { env: { LEXWARE_ORGANIZATION_ID: id }, startedAt: new Date() });
+    expect(info.webhook.organizationBindingConfigured).toBe(true);
+    expect(JSON.stringify(info)).not.toContain(id);
   });
 });
 

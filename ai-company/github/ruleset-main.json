@@ -17,17 +17,30 @@
         "require_code_owner_review": false,
         "require_last_push_approval": false,
         "required_review_thread_resolution": true,
-        "allowed_merge_methods": ["squash", "merge"]
+        "require_extra_approval_for_unattributed_changes": true,
+        "required_reviewers": [],
+        "allowed_merge_methods": ["squash"]
       }
     },
     {
       "type": "required_status_checks",
       "parameters": {
-        "strict_required_status_checks_policy": false,
+        "strict_required_status_checks_policy": true,
         "do_not_enforce_on_create": false,
         "required_status_checks": [
-          { "context": "build-test (typecheck, tests, governance)" },
-          { "context": "secret-scan (credentials + business data)" }
+          { "context": "build-test (typecheck, tests, governance)", "integration_id": 15368 },
+          { "context": "secret-scan (credentials + business data)", "integration_id": 15368 },
+          { "context": "audit (production dependencies)", "integration_id": 15368 },
+          { "context": "dependency-review (new dependencies in PR)", "integration_id": 15368 },
+          { "context": "analyze", "integration_id": 15368 }
+        ]
+      }
+    },
+    {
+      "type": "code_scanning",
+      "parameters": {
+        "code_scanning_tools": [
+          { "tool": "CodeQL", "alerts_threshold": "errors", "security_alerts_threshold": "high_or_higher" }
         ]
       }
     }

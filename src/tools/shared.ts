@@ -5,6 +5,12 @@ import type { Paged } from "../lexware/types.js";
 /** Default page size for list tools. */
 export const DEFAULT_PAGE_SIZE = 25;
 
+/**
+ * Size cap for binary downloads returned inline (base64) to the client. Bounds memory per call so one oversized
+ * file cannot take the process (and the webhook receiver) down. Generous for invoices and receipts.
+ */
+export const MAX_DOWNLOAD_BYTES = 15 * 1024 * 1024;
+
 /** Tool annotations, shared so semantics can't drift across tool files. */
 export const RO = { readOnlyHint: true, openWorldHint: true, destructiveHint: false } as const;
 export const WRITE = { readOnlyHint: false, openWorldHint: true, destructiveHint: false } as const;

@@ -2,9 +2,10 @@ import type { McpServer } from "skybridge/server";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import type { LexwareClient } from "../src/lexware/client.js";
-import { LexwareApiError } from "../src/lexware/errors.js";
+import { LexwareApiError, ResponseTooLargeError } from "../src/lexware/errors.js";
 import { registerArticleDeleteTools, registerArticleWriteTools } from "../src/tools/articles.js";
 import { registerEventSubscriptionDeleteTools } from "../src/tools/event-subscriptions.js";
+import { registerFileReadTools } from "../src/tools/files.js";
 import { registerContactDraftTools } from "../src/tools/contacts.js";
 import {
   registerDocumentDraftTools,
@@ -303,7 +304,7 @@ describe("get-document dispatch + get-voucher-file", () => {
       structuredContent: { fileId: string };
     };
     expect(get).toHaveBeenCalledWith("/v1/vouchers/v1");
-    expect(getBinary).toHaveBeenCalledWith("/v1/files/file-7");
+    expect(getBinary).toHaveBeenCalledWith("/v1/files/file-7", undefined, { maxBytes: 15 * 1024 * 1024 });
     expect(res.structuredContent.fileId).toBe("file-7");
   });
 });
@@ -452,14 +453,30 @@ describe("render-*-pdf and get-document-file download /file", () => {
     const client = mkClient();
     const handlers = handlersFor((s, c) => registerDocumentReadTools(s, c, "https://app.test"), client);
     await handlers["render-invoice-pdf"]({ id: "i9" });
-    expect(client.getBinary).toHaveBeenCalledWith("/v1/invoices/i9/file");
+    expect(client.getBinary).toHaveBeenCalledWith("/v1/invoices/i9/file", undefined, { maxBytes: 15 * 1024 * 1024 });
   });
 
   it("get-document-file hits /v1/{resourceType}/{id}/file", async () => {
     const client = mkClient();
     const handlers = handlersFor((s, c) => registerDocumentReadTools(s, c, "https://app.test"), client);
     await handlers["get-document-file"]({ resourceType: "credit-notes", id: "c3" });
-    expect(client.getBinary).toHaveBeenCalledWith("/v1/credit-notes/c3/file");
+    expect(client.getBinary).toHaveBeenCalledWith("/v1/credit-notes/c3/file", undefined, { maxBytes: 15 * 1024 * 1024 });
+  });
+
+  it("download-file passes the 15 MiB size cap and surfaces an oversize refusal as an error", async () => {
+    const client = mkClient();
+    const handlers = handlersFor((s, c) => registerFileReadTools(s, c), client);
+    await handlers["download-file"]({ id: "f1" });
+    expect(client.getBinary).toHaveBeenCalledWith("/v1/files/f1", "*/*", { maxBytes: 15 * 1024 * 1024 });
+
+    const tooBig = {
+      getBinary: vi.fn(async () => {
+        throw new ResponseTooLargeError(15 * 1024 * 1024, 200 * 1024 * 1024);
+      }),
+    } as unknown as LexwareClient;
+    await expect(handlersFor((s, c) => registerFileReadTools(s, c), tooBig)["download-file"]({ id: "f1" })).rejects.toThrow(
+      /size limit/,
+    );
   });
 });
 

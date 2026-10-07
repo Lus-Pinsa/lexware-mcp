@@ -25,6 +25,7 @@ import {
 
 import {
   LOCAL_RO,
+  MAX_DOWNLOAD_BYTES,
   RO,
   WRITE,
   binaryResult,
@@ -731,6 +732,8 @@ export function registerDocumentReadTools(
         } =
           await client.getBinary(
             `/v1/${doc.path}/${encodeURIComponent(id)}/file`,
+            undefined,
+            { maxBytes: MAX_DOWNLOAD_BYTES },
           );
 
         return binaryResult({
@@ -987,6 +990,8 @@ export function registerDocumentReadTools(
       } =
         await client.getBinary(
           `/v1/${resourceType}/${encodeURIComponent(id)}/file`,
+          undefined,
+          { maxBytes: MAX_DOWNLOAD_BYTES },
         );
 
       return binaryResult({
@@ -1080,6 +1085,8 @@ export function registerDocumentReadTools(
       } =
         await client.getBinary(
           `/v1/files/${encodeURIComponent(fileId)}`,
+          undefined,
+          { maxBytes: MAX_DOWNLOAD_BYTES },
         );
 
       return binaryResult({

@@ -1,3 +1,5 @@
+import { cleanUntrustedText } from "../untrusted.js";
+
 /**
  * Error raised for a failed Lexware API call. The message is safe to surface to
  * the model/user: it carries the HTTP status and Lexware's own (non-sensitive)
@@ -63,6 +65,8 @@ export class UnsafeRequestPathError extends Error {
 const MAX_ISSUES = 25;
 /** Max characters of a raw error body rendered into a message (truncate, never drop). */
 const MAX_BODY_CHARS = 2000;
+/** Max characters of the whole rendered detail (all parts), after cleaning. */
+const MAX_DETAIL_CHARS = 4000;
 
 /** Clamp a string to at most `max` chars, appending an ellipsis when truncated. */
 function clampText(s: string, max: number): string {
@@ -107,8 +111,11 @@ export function describeErrorBody(status: number, statusText: string, body: unkn
     if (raw) parts.push(raw);
   }
 
-  const detail = parts.join(" | ");
-  return detail ? `Lexware API ${status}: ${detail}` : `Lexware API ${status} ${statusText}`.trim();
+  // Error bodies can echo third-party input (supplier names, remarks, file names). Strip control/invisible
+  // characters and neutralize markup, URLs and line breaks so the message cannot pose as instructions or links.
+  const detail = cleanUntrustedText(parts.join(" | "), { maxChars: MAX_DETAIL_CHARS, singleLine: true }).text;
+  const safeStatusText = cleanUntrustedText(statusText, { maxChars: 100, singleLine: true }).text;
+  return detail ? `Lexware API ${status}: ${detail}` : `Lexware API ${status} ${safeStatusText}`.trim();
 }
 
 /** Locate the IssueList: a top-level array, or under IssueList/issueList/details/errors. */

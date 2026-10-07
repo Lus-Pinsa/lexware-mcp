@@ -182,8 +182,13 @@ interface ResolvedConfig extends AnomalyConfig {
   readonly unreviewedHundredths: number;
 }
 
+/** `{ ...defaults, ...config }` without letting an explicit `undefined` replace a default. */
+function definedOnly<T extends object>(config: Partial<T>): Partial<T> {
+  return Object.fromEntries(Object.entries(config).filter(([, v]) => v !== undefined)) as Partial<T>;
+}
+
 export function resolveAnomalyConfig(config: Partial<AnomalyConfig> = {}): ResolvedConfig {
-  const c = { ...DEFAULT_ANOMALY_CONFIG, ...config };
+  const c = { ...DEFAULT_ANOMALY_CONFIG, ...definedOnly(config) };
   if (!Number.isSafeInteger(c.minAbsoluteChangeCents) || c.minAbsoluteChangeCents < 0) {
     throw new RangeError("minAbsoluteChangeCents must be a non-negative integer");
   }

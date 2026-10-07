@@ -14,7 +14,7 @@
  * - GOOD:    none of the above.
  */
 import { percentToHundredths } from "./amounts.js";
-import { hasCriticalIssue, uniqueById } from "./facts.js";
+import { grossAmount, hasCriticalIssue, uniqueById } from "./facts.js";
 import type { FinanceRecord, IssueCode } from "./model.js";
 import { OPEN_STATES, type OpenItemsAnalysis } from "./open-items.js";
 import { isUsable } from "./values.js";
@@ -24,6 +24,7 @@ export type DataQualityGrade = (typeof DATA_QUALITY_GRADES)[number];
 
 export const DATA_QUALITY_FINDINGS = [
   "LIST_INCOMPLETE",
+  "ROWS_REJECTED",
   "CRITICAL_RECORDS",
   "SOURCE_CONFLICT",
   "STATUS_UNKNOWN",
@@ -69,6 +70,8 @@ export interface DataQualityInput {
   readonly listComplete: boolean;
   /** Failed detail/payment/attachment fetches reported by the loader. */
   readonly fetchFailures: number;
+  /** Voucherlist rows the loader had to reject (not an object, invalid id): documents missing from every figure. */
+  readonly rejectedRows?: number;
   /** Optional open-items analysis of the same records (for the due-date finding). */
   readonly openItems?: OpenItemsAnalysis;
 }
@@ -105,7 +108,8 @@ function shareReached(count: number, of: number, hundredths: number): boolean {
 }
 
 export function resolveDataQualityConfig(config: Partial<DataQualityConfig> = {}): DataQualityConfig {
-  const c: DataQualityConfig = { ...DEFAULT_DATA_QUALITY_CONFIG, ...config };
+  const defined = Object.fromEntries(Object.entries(config).filter(([, v]) => v !== undefined)) as Partial<DataQualityConfig>;
+  const c: DataQualityConfig = { ...DEFAULT_DATA_QUALITY_CONFIG, ...defined };
   for (const value of [c.poorCriticalSharePercent, c.limitedUnreviewedSharePercent, c.limitedCounterpartyMissingSharePercent, c.limitedDueDateUnreliableSharePercent]) {
     if (percentToHundredths(value) > 10_000) throw new RangeError("data-quality thresholds must be between 0 and 100");
   }
@@ -115,6 +119,8 @@ export function resolveDataQualityConfig(config: Partial<DataQualityConfig> = {}
 export function assessDataQuality(input: DataQualityInput, config: Partial<DataQualityConfig> = {}): DataQualityReport {
   const cfg = resolveDataQualityConfig(config);
   if (!Number.isSafeInteger(input.fetchFailures) || input.fetchFailures < 0) throw new RangeError("fetchFailures must be a non-negative integer");
+  const rejectedRows = input.rejectedRows ?? 0;
+  if (!Number.isSafeInteger(rejectedRows) || rejectedRows < 0) throw new RangeError("rejectedRows must be a non-negative integer");
   const inScope = uniqueById(input.records).records.filter(
     (r) => (r.kind === "EXPENSE" || r.kind === "REVENUE" || r.kind === "UNKNOWN") && r.statusCategory !== "VOIDED" && r.statusCategory !== "DRAFT",
   );
@@ -125,7 +131,9 @@ export function assessDataQuality(input: DataQualityInput, config: Partial<DataQ
   const conflicts = inScope.filter((r) => r.issues.some((i) => CONFLICT_CODES.has(i.code))).length;
   const statusUnknown = inScope.filter((r) => r.statusCategory === "UNKNOWN").length;
   const counterpartyMissing = inScope.filter((r) => r.counterparty.matchKeyBasis === "NONE").length;
-  const amountMissing = inScope.filter((r) => !isUsable(r.grossCents)).length;
+  // Gross or currency unusable: the same documents the period figures exclude as AMOUNT_NOT_USABLE.
+  const amountMissing = inScope.filter((r) => grossAmount(r) === null).length;
+  const reviewedAmountMissing = reviewed.filter((r) => grossAmount(r) === null).length;
   const dateMissing = inScope.filter((r) => !isUsable(r.voucherDate)).length;
   const directionUnclear = inScope.filter((r) => r.kind === "UNKNOWN" || r.role === "CREDIT_NOTE").length;
   const paymentMissing = inScope.filter((r) => r.payment.availability === "NOT_AVAILABLE").length;
@@ -147,6 +155,7 @@ export function assessDataQuality(input: DataQualityInput, config: Partial<DataQ
     if (count > 0) findings.push({ code, count, of, effect });
   };
   if (!input.listComplete) findings.push({ code: "LIST_INCOMPLETE", count: 1, of: null, effect: "POOR" });
+  add("ROWS_REJECTED", rejectedRows, null, "LIMITED");
   add(
     "CRITICAL_RECORDS",
     critical,
@@ -176,7 +185,7 @@ export function assessDataQuality(input: DataQualityInput, config: Partial<DataQ
       shareReached(dueUnreliable, openItems, percentToHundredths(cfg.limitedDueDateUnreliableSharePercent)) ? "LIMITED" : "NONE",
     );
   }
-  add("AMOUNT_MISSING", amountMissing, inScope.length, "NONE");
+  add("AMOUNT_MISSING", amountMissing, inScope.length, reviewedAmountMissing > 0 ? "LIMITED" : "NONE");
   add("VOUCHER_DATE_MISSING", dateMissing, inScope.length, "NONE");
   add("DIRECTION_UNCLEAR", directionUnclear, inScope.length, "NONE");
   add("PAYMENT_INFO_MISSING", paymentMissing, inScope.length, "NONE");

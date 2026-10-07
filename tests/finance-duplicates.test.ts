@@ -383,3 +383,25 @@ describe("review round 1: duplicates", () => {
     expect(classifyPair(a, b).evidence.fileHash).toBe("NOT_COMPARABLE");
   });
 });
+
+describe("review round 2: duplicates", () => {
+  it("two empty files are no shared file (every empty file has the same SHA-256)", () => {
+    const empty = (r: FinanceRecord) => {
+      const w = withHashes(r, HASH_A);
+      const files = (w.attachments.value ?? []).map((a) => ({ ...a, inspection: a.inspection ? { ...a.inspection, byteLength: 0 } : null }));
+      return { ...w, attachments: { ...w.attachments, value: files } } as FinanceRecord;
+    };
+    const r = classifyPair(empty(rec(1, { voucherNumber: "TEST-1111" })), empty(rec(2, { voucherNumber: "TEST-2222", contactName: "Testlieferant B" })));
+    expect(r.evidence.fileHash).toBe("NOT_COMPARABLE");
+    expect(r.classification).toBe("NOT_DUPLICATE");
+  });
+
+  it("hashes from an attachment list that is not usable (e.g. UNVERIFIED) are ignored", () => {
+    const unverified = (r: FinanceRecord) => {
+      const w = withHashes(r, HASH_A);
+      return { ...w, attachments: { ...w.attachments, quality: "UNVERIFIED" as const } };
+    };
+    const r = classifyPair(unverified(rec(1, { voucherNumber: "TEST-1111" })), withHashes(rec(2, { voucherNumber: "TEST-2222", contactName: "Testlieferant B" }), HASH_A));
+    expect(r.evidence.fileHash).toBe("NOT_COMPARABLE");
+  });
+});

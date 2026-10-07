@@ -305,3 +305,10 @@ describe("review round 1: open items", () => {
     expect(a.items.map((i) => i.dueDate)).toEqual(["2026-10-20", "2026-10-25", "2026-10-30"]);
   });
 });
+
+describe("review round 2: open items", () => {
+  it("a category is never trusted without a usable status value", () => {
+    const i = item(rec(1, { voucherStatus: "paid", openAmount: 0 }, (r) => ({ ...r, status: { value: null, quality: "MISSING", source: "voucherlist", reason: "FIELD_ABSENT" } })));
+    expect(i.status).toBe("STATUS_UNKNOWN");
+  });
+});

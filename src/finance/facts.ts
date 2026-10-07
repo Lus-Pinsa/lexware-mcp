@@ -29,12 +29,12 @@ export function criticalIssueCodes(record: FinanceRecord): IssueCode[] {
 const BOOKED: ReadonlySet<StatusCategory> = new Set<StatusCategory>(["OPEN", "OVERDUE", "PAID", "OTHER"]);
 
 export function isBooked(record: FinanceRecord): boolean {
-  return BOOKED.has(record.statusCategory) && record.status.quality !== "CONFLICT";
+  return BOOKED.has(record.statusCategory) && isUsable(record.status);
 }
 
-/** Usable gross amount with its usable currency, or null. */
+/** Usable gross amount (a safe integer of cents) with its usable currency, or null. */
 export function grossAmount(record: FinanceRecord): { cents: number; currency: string } | null {
-  if (!isUsable(record.grossCents) || !isUsable(record.currency)) return null;
+  if (!isUsable(record.grossCents) || !isUsable(record.currency) || !Number.isSafeInteger(record.grossCents.value)) return null;
   return { cents: record.grossCents.value, currency: record.currency.value };
 }
 

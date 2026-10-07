@@ -311,3 +311,39 @@ describe("review round 1: tool limits and wiring", () => {
     expect(res.structuredContent.anomalies).toBe(0);
   });
 });
+
+describe("review round 2: tools", () => {
+  it("rejected voucherlist rows make the data LIMITED and the brief never GRÜN", async () => {
+    const rows = [listRow(1, { voucherDate: "2026-10-02" }), listRow(2, { voucherDate: "2026-09-02", contactName: "Testlieferant B", voucherNumber: "TEST-2" }), { id: "../bad", voucherType: "invoice" }, 42];
+    const { handlers } = tools(fake({ rows }).client);
+    const brief = await handlers["get-finance-daily-brief"]({});
+    expect(brief.structuredContent.rejectedRows).toBe(2);
+    expect(brief.structuredContent.status).not.toBe("GRÜN");
+    expect(brief.structuredContent.dataQuality.triggeredBy).toContain("ROWS_REJECTED");
+    expect(brief.content[0].text).toContain("Verworfene Zeilen der Belegliste");
+    const snap = await handlers["get-finance-snapshot"]({});
+    expect(snap.structuredContent.dataQuality.grade).not.toBe("GOOD");
+  });
+
+  it("hash verification enriches the same list: no second list read and no lost findings under a tight budget", async () => {
+    const rows = [listRow(1, { voucherNumber: "TEST-1111" }), listRow(2, { voucherNumber: undefined, voucherDate: "2026-10-05" })];
+    const extractor: PdfTextExtractor = () => ({ result: Promise.resolve({ text: "x", total: 1 }), destroy: async () => undefined });
+    const listOnly = fake({ rows });
+    const plain = await tools(listOnly.client).handlers["analyze-voucher-duplicates"]({});
+    const listReads = listOnly.calls.filter((c) => c.path === "/v1/voucherlist").length;
+    const f = fake({ rows });
+    // Budget for the list plus one detail only: the verification cannot finish, but nothing found before is lost.
+    const res = await tools(f.client, extractor).handlers["analyze-voucher-duplicates"]({ verifyFileHashes: true, maxRequests: listReads + 2 });
+    expect(f.calls.filter((c) => c.path === "/v1/voucherlist")).toHaveLength(listReads); // the list is read once
+    expect(res.structuredContent.analysis.findings.length).toBeGreaterThanOrEqual(plain.structuredContent.analysis.findings.length);
+    expect(plain.structuredContent.analysis.findings).toHaveLength(1);
+  });
+
+  it("with payment info, details are still read for open sales documents only", async () => {
+    const f = fake();
+    await tools(f.client).handlers["get-open-items"]({ includePaymentInfo: true });
+    const detailPaths = f.calls.filter((c) => /^\/v1\/(vouchers|invoices|credit-notes|down-payment-invoices)\//.test(c.path)).map((c) => c.path);
+    expect(detailPaths).toEqual([`/v1/invoices/${rid(4)}`]);
+    expect(f.calls.some((c) => c.path.startsWith("/v1/payments/"))).toBe(true);
+  });
+});

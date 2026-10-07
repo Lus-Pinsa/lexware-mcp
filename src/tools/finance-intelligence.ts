@@ -160,6 +160,7 @@ export function registerFinanceIntelligenceTools(server: McpServer, client: Lexw
         records: snapshot.records,
         listComplete: snapshot.completeness.list === "COMPLETE",
         fetchFailures: fetchFailures(snapshot.completeness),
+        rejectedRows: snapshot.rejectedRows.length,
       });
       const result = {
         ...loadMeta(snapshot),
@@ -217,9 +218,11 @@ export function registerFinanceIntelligenceTools(server: McpServer, client: Lexw
         if (candidates.size === 0) hashVerification = { performed: false, reason: "NO_CANDIDATES" };
         else if (remaining < 2) hashVerification = { performed: false, reason: "BUDGET" };
         else {
+          // Enrich the SAME list (seedFrom): no second list read, and no finding can be lost to a smaller budget.
           snapshot = await load(
             {
               window,
+              seedFrom: listOnly,
               includeDetails: true,
               includePayments: false,
               inspectAttachments: true,
@@ -246,6 +249,7 @@ export function registerFinanceIntelligenceTools(server: McpServer, client: Lexw
         records: snapshot.records,
         listComplete: snapshot.completeness.list === "COMPLETE",
         fetchFailures: fetchFailures(snapshot.completeness),
+        rejectedRows: snapshot.rejectedRows.length,
       });
       const result = {
         ...loadMeta(snapshot),
@@ -300,6 +304,8 @@ export function registerFinanceIntelligenceTools(server: McpServer, client: Lexw
           includeDetails: verify,
           includePayments: payments,
           enrichOnly: payments ? isOpenDocument : isOpenSalesDocument,
+          // Due-date details are only useful for sales documents (payment term); payments may cover all open documents.
+          detailsOnly: isOpenSalesDocument,
           maxRequests: maxRequests ?? DEFAULT_TOOL_MAX_REQUESTS,
         },
         now,
@@ -312,6 +318,7 @@ export function registerFinanceIntelligenceTools(server: McpServer, client: Lexw
         records: snapshot.records,
         listComplete: snapshot.completeness.list === "COMPLETE",
         fetchFailures: fetchFailures(snapshot.completeness),
+        rejectedRows: snapshot.rejectedRows.length,
         openItems: analysis,
       });
       const result = {
@@ -379,6 +386,7 @@ export function registerFinanceIntelligenceTools(server: McpServer, client: Lexw
         records: snapshot.records,
         listComplete: snapshot.completeness.list === "COMPLETE",
         fetchFailures: fetchFailures(snapshot.completeness),
+        rejectedRows: snapshot.rejectedRows.length,
       });
       const result = {
         ...loadMeta(snapshot),
@@ -436,6 +444,7 @@ export function registerFinanceIntelligenceTools(server: McpServer, client: Lexw
         records: snapshot.records,
         listComplete,
         fetchFailures: fetchFailures(snapshot.completeness),
+        rejectedRows: snapshot.rejectedRows.length,
         openItems,
       });
       const brief = buildDailyBrief({
@@ -465,6 +474,7 @@ export function registerFinanceIntelligenceTools(server: McpServer, client: Lexw
         duplicates: duplicates.counts,
         openItems: openItems.counts,
         anomalies: periods.anomalies.length,
+        rejectedRows: snapshot.rejectedRows.length,
         ...loadMeta(snapshot),
         revenueScopeNote: REVENUE_SCOPE_NOTE,
       };

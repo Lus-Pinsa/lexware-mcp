@@ -122,8 +122,10 @@ export type OpenItemExclusion = "NON_FINANCIAL" | "VOIDED" | "DRAFT";
 export function classifyOpenItem(record: FinanceRecord, asOf: string): { item: OpenItem } | { excluded: OpenItemExclusion } {
   if (!isValidDay(asOf)) throw new RangeError("asOf must be a valid YYYY-MM-DD day");
   if (record.kind === "NON_FINANCIAL") return { excluded: "NON_FINANCIAL" };
-  if (record.statusCategory === "VOIDED") return { excluded: "VOIDED" };
-  if (record.statusCategory === "DRAFT") return { excluded: "DRAFT" };
+  // The category is only trusted when the status value itself is usable (never from a missing or disputed status).
+  const category = isUsable(record.status) ? record.statusCategory : "UNKNOWN";
+  if (category === "VOIDED") return { excluded: "VOIDED" };
+  if (category === "DRAFT") return { excluded: "DRAFT" };
 
   const reasons = new Set<OpenItemReason>();
   const { direction, reason: directionReason } = directionOf(record);
@@ -139,7 +141,7 @@ export function classifyOpenItem(record: FinanceRecord, asOf: string): { item: O
   let status: OpenItemStatus;
   let daysPastDue: number | null = null;
 
-  switch (record.statusCategory) {
+  switch (category) {
     case "UNCHECKED":
       status = "STATUS_UNKNOWN";
       reasons.add("STATUS_UNCHECKED");
@@ -169,7 +171,7 @@ export function classifyOpenItem(record: FinanceRecord, asOf: string): { item: O
         break;
       }
       if (openValue === null && open.quality !== "CONFLICT") reasons.add("OPEN_AMOUNT_MISSING");
-      const lexwareSaysOverdue = record.statusCategory === "OVERDUE";
+      const lexwareSaysOverdue = category === "OVERDUE";
       if (reliable && dueDay !== null) {
         if (dueDay < asOf) {
           status = "OVERDUE_CONFIRMED";

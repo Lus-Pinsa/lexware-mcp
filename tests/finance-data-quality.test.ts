@@ -39,7 +39,8 @@ describe("assessDataQuality — grade from counted findings", () => {
     expect(atTen.findings.find((f) => f.code === "CRITICAL_RECORDS")).toEqual({ code: "CRITICAL_RECORDS", count: 1, of: 10, effect: "POOR" });
     const eleven = assess([...tenRecords, clean(11)]);
     expect(eleven.grade).toBe("LIMITED"); // 1 of 11 < 10 %
-    expect(eleven.triggeredBy).toEqual(["CRITICAL_RECORDS", "SOURCE_CONFLICT"]);
+    // The disputed gross also makes a reviewed document's amount unusable (round 2: AMOUNT_MISSING limits too).
+    expect(eleven.triggeredBy).toEqual(["CRITICAL_RECORDS", "SOURCE_CONFLICT", "AMOUNT_MISSING"]);
   });
 
   it("CRITICAL issues of unreviewed inbox documents do not count against the reviewed data (they are coverage)", () => {
@@ -126,5 +127,19 @@ describe("review round 1: data quality", () => {
   it("a repeated id counts once", () => {
     const a = clean(1);
     expect(assess([a, a, clean(2)]).scope.records).toBe(2);
+  });
+});
+
+describe("review round 2: data quality", () => {
+  it("rejected rows and reviewed documents without a usable currency limit the grade", () => {
+    expect(assess([clean(1)], { rejectedRows: 2 })).toMatchObject({ grade: "LIMITED", triggeredBy: ["ROWS_REJECTED"] });
+    const noCurrency = fromRow(without(row(2, { voucherStatus: "paid", openAmount: 0 }), "currency"));
+    const r = assess([clean(1), noCurrency, clean(3), clean(4)]);
+    expect(r.findings.find((f) => f.code === "AMOUNT_MISSING")).toMatchObject({ count: 1, effect: "LIMITED" });
+    expect(() => assess([], { rejectedRows: -1 })).toThrow(RangeError);
+  });
+
+  it("an explicit undefined threshold falls back to the default", () => {
+    expect(resolveDataQualityConfig({ poorCriticalSharePercent: undefined })).toEqual(DEFAULT_DATA_QUALITY_CONFIG);
   });
 });

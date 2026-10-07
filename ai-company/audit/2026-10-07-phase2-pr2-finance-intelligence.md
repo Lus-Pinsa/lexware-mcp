@@ -57,6 +57,8 @@ Vergleichsmerkmale je Paar (alle im Ergebnis sichtbar):
 
 - **Datei-Hash:** gemeinsamer SHA-256 eines Anhangs (nur wenn Anhänge geprüft wurden).
 - **Gegenpartei:** gleiche Kontakt-ID oder gleicher normalisierter Name; Konflikt oder fehlend: nicht vergleichbar.
+- **Datei-Hash** zählt nur aus einer belastbaren Anhangliste und nur für nicht-leere Dateien (jede leere Datei hat
+  denselben SHA-256).
 - **Belegnummer:** normalisiert (NFKC, Großschrift, nur Buchstaben/Ziffern); nur unterscheidungskräftig mit
   mindestens 3 Zeichen und einer Ziffer ungleich 0.
 - **Betrag:** Brutto in Cent, gleiche Währung, ungleich 0; sonst nicht vergleichbar.
@@ -83,7 +85,9 @@ erzeugt nie eine Dublette. Die Engine verändert, markiert oder löscht keine Be
 Richtung: EXPENSE → Verbindlichkeit, REVENUE → Forderung; Gutschriften und unbekannte Belegtypen → Richtung unbekannt
 (nie in Forderungs-/Verbindlichkeitssummen). Fälligkeit gilt nur als belastbar bei `dueDateConfidence` PAYMENT_TERM
 oder bei LEXWARE_FIELD mit belastbarem Belegdatum (ohne Belegdatum ist nicht erkennbar, ob die Fälligkeit nur der
-Default ist; Grund DUE_DATE_BASIS_UNVERIFIABLE, Behandlung wie „Fälligkeit = Belegdatum“).
+Default ist; Grund DUE_DATE_BASIS_UNVERIFIABLE, Behandlung wie „Fälligkeit = Belegdatum“). PAYMENT_TERM gilt nur, wenn
+Belegdatum + genanntes Zahlungsziel genau das Fälligkeitsdatum ergibt; ein widersprechendes Zahlungsziel beweist nichts.
+Eine Statuskategorie zählt nur, wenn der Statuswert selbst belastbar ist.
 
 | Lexware-Status | Bedingung | Klasse |
 |---|---|---|
@@ -140,7 +144,7 @@ Kein Score, sondern eine Einstufung aus konkreten, gezählten Befunden mit dokum
 |---|---|
 | NO_DATA | Liste vollständig, aber keine finanzrelevanten Belege im Umfang |
 | POOR | Belegliste nicht vollständig geladen, oder ≥ 10 % der geprüften Belege mit CRITICAL-Befund |
-| LIMITED | mindestens ein geprüfter Beleg mit CRITICAL-Befund, ein Quellenkonflikt, ein unbekannter Status oder ein fehlgeschlagener Detail-/Zahlungsabruf, oder ≥ 25 % ungeprüfte Belege, oder ≥ 25 % ohne identifizierte Gegenpartei, oder ≥ 50 % der offenen Posten ohne belastbare Fälligkeit |
+| LIMITED | mindestens ein geprüfter Beleg mit CRITICAL-Befund, ein Quellenkonflikt, ein unbekannter Status, ein fehlgeschlagener Detail-/Zahlungsabruf, eine verworfene Zeile der Belegliste oder ein geprüfter Beleg ohne belastbaren Betrag (Betrag oder Währung), oder ≥ 25 % ungeprüfte Belege, oder ≥ 25 % ohne identifizierte Gegenpartei, oder ≥ 50 % der offenen Posten ohne belastbare Fälligkeit |
 | GOOD | sonst |
 
 Gezählte Befunde: fehlender Betrag, Quellenkonflikt, fehlende Gegenpartei, ungeprüfter Beleg, unzuverlässige
@@ -173,8 +177,11 @@ Status:
 | `compare-finance-periods` | Wie steht der Monat im Vergleich? | Stichtag wählbar, Auffälligkeitsregel |
 | `get-finance-daily-brief` | Gesamtlage heute | ein einziger Ladevorgang für alle Auswertungen, deterministischer Text |
 
-Alle Tools: Request-Budget, PARTIAL/FAILED sichtbar, keine Seiteneffekte. Standard ist nur die Belegliste;
-Detailabrufe sind gezielt (offene Verkaufsbelege; Dubletten-Kandidaten bei Hash-Prüfung).
+Alle Tools: Request-Budget, PARTIAL/FAILED sichtbar, keine Seiteneffekte, begrenzte Ausgaben (Dubletten-Funde
+Standard 100, max. 500; Auffälligkeiten max. 50; Zeilen/Posten max. 500). Standard ist nur die Belegliste;
+Detailabrufe sind gezielt (offene Verkaufsbelege, auch wenn Zahlungsinformationen für alle offenen Belege gelesen
+werden; Dubletten-Kandidaten bei Hash-Prüfung, höchstens 25 je Aufruf). Die Hash-Prüfung reichert dieselbe bereits
+gelesene Belegliste an (kein zweiter Listenabruf), sodass kein Fund aus der Listenanalyse verloren gehen kann.
 
 ## 8. Testmatrix
 

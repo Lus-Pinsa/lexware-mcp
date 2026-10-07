@@ -249,3 +249,24 @@ describe("review round 1: brief properties", () => {
     expect(dup[3].text).toBe("… und 25 weitere"); // 8 records → 28 pairs
   });
 });
+
+describe("review round 2: brief wording", () => {
+  it("an open item without a usable amount is never shown as 0,00 €", () => {
+    const records = [fromRow(without(row(1, { voucherStatus: "open", voucherDate: "2026-08-01", dueDate: "2026-10-20" }), "openAmount"))];
+    const text = buildDailyBrief(input(records)).text;
+    expect(text).toContain("Offene Verbindlichkeiten laut Lexware (Stand Abruf, Ladefenster): Betrag nicht belastbar (Posten: 1)");
+  });
+
+  it("configured percentages use the German decimal comma", () => {
+    const base = input([paid(1)]);
+    const b = buildDailyBrief({ ...base, periods: comparePeriods([paid(1)], AS_OF, { dataComplete: true, config: { minRelativeChangePercent: 12.5 } }) });
+    expect(b.text).toContain("≥ 12,5 %");
+    expect(b.text).not.toContain("12.5");
+  });
+
+  it("an incomplete duplicate analysis is never reported as 'no exact duplicate'", () => {
+    const records = [paid(1, { voucherDate: "2026-08-01", voucherNumber: undefined }), paid(2, { voucherDate: "2026-09-01", voucherNumber: undefined }), paid(3, { voucherDate: "2026-10-02", voucherNumber: undefined })];
+    const b = buildDailyBrief(input(records, "COMPLETE", 1));
+    expect(b.noActionNeeded.join("\n")).not.toContain("keine exakte Dublette");
+  });
+});

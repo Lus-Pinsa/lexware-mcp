@@ -90,7 +90,14 @@ export function formatMoney(cents: number | null, currency = "EUR"): string {
   const euros = Math.floor(abs / 100).toString();
   const rest = (abs % 100).toString().padStart(2, "0");
   const grouped = euros.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
-  return `${negative ? "-" : ""}${grouped},${rest} ${currency === "EUR" ? "€" : currency}`;
+  // Currencies are validated ISO codes upstream; anything else is never printed (it could carry forged text).
+  const unit = currency === "EUR" ? "€" : /^[A-Z]{3}$/.test(currency) ? currency : "(Währung ungültig)";
+  return `${negative ? "-" : ""}${grouped},${rest} ${unit}`;
+}
+
+/** A configured percentage in German notation, e.g. 12.5 → "12,5". */
+export function formatPercentNumber(value: number): string {
+  return String(value).replace(".", ",");
 }
 
 /** Signed money difference, e.g. "+1.234,56 €" / "-5,00 €" / "±0,00 €". */
@@ -112,7 +119,8 @@ const MAX_TEXT_IN_BRIEF = 40;
 /** Untrusted Lexware text for the brief: delimiters replaced, whitespace collapsed, shortened, in «». */
 export function quoteUntrusted(value: string | null): string {
   if (value === null) return "–";
-  const cleaned = value.replace(/[«»]/g, '"').replace(/\s+/g, " ").trim();
+  // Defense in depth (PR 1 already sanitizes): no control, format, line or paragraph separator characters.
+  const cleaned = value.replace(/[«»]/g, '"').replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\s]+/gu, " ").trim();
   const chars = Array.from(cleaned);
   const short = chars.length > MAX_TEXT_IN_BRIEF ? `${chars.slice(0, MAX_TEXT_IN_BRIEF - 1).join("")}…` : cleaned;
   return `«${short}»`;
@@ -128,12 +136,14 @@ function rangeText(range: DayRange): string {
 
 function sumText(sums: ReadonlyArray<CurrencySum>): string {
   if (sums.length === 0) return formatMoney(0);
-  return sums.map((s) => formatMoney(s.cents, s.currency)).join(" + ");
+  return sums.map((s) => formatMoney(s.cents, s.currency)).join(" und ");
 }
 
 function statusTotalText(t: StatusTotal): string {
-  const sums = t.openByCurrency.length === 0 ? formatMoney(0) : t.openByCurrency.map((s) => formatMoney(s.cents, s.currency)).join(" + ");
-  return t.itemsWithoutUsableAmount > 0 ? `${sums} (ohne belastbaren Betrag: ${t.itemsWithoutUsableAmount})` : sums;
+  // An unknown amount is never shown as 0,00 €: without any usable amount there is no sum to show.
+  if (t.openByCurrency.length === 0) return t.itemsWithoutUsableAmount > 0 ? "Betrag nicht belastbar" : formatMoney(0);
+  const sums = t.openByCurrency.map((s) => formatMoney(s.cents, s.currency)).join(" und ");
+  return t.itemsWithoutUsableAmount > 0 ? `${sums} belastbar, zusätzlich ohne belastbaren Betrag: ${t.itemsWithoutUsableAmount}` : sums;
 }
 
 function mergeTotals(a: StatusTotal, b: StatusTotal): StatusTotal {
@@ -158,6 +168,7 @@ const GRADE_TEXT: Readonly<Record<DataQualityGrade, string>> = {
 
 const FINDING_TEXT: Readonly<Record<DataQualityFindingCode, string>> = {
   LIST_INCOMPLETE: "Belegliste nicht vollständig geladen",
+  ROWS_REJECTED: "Verworfene Zeilen der Belegliste (ungültige ID oder Form; in keiner Summe enthalten)",
   CRITICAL_RECORDS: "Geprüfte Belege mit kritischem Datenbefund (nicht in Summen)",
   SOURCE_CONFLICT: "Belege mit widersprüchlichen Quellen",
   STATUS_UNKNOWN: "Belege mit unbekanntem oder widersprüchlichem Status",
@@ -414,11 +425,11 @@ export function buildDailyBrief(input: BriefInput): DailyBrief {
   // Informational.
   if (dup.complete && dup.counts.EXACT_DUPLICATE + dup.counts.PROBABLE_DUPLICATE + dup.counts.POSSIBLE_DUPLICATE === 0) {
     info.push(`Dublettenprüfung (verglichene Belege: ${dup.recordsConsidered}): keine Dubletten-Kandidaten.`);
-  } else if (exactReviewed.length === 0) {
+  } else if (dup.complete && exactReviewed.length === 0) {
     info.push(`Dublettenprüfung (verglichene Belege: ${dup.recordsConsidered}): keine exakte Dublette zwischen zwei geprüften Belegen.`);
   }
   if (p.dataComplete && p.anomalies.length === 0) {
-    info.push(`Auffälligkeitsregel (≥ ${p.rule.minRelativeChangePercent} % und ≥ ${formatMoney(p.rule.minAbsoluteChangeCents, p.rule.currency)}): keine Auffälligkeit.`);
+    info.push(`Auffälligkeitsregel (≥ ${formatPercentNumber(p.rule.minRelativeChangePercent)} % und ≥ ${formatMoney(p.rule.minAbsoluteChangeCents, p.rule.currency)}): keine Auffälligkeit.`);
   }
   for (const n of p.notEvaluated) info.push(notEvaluatedText(n));
   const openConfirmed = mergeTotals(t.RECEIVABLE.OPEN_CONFIRMED, t.PAYABLE.OPEN_CONFIRMED);
@@ -529,7 +540,7 @@ function renderText(
       (d.complete ? "" : " · UNVOLLSTÄNDIG (Paarlimit)"),
   );
   lines.push("");
-  lines.push(`AUFFÄLLIGKEITEN (Regel: ≥ ${p.rule.minRelativeChangePercent} % und ≥ ${formatMoney(p.rule.minAbsoluteChangeCents, p.rule.currency)}, MTD vs. Vormonat gleicher Zeitraum)`);
+  lines.push(`AUFFÄLLIGKEITEN (Regel: ≥ ${formatPercentNumber(p.rule.minRelativeChangePercent)} % und ≥ ${formatMoney(p.rule.minAbsoluteChangeCents, p.rule.currency)}, MTD vs. Vormonat gleicher Zeitraum)`);
   if (p.anomalies.length === 0) lines.push(p.dataComplete ? "- keine" : "- nicht bewertet (Belegliste unvollständig)");
   for (const a of listWithLimit(p.anomalies.map(anomalyText), limit)) lines.push(`- ${a}`);
   lines.push("");

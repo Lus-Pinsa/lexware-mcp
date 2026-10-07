@@ -6,6 +6,7 @@
  * Merging a second source never overwrites a disagreeing value silently — it becomes a CONFLICT.
  */
 import { cleanUntrustedText } from "../untrusted.js";
+import { addDays } from "./calendar.js";
 import { parseLexwareDate } from "./dates.js";
 import {
   type Attachment,
@@ -261,9 +262,15 @@ function addEventIssue(record: FinanceRecord, code: IssueCode, field?: string): 
   return exists ? record : { ...record, issues: [...record.issues, issue(code, field)] };
 }
 
-function dueDateConfidence(record: FinanceRecord, paymentTermStated: boolean): DueDateConfidence {
+/**
+ * `paymentTermDays`: the payment term the sales document states (null if none). It only makes the due date
+ * PAYMENT_TERM when voucher day + term = due day; a term that contradicts the due date proves nothing about it.
+ */
+function dueDateConfidence(record: FinanceRecord, paymentTermDays: number | null): DueDateConfidence {
   if (!isUsable(record.dueDate)) return "MISSING";
-  if (paymentTermStated) return "PAYMENT_TERM";
+  if (paymentTermDays !== null && isUsable(record.voucherDate) && termMatchesDueDate(record.voucherDate.value, paymentTermDays, record.dueDate.value)) {
+    return "PAYMENT_TERM";
+  }
   if (isUsable(record.voucherDate) && record.voucherDate.value === record.dueDate.value) return "POSSIBLE_DEFAULT";
   return "LEXWARE_FIELD";
 }
@@ -447,7 +454,7 @@ export function normalizeVoucherlistRow(
       attachments: "NOT_FETCHED",
     },
   };
-  record = { ...record, dueDateConfidence: dueDateConfidence(record, false) };
+  record = { ...record, dueDateConfidence: dueDateConfidence(record, null) };
   if (gross.precisionReduced) record = addEventIssue(record, "AMOUNT_PRECISION_REDUCED", "grossCents");
   if (open.precisionReduced) record = addEventIssue(record, "AMOUNT_PRECISION_REDUCED", "openCents");
   return { record: recomputeIssues(record) };
@@ -501,12 +508,20 @@ function absentOrInvalid(raw: unknown): Reason {
   return raw === undefined || raw === null ? "FIELD_ABSENT" : "INVALID_TYPE";
 }
 
-function finishDetail(record: FinanceRecord, source: Source, ctx: NormalizeContext, paymentTermStated: boolean): FinanceRecord {
+function termMatchesDueDate(voucherDay: string, termDays: number, dueDay: string): boolean {
+  try {
+    return addDays(voucherDay, termDays) === dueDay;
+  } catch {
+    return false;
+  }
+}
+
+function finishDetail(record: FinanceRecord, source: Source, ctx: NormalizeContext, paymentTermDays: number | null): FinanceRecord {
   const next: FinanceRecord = {
     ...record,
     provenance: { ...record.provenance, sources: withSource(record, source, ctx.fetchedAt), detail: "FETCHED" },
   };
-  return recomputeIssues({ ...next, dueDateConfidence: dueDateConfidence(next, paymentTermStated) });
+  return recomputeIssues({ ...next, dueDateConfidence: dueDateConfidence(next, paymentTermDays) });
 }
 
 /** net = gross − tax, only when both are usable; otherwise MISSING with the most specific reason. */
@@ -629,7 +644,7 @@ export function applyVoucherDetail(record: FinanceRecord, raw: unknown, ctx: Nor
     attachments: files.field,
     counterparty: buildCounterparty(contactId, r.counterparty.name),
   };
-  return finishDetail(r, src, ctx, false);
+  return finishDetail(r, src, ctx, null);
 }
 
 /** Merge a sales document detail (`/v1/invoices`, `/v1/credit-notes`, `/v1/down-payment-invoices`). */
@@ -714,8 +729,8 @@ export function applySalesDocumentDetail(
     : missing(documentFileId.reason ?? "FIELD_ABSENT", source);
 
   const paymentConditions = isObject(raw.paymentConditions) ? raw.paymentConditions : {};
-  const paymentTermStated =
-    typeof paymentConditions.paymentTermDuration === "number" && Number.isInteger(paymentConditions.paymentTermDuration);
+  const term = paymentConditions.paymentTermDuration;
+  const paymentTermDays = typeof term === "number" && Number.isSafeInteger(term) && term >= 0 ? term : null;
 
   const mergedGross = mergeField(r.grossCents, gross.field);
   // Net and tax from the document only count when the gross amount is agreed between list and document.
@@ -731,7 +746,7 @@ export function applySalesDocumentDetail(
     attachments,
     counterparty: buildCounterparty(contactId, name),
   };
-  return finishDetail(r, source, ctx, paymentTermStated);
+  return finishDetail(r, source, ctx, paymentTermDays);
 }
 
 // ---------------------------------------------------------------------------------------------------------

@@ -66,7 +66,7 @@ export function addDays(day: string, n: number): string {
   const p = requireParts(day);
   const date = new Date(utcMs(p.y, p.m, p.d) + n * MS_PER_DAY);
   const y = date.getUTCFullYear();
-  if (y < 0 || y > 9999) throw new RangeError("day out of range");
+  if (!Number.isFinite(y) || y < 0 || y > 9999) throw new RangeError("day out of range");
   return format(y, date.getUTCMonth() + 1, date.getUTCDate());
 }
 

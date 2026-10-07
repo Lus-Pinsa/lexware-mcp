@@ -578,3 +578,14 @@ describe("review round 2: sales document consistency", () => {
     expect(codes(r)).toContain("ATTACHMENT_ID_INVALID");
   });
 });
+
+describe("review PR 2 round 2: payment term and due date", () => {
+  it("a stated payment term only makes the due date PAYMENT_TERM when voucher day + term = due day", () => {
+    const consistent = applySalesDocumentDetail(row(invoiceRow()), invoiceDetail(4, { paymentConditions: { paymentTermDuration: 0 } }), "invoice", CTX);
+    expect(consistent.dueDateConfidence).toBe("PAYMENT_TERM");
+    const contradicting = applySalesDocumentDetail(row(invoiceRow()), invoiceDetail(4, { paymentConditions: { paymentTermDuration: 30 } }), "invoice", CTX);
+    expect(contradicting.dueDateConfidence).toBe("POSSIBLE_DEFAULT");
+    const negative = applySalesDocumentDetail(row(invoiceRow()), invoiceDetail(4, { paymentConditions: { paymentTermDuration: -1 } }), "invoice", CTX);
+    expect(negative.dueDateConfidence).toBe("POSSIBLE_DEFAULT");
+  });
+});

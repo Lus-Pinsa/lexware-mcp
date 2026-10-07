@@ -22,7 +22,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - `get-finance-daily-brief`: GRÜN/GELB/ROT with reasons, data quality, month to date, comparison, duplicates,
     anomalies, owner attention and "no action needed", from one budgeted Lexware load.
   - Data quality as GOOD/LIMITED/POOR/NO_DATA from counted findings with documented thresholds (no score).
-  - Loader option `enrichOnly` to read details/payments only for selected documents.
+  - Loader options `enrichOnly` / `detailsOnly` to read details and payments only for selected documents, and
+    `seedFrom` to enrich the list of an earlier snapshot without reading it again.
 - **Finance truth layer (Phase 2, PR 1)** — `src/finance/`: canonical, read-only finance data model with explicit
   missing-value semantics (a missing amount is never turned into 0), per-value provenance and quality
   (STRUCTURED / DERIVED / UNVERIFIED / PLACEHOLDER / CONFLICT / MISSING), deterministic data-quality issues,
@@ -50,6 +51,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   dependency review, CodeQL; PR template; code owners for safety-gate files.
 
 ### Security
+- **Due dates:** a stated payment term only marks a due date as reliable when voucher day + term = due day.
 - **Least privilege for the finance read facade:** `/v1/contacts` and `/v1/profile` removed from
   `FINANCE_READ_PATHS` (the finance pipeline never reads them).
 - **Public-repo hygiene:** test fixtures from PR 1 contained amounts and second-precise timestamps taken over from

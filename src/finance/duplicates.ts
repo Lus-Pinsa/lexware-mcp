@@ -121,9 +121,11 @@ function factsOf(record: FinanceRecord): Facts {
   const numberKey = isUsable(record.voucherNumber) ? normalizeVoucherNumberKey(record.voucherNumber.value) : null;
   const gross = grossAmount(record);
   const hashes = new Set<string>();
-  for (const a of record.attachments.value ?? []) {
+  // Only usable attachment lists, and only non-empty files: every empty file has the same SHA-256.
+  for (const a of isUsable(record.attachments) ? record.attachments.value : []) {
     const sha = a.inspection?.sha256;
-    if (typeof sha === "string" && SHA256.test(sha)) hashes.add(sha);
+    const bytes = a.inspection?.byteLength;
+    if (typeof sha === "string" && SHA256.test(sha) && typeof bytes === "number" && bytes > 0) hashes.add(sha);
   }
   return {
     record,
@@ -344,7 +346,8 @@ export function analyzeDuplicates(records: ReadonlyArray<FinanceRecord>, config:
     const list = buckets.get(key) ?? [];
     for (let i = 0; i < list.length && complete; i += 1) {
       for (let j = i + 1; j < list.length; j += 1) {
-        const pairKey = `${list[i].record.id}|${list[j].record.id}`;
+        // Length-prefixed so that no pair of ids can produce the same key as another pair.
+        const pairKey = `${list[i].record.id.length}:${list[i].record.id}|${list[j].record.id}`;
         if (seen.has(pairKey)) continue;
         if (seen.size >= cfg.maxPairs) {
           complete = false;

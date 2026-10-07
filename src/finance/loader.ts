@@ -52,6 +52,11 @@ export interface LoadOptions {
   readonly timeZone?: string;
   readonly now?: () => Date;
   readonly extractor?: PdfTextExtractor;
+  /**
+   * Narrow details, payments and attachment inspection to the list records this predicate accepts (e.g. only
+   * open sales documents, or duplicate candidates). Records it rejects stay list-based (DETAIL_NOT_FETCHED).
+   */
+  readonly enrichOnly?: (record: FinanceRecord) => boolean;
 }
 
 export const DEFAULT_MAX_REQUESTS = 150;
@@ -282,9 +287,11 @@ export async function loadFinanceSnapshot(client: ReadOnlyLexwareClient, options
       return da === db ? cmp(a.id, b.id) : cmp(db, da);
     })
     .map((r) => r.id);
+  // Records that get details, payments and attachment inspection (all financial records unless narrowed).
   const financial = order.filter((id) => {
-    const k = records.get(id)!.kind;
-    return k === "EXPENSE" || k === "REVENUE";
+    const r = records.get(id)!;
+    if (r.kind !== "EXPENSE" && r.kind !== "REVENUE") return false;
+    return options.enrichOnly ? options.enrichOnly(r) : true;
   });
   const set = (r: FinanceRecord) => records.set(r.id, r);
   const get = (id: string) => records.get(id)!;

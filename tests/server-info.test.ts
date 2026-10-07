@@ -42,7 +42,7 @@ function capture(config: Config, env: NodeJS.ProcessEnv) {
 const cfg = (extra: Record<string, string>) => loadConfig({ ...SECRETS, ...extra } as NodeJS.ProcessEnv);
 
 describe("get-server-info", () => {
-  it("reports read-only mode truthfully: 41 tools, none write-capable", async () => {
+  it("reports read-only mode truthfully: 46 tools, none write-capable", async () => {
     const env = { ...SECRETS, LEXWARE_READ_ONLY: "true", RENDER_GIT_COMMIT: "ABCDEF1234567890abcdef1234567890ABCDEF12" };
     const tools = capture(cfg({ LEXWARE_READ_ONLY: "true" }), env);
     const tool = tools.get("get-server-info");
@@ -53,14 +53,14 @@ describe("get-server-info", () => {
     expect(info.build).toEqual({ sha: "abcdef1234567890abcdef1234567890abcdef12", shaSource: "RENDER_GIT_COMMIT", status: "KNOWN" });
     expect(info.capabilities).toEqual({ tiers: ["read"], effectiveReadOnly: true });
     expect(info.tools.registeredCount).toBe(tools.size);
-    expect(info.tools.registeredCount).toBe(41);
+    expect(info.tools.registeredCount).toBe(46);
     expect(info.tools.writeCapable).toEqual([]);
     expect(info.tools.names).toContain("get-server-info");
     expect(info.tools.names).not.toContain("acknowledge-voucher-event");
     expect(info.runtime).toMatchObject({ startedAt: "2026-10-06T10:00:00.000Z", uptimeSeconds: 90 });
     expect(info.webhook.publicKeyConfigured).toBe(true);
     expect(info.secretsIncluded).toBe(false);
-    expect(out.content[0].text).toContain("registered tools: 41 (write-capable: 0)");
+    expect(out.content[0].text).toContain("registered tools: 46 (write-capable: 0)");
   });
 
   it("lists exactly the registered write-capable tools in the drafts configuration", async () => {
@@ -70,7 +70,7 @@ describe("get-server-info", () => {
     expect(info.capabilities).toEqual({ tiers: ["read", "drafts"], effectiveReadOnly: false });
     expect(info.tools.writeCapable).toEqual(expectedWrites);
     expect(info.tools.writeCapable).toHaveLength(16);
-    expect(info.tools.registeredCount).toBe(57);
+    expect(info.tools.registeredCount).toBe(62);
   });
 
   it("never contains secret values (API key, token, webhook key)", async () => {

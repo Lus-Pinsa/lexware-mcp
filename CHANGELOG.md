@@ -7,6 +7,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Finance intelligence (Phase 2, PR 2)** — five READ-tier tools on pure, deterministic modules in `src/finance/`
+  (no clock, no randomness, no LLM text; same input → byte-identical brief):
+  - `analyze-voucher-duplicates`: rule table E1 (shared file SHA-256), E2/P1 (same counterparty + voucher number +
+    amount, same day or not), S1–S3 (weaker combinations within a 14-day window) → EXACT/PROBABLE/POSSIBLE with reason
+    codes and evidence; an equal amount alone never makes a duplicate; optional hash check for candidates only.
+  - `get-open-items`: receivables/payables with OVERDUE_CONFIRMED only for a reliable due date (payment term or own due
+    date), POSSIBLY_OVERDUE/DUE_DATE_UNRELIABLE otherwise, STATUS_UNKNOWN for unreviewed documents and contradictions,
+    PAID_CONFIRMED only for status paid with open amount 0; credit notes keep an unknown direction.
+  - `compare-finance-periods`: month to date vs. the same days of the previous month and the full previous month
+    (reviewed gross expenses, Lexware invoice revenue — not POS revenue —, open amounts, unreviewed documents, top
+    suppliers) with exact absolute/relative differences and the configurable anomaly rule (≥ 30 % and ≥ 250 €).
+  - `get-finance-snapshot`: the normalized documents behind every statement, with data-quality findings.
+  - `get-finance-daily-brief`: GRÜN/GELB/ROT with reasons, data quality, month to date, comparison, duplicates,
+    anomalies, owner attention and "no action needed", from one budgeted Lexware load.
+  - Data quality as GOOD/LIMITED/POOR/NO_DATA from counted findings with documented thresholds (no score).
+  - Loader option `enrichOnly` to read details/payments only for selected documents.
 - **Finance truth layer (Phase 2, PR 1)** — `src/finance/`: canonical, read-only finance data model with explicit
   missing-value semantics (a missing amount is never turned into 0), per-value provenance and quality
   (STRUCTURED / DERIVED / UNVERIFIED / PLACEHOLDER / CONFLICT / MISSING), deterministic data-quality issues,
@@ -34,6 +50,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   dependency review, CodeQL; PR template; code owners for safety-gate files.
 
 ### Security
+- **Least privilege for the finance read facade:** `/v1/contacts` and `/v1/profile` removed from
+  `FINANCE_READ_PATHS` (the finance pipeline never reads them).
+- **Public-repo hygiene:** test fixtures from PR 1 contained amounts and second-precise timestamps taken over from
+  real Lexware documents (no names or ids); they are replaced by invented values.
 - **PDF input hardening** for `get-voucher-file-text` (and the finance loader): 10 MiB download limit (aborted
   while streaming, re-checked after download), parsing in an isolated worker thread (256 MB heap limit, empty
   environment, output discarded, terminated after 15 s or when the process memory grows by more than 384 MB — a

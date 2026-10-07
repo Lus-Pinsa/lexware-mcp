@@ -40,6 +40,8 @@ import {
   registerVoucherReconciliationReadTools,
 } from "./reconciliation.js";
 
+import { registerFinanceIntelligenceTools } from "./finance-intelligence.js";
+
 import { registerProfileTools } from "./profile.js";
 import { registerReferenceReadTools } from "./reference.js";
 import {
@@ -112,6 +114,14 @@ export function registerTools(
     server,
     client,
   );
+
+  /*
+   * LU'S finance intelligence (snapshot, duplicates, open items, period comparison, daily brief).
+   *
+   * Reads Lexware only through the GET-only facade.
+   * No server state is written; nothing is changed in Lexware.
+   */
+  registerFinanceIntelligenceTools(server, client);
 
   /*
    * Local, read-only introspection: build commit, tiers, registered tools.

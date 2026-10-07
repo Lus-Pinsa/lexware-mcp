@@ -129,7 +129,8 @@ export function assessDataQuality(input: DataQualityInput, config: Partial<DataQ
 
   const critical = reviewed.filter(hasCriticalIssue).length;
   const conflicts = inScope.filter((r) => r.issues.some((i) => CONFLICT_CODES.has(i.code))).length;
-  const statusUnknown = inScope.filter((r) => r.statusCategory === "UNKNOWN").length;
+  // Unknown category, or a category whose status value itself is not usable (never trusted elsewhere either).
+  const statusUnknown = inScope.filter((r) => r.statusCategory === "UNKNOWN" || !isUsable(r.status)).length;
   const counterpartyMissing = inScope.filter((r) => r.counterparty.matchKeyBasis === "NONE").length;
   // Gross or currency unusable: the same documents the period figures exclude as AMOUNT_NOT_USABLE.
   const amountMissing = inScope.filter((r) => grossAmount(r) === null).length;
@@ -197,15 +198,16 @@ export function assessDataQuality(input: DataQualityInput, config: Partial<DataQ
 
   let grade: DataQualityGrade;
   let triggeredBy: DataQualityFindingCode[];
+  // LIMITED outranks NO_DATA: an empty scope after rejected rows or failed fetches is not "no documents".
   if (poor.length > 0) {
     grade = "POOR";
     triggeredBy = poor;
-  } else if (inScope.length === 0) {
-    grade = "NO_DATA";
-    triggeredBy = [];
   } else if (limited.length > 0) {
     grade = "LIMITED";
     triggeredBy = limited;
+  } else if (inScope.length === 0) {
+    grade = "NO_DATA";
+    triggeredBy = [];
   } else {
     grade = "GOOD";
     triggeredBy = [];

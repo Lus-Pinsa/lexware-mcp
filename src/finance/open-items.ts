@@ -39,6 +39,7 @@ export type Direction = "RECEIVABLE" | "PAYABLE" | "UNKNOWN";
 export const OPEN_ITEM_REASONS = [
   "DUE_DATE_POSSIBLE_DEFAULT",
   "DUE_DATE_BASIS_UNVERIFIABLE",
+  "DUE_DATE_TERM_MISMATCH",
   "DUE_DATE_MISSING",
   "DUE_DATE_CONFLICT",
   "LEXWARE_STATUS_OVERDUE_NOT_CONFIRMED",
@@ -103,14 +104,16 @@ function directionOf(record: FinanceRecord): { direction: Direction; reason?: Op
  * voucher date. Without a usable voucher date a LEXWARE_FIELD due date may still be the default (= voucher date).
  */
 function dueReliable(record: FinanceRecord): boolean {
-  if (!isUsable(record.dueDate)) return false;
-  if (record.dueDateConfidence === "PAYMENT_TERM") return true;
-  return record.dueDateConfidence === "LEXWARE_FIELD" && isUsable(record.voucherDate);
+  if (!isUsable(record.dueDate) || !isUsable(record.voucherDate)) return false;
+  return record.dueDateConfidence === "PAYMENT_TERM" || record.dueDateConfidence === "LEXWARE_FIELD";
 }
 
-/** A Lexware due date whose voucher date is missing or disputed: it cannot be told apart from a default. */
-function dueBasisUnverifiable(record: FinanceRecord): boolean {
-  return isUsable(record.dueDate) && record.dueDateConfidence === "LEXWARE_FIELD" && !isUsable(record.voucherDate);
+/** Reason for a usable but unreliable due date, or null when the due date is reliable or missing. */
+function unreliableDueReason(record: FinanceRecord): OpenItemReason | null {
+  if (!isUsable(record.dueDate) || dueReliable(record)) return null;
+  if (record.dueDateConfidence === "POSSIBLE_DEFAULT") return "DUE_DATE_POSSIBLE_DEFAULT";
+  if (record.dueDateConfidence === "TERM_MISMATCH") return "DUE_DATE_TERM_MISMATCH";
+  return "DUE_DATE_BASIS_UNVERIFIABLE";
 }
 
 export type OpenItemExclusion = "NON_FINANCIAL" | "VOIDED" | "DRAFT";
@@ -182,8 +185,8 @@ export function classifyOpenItem(record: FinanceRecord, asOf: string): { item: O
         } else {
           status = "OPEN_CONFIRMED";
         }
-      } else if ((record.dueDateConfidence === "POSSIBLE_DEFAULT" || dueBasisUnverifiable(record)) && dueDay !== null) {
-        reasons.add(record.dueDateConfidence === "POSSIBLE_DEFAULT" ? "DUE_DATE_POSSIBLE_DEFAULT" : "DUE_DATE_BASIS_UNVERIFIABLE");
+      } else if (unreliableDueReason(record) !== null && dueDay !== null) {
+        reasons.add(unreliableDueReason(record) as OpenItemReason);
         if (dueDay < asOf) status = "POSSIBLY_OVERDUE";
         else status = "DUE_DATE_UNRELIABLE";
         if (lexwareSaysOverdue) reasons.add("LEXWARE_STATUS_OVERDUE_NOT_CONFIRMED");

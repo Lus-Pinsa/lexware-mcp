@@ -60,8 +60,9 @@ export interface LoadOptions {
   /** Further narrows only the detail requests (e.g. payments for all open documents, details for sales documents). */
   readonly detailsOnly?: (record: FinanceRecord) => boolean;
   /**
-   * Re-use the voucher list of an earlier snapshot of the SAME window instead of reading it again (e.g. to enrich
-   * duplicate candidates found in a list-only load). Its list completeness, rejected rows and list errors carry over.
+   * Re-use the voucher list of an earlier snapshot of the SAME window and time zone instead of reading it again (e.g.
+   * to enrich duplicate candidates found in a list-only load). Its list completeness, rejected rows and list errors
+   * carry over. Its records are used as they are, so the seed should be a list-only snapshot.
    */
   readonly seedFrom?: FinanceSnapshot;
 }
@@ -209,8 +210,8 @@ export async function loadFinanceSnapshot(client: ReadOnlyLexwareClient, options
   const seed = options.seedFrom;
   if (seed) {
     const w = seed.window;
-    if (w.from !== window.from || w.to !== window.to || w.basis !== window.basis) {
-      throw new RangeError("seedFrom must come from the same window");
+    if (w.from !== window.from || w.to !== window.to || w.basis !== window.basis || seed.timeZone !== timeZone) {
+      throw new RangeError("seedFrom must come from the same window and time zone");
     }
     for (const r of seed.records) byId.set(r.id, r);
     rejectedRows.push(...seed.rejectedRows);

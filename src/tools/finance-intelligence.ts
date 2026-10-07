@@ -5,7 +5,7 @@ import { buildDailyBrief } from "../finance/brief.js";
 import { addDays, daysBetween, isValidDay, previousMonthStart } from "../finance/calendar.js";
 import { assessDataQuality } from "../finance/data-quality.js";
 import { dayInTimeZone } from "../finance/dates.js";
-import { analyzeDuplicates } from "../finance/duplicates.js";
+import { analyzeDuplicates, mergeVerifiedAnalysis } from "../finance/duplicates.js";
 import { type Completeness, type FinanceSnapshot, type LoadOptions, loadFinanceSnapshot } from "../finance/loader.js";
 import { DEFAULT_TIME_ZONE, type FieldValue, type FinanceRecord, REVENUE_SCOPE_NOTE } from "../finance/model.js";
 import { analyzeOpenItems } from "../finance/open-items.js";
@@ -41,6 +41,8 @@ const MAX_WINDOW_DAYS = 731;
 const MIN_DAY = "2000-01-01";
 /** Duplicate candidates whose attachments are hashed in one call (each download is up to 10 MiB). */
 const MAX_HASH_CANDIDATES = 25;
+/** Requests the hash check may spend: one detail plus on average three files per candidate (and categories). */
+const MAX_HASH_REQUESTS = 1 + MAX_HASH_CANDIDATES * 4;
 const DEFAULT_MAX_FINDINGS = 100;
 const MAX_ANOMALIES_LISTED = 50;
 
@@ -227,12 +229,13 @@ export function registerFinanceIntelligenceTools(server: McpServer, client: Lexw
               includePayments: false,
               inspectAttachments: true,
               enrichOnly: (r) => candidates.has(r.id),
-              maxRequests: remaining,
+              maxRequests: Math.min(remaining, MAX_HASH_REQUESTS),
               extractor: deps.extractor,
             },
             now,
           );
-          analysis = analyzeDuplicates(snapshot.records, config);
+          // Details can only add evidence; a list-level suspicion is never dropped silently.
+          analysis = mergeVerifiedAnalysis(analysis, analyzeDuplicates(snapshot.records, config));
           hashVerification = {
             performed: true,
             candidates: candidates.size,
@@ -251,8 +254,16 @@ export function registerFinanceIntelligenceTools(server: McpServer, client: Lexw
         fetchFailures: fetchFailures(snapshot.completeness),
         rejectedRows: snapshot.rejectedRows.length,
       });
+      const meta = loadMeta(snapshot);
+      // One budget per call: report the caller's limit and every request of both phases.
+      const totalBudget = {
+        maxRequests: budget,
+        used: listOnly.completeness.budget.used + (snapshot === listOnly ? 0 : snapshot.completeness.budget.used),
+        exhausted: listOnly.completeness.budget.exhausted || snapshot.completeness.budget.exhausted,
+      };
       const result = {
-        ...loadMeta(snapshot),
+        ...meta,
+        completeness: { ...meta.completeness, budget: totalBudget },
         analysis: { ...analysis, findings: listed },
         findingsOmitted: analysis.findings.length - listed.length,
         documents: snapshot.records.filter((r) => ids.has(r.id)).map(snapshotRow),

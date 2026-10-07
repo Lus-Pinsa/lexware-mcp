@@ -347,3 +347,43 @@ describe("review round 2: tools", () => {
     expect(f.calls.some((c) => c.path.startsWith("/v1/payments/"))).toBe(true);
   });
 });
+
+describe("review round 3: duplicate tool", () => {
+  it("reports one budget for the whole call and caps the requests of the hash check", async () => {
+    const rows = Array.from({ length: 30 }, (_, i) => listRow(100 + i, { voucherStatus: "unchecked", voucherNumber: undefined, openAmount: undefined, voucherDate: "2026-10-02" }));
+    const f = fake({ rows });
+    const extractor: PdfTextExtractor = () => ({ result: Promise.resolve({ text: "x", total: 1 }), destroy: async () => undefined });
+    const res = await tools(f.client, extractor).handlers["analyze-voucher-duplicates"]({ verifyFileHashes: true, maxRequests: 500 });
+    expect(res.structuredContent.completeness.budget.maxRequests).toBe(500);
+    expect(res.structuredContent.completeness.budget.used).toBe(f.calls.length);
+    expect(f.calls.length).toBeLessThanOrEqual(1 + 101);
+  });
+
+  it("a detail that disputes a value never makes a list-level finding disappear", async () => {
+    const rows = [listRow(1, { voucherNumber: "TEST-1111", voucherStatus: "open", openAmount: 100 }), listRow(2, { voucherNumber: "TEST-1111", totalAmount: 120, openAmount: 120, voucherStatus: "open", voucherDate: "2026-10-05" })];
+    const extractor: PdfTextExtractor = () => ({ result: Promise.resolve({ text: "x", total: 1 }), destroy: async () => undefined });
+    const f = fake({ rows });
+    const get = f.raw.get;
+    f.raw.get = vi.fn(async (path: string, query?: Record<string, unknown>) => {
+      const out = await get(path, query);
+      return path === `/v1/vouchers/${rid(2)}` ? { ...(out as object), voucherNumber: "TEST-9999" } : out;
+    });
+    // Different file contents, so no hash match can hide the effect of the disputed voucher number.
+    f.raw.getBinary = vi.fn(async (path: string) => {
+      f.calls.push({ path });
+      return { data: Buffer.from(`%PDF-1.4 synthetic file ${path}`), contentType: "application/pdf" };
+    });
+    const res = await tools(f.client, extractor).handlers["analyze-voucher-duplicates"]({ verifyFileHashes: true });
+    expect(res.structuredContent.hashVerification.performed).toBe(true);
+    expect(res.structuredContent.analysis.findings).toHaveLength(1);
+    expect(res.structuredContent.analysis.findings[0].reasonCodes).toContain("KEPT_FROM_LIST_ANALYSIS");
+  });
+});
+
+describe("review round 3: Berlin day for every tool", () => {
+  it.each(TOOL_NAMES)("%s uses the Europe/Berlin day (22:30 UTC on 6 October is 7 October)", async (name) => {
+    const f = fake();
+    await tools(f.client, undefined, new Date("2026-10-06T22:30:00.000Z")).handlers[name]({});
+    expect(f.calls[0].query).toMatchObject({ voucherDateTo: "2026-10-07" });
+  });
+});

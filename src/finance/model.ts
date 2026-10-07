@@ -235,13 +235,15 @@ export interface Counterparty {
 export type FetchState = "NOT_FETCHED" | "FETCHED" | "FAILED" | "NOT_APPLICABLE" | "SKIPPED";
 
 /**
- * - PAYMENT_TERM: the sales document states its payment term, so the due date is meaningful.
- * - LEXWARE_FIELD: a due date that differs from the voucher date.
- * - POSSIBLE_DEFAULT: due date equals the voucher date without a stated payment term — often a default,
+ * - PAYMENT_TERM: the sales document states its payment term and voucher day + term = due day.
+ * - LEXWARE_FIELD: a due date that differs from the voucher date (no payment term stated).
+ * - POSSIBLE_DEFAULT: due date equals the voucher date without a matching payment term — often a default,
  *   so "overdue" statements based on it are weak.
+ * - TERM_MISMATCH: a payment term is stated but voucher day + term is another day than the due date (and the due
+ *   date differs from the voucher date): the two Lexware fields contradict each other, so the due date is unreliable.
  * - MISSING: no usable due date.
  */
-export type DueDateConfidence = "PAYMENT_TERM" | "LEXWARE_FIELD" | "POSSIBLE_DEFAULT" | "MISSING";
+export type DueDateConfidence = "PAYMENT_TERM" | "LEXWARE_FIELD" | "POSSIBLE_DEFAULT" | "TERM_MISMATCH" | "MISSING";
 
 export interface PaymentItem {
   readonly type: FieldValue<string>;

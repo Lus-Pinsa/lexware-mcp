@@ -589,3 +589,46 @@ describe("review PR 2 round 2: payment term and due date", () => {
     expect(negative.dueDateConfidence).toBe("POSSIBLE_DEFAULT");
   });
 });
+
+describe("review PR 2 round 3: payment term reconciliation", () => {
+  const detailWith = (voucherDate: string, dueDate: string, term: number) =>
+    applySalesDocumentDetail(row(invoiceRow(4, { voucherDate, dueDate })), invoiceDetail(4, { voucherDate, dueDate, paymentConditions: { paymentTermDuration: term } }), "invoice", CTX);
+
+  it("term N > 0 that matches the due day is PAYMENT_TERM, also across the DST change", () => {
+    expect(detailWith("2026-09-15T00:00:00.000+02:00", "2026-09-29T00:00:00.000+02:00", 14).dueDateConfidence).toBe("PAYMENT_TERM");
+    expect(detailWith("2026-10-20T10:00:00.000+02:00", "2026-11-03T10:00:00.000+01:00", 14).dueDateConfidence).toBe("PAYMENT_TERM");
+  });
+
+  it("a term that yields another day than a due date different from the voucher day is TERM_MISMATCH (unreliable)", () => {
+    expect(detailWith("2026-09-17T00:00:00.000+02:00", "2026-10-01T00:00:00.000+02:00", 30).dueDateConfidence).toBe("TERM_MISMATCH");
+  });
+
+  it("exact 24-hour days across DST that land on the previous calendar day are treated conservatively", () => {
+    // 14 × 24 h from 00:30 summer time ends at 23:30 winter time on the day before: no match, never reliable.
+    expect(detailWith("2026-10-20T00:30:00.000+02:00", "2026-11-02T23:30:00.000+01:00", 14).dueDateConfidence).toBe("TERM_MISMATCH");
+  });
+});
+
+describe("review PR 2 round 3: negative payment term", () => {
+  it("a negative term is ignored (no PAYMENT_TERM even when voucher day − 1 = due day)", () => {
+    const r = applySalesDocumentDetail(
+      row(invoiceRow(4, { voucherDate: "2026-09-15T00:00:00.000+02:00", dueDate: "2026-09-14T00:00:00.000+02:00" })),
+      invoiceDetail(4, { voucherDate: "2026-09-15T00:00:00.000+02:00", dueDate: "2026-09-14T00:00:00.000+02:00", paymentConditions: { paymentTermDuration: -1 } }),
+      "invoice",
+      CTX,
+    );
+    expect(r.dueDateConfidence).toBe("LEXWARE_FIELD");
+  });
+});
+
+describe("review PR 2 round 3: implausible payment terms", () => {
+  it("terms above 3650 days are treated as not stated", () => {
+    const r = applySalesDocumentDetail(
+      row(invoiceRow(4, { voucherDate: "2026-09-15T00:00:00.000+02:00", dueDate: "2026-09-29T00:00:00.000+02:00" })),
+      invoiceDetail(4, { voucherDate: "2026-09-15T00:00:00.000+02:00", dueDate: "2026-09-29T00:00:00.000+02:00", paymentConditions: { paymentTermDuration: Number.MAX_SAFE_INTEGER } }),
+      "invoice",
+      CTX,
+    );
+    expect(r.dueDateConfidence).toBe("LEXWARE_FIELD");
+  });
+});

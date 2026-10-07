@@ -47,6 +47,7 @@ const MAX_NUMBER_CHARS = 100;
 const MAX_CODE_CHARS = 60;
 const MAX_ATTACHMENT_TEXT_CHARS = 200_000;
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,63}$/;
+const MAX_PAYMENT_TERM_DAYS = 3650;
 const CURRENCY_PATTERN = /^[A-Z]{3}$/;
 
 type Raw = Record<string, unknown>;
@@ -272,6 +273,8 @@ function dueDateConfidence(record: FinanceRecord, paymentTermDays: number | null
     return "PAYMENT_TERM";
   }
   if (isUsable(record.voucherDate) && record.voucherDate.value === record.dueDate.value) return "POSSIBLE_DEFAULT";
+  // A stated term that yields another day contradicts the due date: neither can be trusted.
+  if (paymentTermDays !== null && isUsable(record.voucherDate)) return "TERM_MISMATCH";
   return "LEXWARE_FIELD";
 }
 
@@ -729,8 +732,9 @@ export function applySalesDocumentDetail(
     : missing(documentFileId.reason ?? "FIELD_ABSENT", source);
 
   const paymentConditions = isObject(raw.paymentConditions) ? raw.paymentConditions : {};
+  // A plausible term is 0–3650 days; anything else is treated as not stated (it can neither confirm nor contradict).
   const term = paymentConditions.paymentTermDuration;
-  const paymentTermDays = typeof term === "number" && Number.isSafeInteger(term) && term >= 0 ? term : null;
+  const paymentTermDays = typeof term === "number" && Number.isSafeInteger(term) && term >= 0 && term <= MAX_PAYMENT_TERM_DAYS ? term : null;
 
   const mergedGross = mergeField(r.grossCents, gross.field);
   // Net and tax from the document only count when the gross amount is agreed between list and document.

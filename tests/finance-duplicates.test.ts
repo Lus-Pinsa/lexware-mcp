@@ -4,6 +4,7 @@ import {
   DUPLICATE_RULES,
   analyzeDuplicates,
   classifyPair,
+  mergeVerifiedAnalysis,
   normalizeVoucherNumberKey,
   resolveDuplicateConfig,
 } from "../src/finance/duplicates.js";
@@ -403,5 +404,32 @@ describe("review round 2: duplicates", () => {
     };
     const r = classifyPair(unverified(rec(1, { voucherNumber: "TEST-1111" })), withHashes(rec(2, { voucherNumber: "TEST-2222", contactName: "Testlieferant B" }), HASH_A));
     expect(r.evidence.fileHash).toBe("NOT_COMPARABLE");
+  });
+});
+
+describe("review round 3: merging a verified analysis", () => {
+  it("keeps list-only findings with KEPT_FROM_LIST_ANALYSIS and lets the verified result win for shared pairs", () => {
+    const a = rec(1, { voucherNumber: "TEST-1111" });
+    const b = rec(2, { voucherNumber: "TEST-1111", totalAmount: 120 });
+    const listOnly = analyzeDuplicates([a, b]);
+    expect(listOnly.findings[0].rule).toBe("S2");
+    const disputed = analyzeDuplicates([a, rec(2, { voucherNumber: "TEST-9999", totalAmount: 120 })]);
+    expect(disputed.findings).toEqual([]);
+    const merged = mergeVerifiedAnalysis(listOnly, disputed);
+    expect(merged.findings).toHaveLength(1);
+    expect(merged.findings[0].reasonCodes).toContain("KEPT_FROM_LIST_ANALYSIS");
+    expect(merged.counts.POSSIBLE_DUPLICATE).toBe(1);
+    const upgraded = analyzeDuplicates([withHashes(a, HASH_A), withHashes(b, HASH_A)]);
+    const both = mergeVerifiedAnalysis(listOnly, upgraded);
+    expect(both.findings.map((f) => f.rule)).toEqual(["E1"]);
+    expect(both.findings[0].reasonCodes).not.toContain("KEPT_FROM_LIST_ANALYSIS");
+  });
+});
+
+describe("review round 3: defence in depth", () => {
+  it("ids containing the old separator cannot hide a pair", () => {
+    // Hand-built ids (the normalizer would reject "|"): a|b + c and a + b|c must stay two different pairs.
+    const records = ["a|b", "c", "a", "b|c"].map((id, i) => ({ ...rec(i + 1, { voucherNumber: "TEST-1001" }), id }));
+    expect(analyzeDuplicates(records).findings).toHaveLength(6);
   });
 });

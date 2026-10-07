@@ -86,7 +86,10 @@ Richtung: EXPENSE → Verbindlichkeit, REVENUE → Forderung; Gutschriften und u
 (nie in Forderungs-/Verbindlichkeitssummen). Fälligkeit gilt nur als belastbar bei `dueDateConfidence` PAYMENT_TERM
 oder bei LEXWARE_FIELD mit belastbarem Belegdatum (ohne Belegdatum ist nicht erkennbar, ob die Fälligkeit nur der
 Default ist; Grund DUE_DATE_BASIS_UNVERIFIABLE, Behandlung wie „Fälligkeit = Belegdatum“). PAYMENT_TERM gilt nur, wenn
-Belegdatum + genanntes Zahlungsziel genau das Fälligkeitsdatum ergibt; ein widersprechendes Zahlungsziel beweist nichts.
+Belegdatum + genanntes Zahlungsziel genau das Fälligkeitsdatum ergibt. Widerspricht ein plausibles Zahlungsziel
+(0–3650 Tage) einem vom Belegdatum abweichenden Fälligkeitsdatum, ist die Fälligkeit nicht belastbar (TERM_MISMATCH,
+Grund DUE_DATE_TERM_MISMATCH); unplausible Ziele gelten als nicht genannt. Kein Fälligkeitsdatum ist ohne belastbares
+Belegdatum belastbar.
 Eine Statuskategorie zählt nur, wenn der Statuswert selbst belastbar ist.
 
 | Lexware-Status | Bedingung | Klasse |
@@ -102,10 +105,10 @@ Eine Statuskategorie zählt nur, wenn der Statuswert selbst belastbar ist.
 | overdue | Fälligkeit fehlt oder Konflikt | POSSIBLY_OVERDUE |
 | open | Fälligkeit fehlt oder Konflikt | DUE_DATE_UNRELIABLE |
 | unchecked, Status mit unverifizierter Bedeutung (z. B. sepadebit), unbekannt, Konflikt | — | STATUS_UNKNOWN |
+| draft, voided, nicht-finanziell | — | ausgeschlossen (gezählt) |
 
 Hinweis: Status mit unverifizierter Zahlungsbedeutung (z. B. sepadebit, transferred) gelten als gebuchte Belege (ihre
 Beträge zählen zu den geprüften Ausgaben), ihr Zahlungsstand bleibt aber unbekannt (STATUS_UNKNOWN bei offenen Posten).
-| draft, voided, nicht-finanziell | — | ausgeschlossen (gezählt) |
 
 Je Posten: Brutto, offener Betrag (mit Qualität), Fälligkeit und deren Grundlage, Alter in Tagen ab Belegdatum (nur wenn
 belastbar), Tage über Fälligkeit (nur bei OVERDUE_CONFIRMED), Gründe der Unsicherheit. Summen nur aus belastbaren
@@ -133,7 +136,8 @@ exakt geprüft (ganzzahlig/BigInt, keine Rundung). Bewertet wird nur gleichartig
 für belastbare Ausgaben, Lexware-Rechnungserlöse und je Lieferant (nur EUR). Nicht bewertet (mit Grund) wird, wenn die
 Belegliste unvollständig ist, die Basis 0 ist, ein Wert nicht berechenbar ist, der Anteil ungeprüfter Belege der
 Kennzahl in einem der Zeiträume über 10 % liegt, oder geprüfte Belege der Kennzahl wegen unklarem Status, kritischem
-Befund oder fehlendem Betrag nicht summiert werden konnten (EXCLUDED_DOCUMENTS). Sonst entstünden Schein-Rückgänge
+Befund oder fehlendem Betrag nicht summiert werden konnten (EXCLUDED_DOCUMENTS), oder geprüfte Belege der Kennzahl ohne
+belastbares Belegdatum keinem Zeitraum zugeordnet werden können (UNASSIGNED_DOCUMENTS). Sonst entstünden Schein-Rückgänge
 durch fehlende Daten. Lieferanten-Auffälligkeiten werden nur bewertet, wenn die Ausgaben-Kennzahl bewertbar ist.
 
 ## 5. Datenqualität (`src/finance/data-quality.ts`)
@@ -167,6 +171,10 @@ Status:
   Konfigurationsproblem als „alles erledigt“). Praktisch macht jeder ungeprüfte Beleg im Belegeingang den Brief GELB.
 - **GRÜN:** sonst. Der Brief nennt dann die Prüfungen und Zählungen, auf denen GRÜN beruht.
 
+„Keine Auffälligkeit“ wird nur für Prüfungen behauptet, die gelaufen sind; nicht bewertete Kennzahlen werden genannt
+(„keine unter den bewerteten Kennzahlen; nicht bewertet: …“). Je Kennzahl werden höchstens drei Währungen im Text
+gezeigt (der Rest gezählt), Lexware-IDs und Währungen nur in gültiger Form.
+
 ## 7. MCP-Tools (Read-Tier, `src/tools/finance-intelligence.ts`)
 
 | Tool | Frage | Warum eigenes Tool |
@@ -180,8 +188,10 @@ Status:
 Alle Tools: Request-Budget, PARTIAL/FAILED sichtbar, keine Seiteneffekte, begrenzte Ausgaben (Dubletten-Funde
 Standard 100, max. 500; Auffälligkeiten max. 50; Zeilen/Posten max. 500). Standard ist nur die Belegliste;
 Detailabrufe sind gezielt (offene Verkaufsbelege, auch wenn Zahlungsinformationen für alle offenen Belege gelesen
-werden; Dubletten-Kandidaten bei Hash-Prüfung, höchstens 25 je Aufruf). Die Hash-Prüfung reichert dieselbe bereits
-gelesene Belegliste an (kein zweiter Listenabruf), sodass kein Fund aus der Listenanalyse verloren gehen kann.
+werden; Dubletten-Kandidaten bei Hash-Prüfung, höchstens 25 je Aufruf und höchstens 101 Requests). Die Hash-Prüfung
+reichert dieselbe bereits gelesene Belegliste an (kein zweiter Listenabruf); ein Fund der Listenanalyse, den die Details
+nicht bestätigen (z. B. weil ein Detail einen Wert bestreitet), bleibt mit dem Grund KEPT_FROM_LIST_ANALYSIS erhalten.
+Das ausgewiesene Request-Budget umfasst den ganzen Aufruf.
 
 ## 8. Testmatrix
 

@@ -385,8 +385,10 @@ describe("Phase 2 finance intelligence stays read-only", () => {
     }
     // The full client appears exactly twice outside imports: in the signature and when it is wrapped.
     const code = src
+      .replace(/\/\*[\s\S]*?\*\//g, " ") // block comments, wherever they are
+      .replace(/\/\/[^\n]*/g, " ") // line comments
       .split("\n")
-      .filter((line) => !/^\s*(import|\*|\/\*|\/\/)/.test(line))
+      .filter((line) => !/^\s*import\b/.test(line))
       .join("\n");
     expect(code.match(/\bclient\b/g)).toHaveLength(2);
     expect(code).toMatch(/registerFinanceIntelligenceTools\(server: McpServer, client: LexwareClient,/);

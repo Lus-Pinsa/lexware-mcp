@@ -354,3 +354,61 @@ describe("review round 1: periods and anomaly rule", () => {
     expect(c.vsPreviousSamePeriod.money.find((m) => m.metric === "reliableExpenses" && m.currency === "CHF")?.absoluteDiff).toBe(490000);
   });
 });
+
+describe("review round 3: unassigned documents", () => {
+  it("reviewed purchase invoices without a usable voucher day block expense and supplier anomalies", () => {
+    const unassigned = fromRow(without(row(9, { voucherStatus: "paid", openAmount: 0, totalAmount: 50 }), "voucherDate"));
+    const c = comparePeriods([purchase(1, "2026-09-03", 1000), purchase(2, "2026-10-03", 3000), unassigned], AS_OF, { dataComplete: true });
+    expect(c.unassignedFinancialRecords).toBe(1);
+    expect(c.anomalies).toEqual([]);
+    expect(c.notEvaluated).toContainEqual({ subject: { type: "METRIC", metric: "reliableExpenses" }, reason: "UNASSIGNED_DOCUMENTS" });
+    expect(c.notEvaluated).toContainEqual({ subject: { type: "SUPPLIERS" }, reason: "UNASSIGNED_DOCUMENTS" });
+    // An unreviewed inbox document without a date does not block (it is never summed anyway).
+    const inbox = fromRow(without(row(10, { voucherStatus: "unchecked" }), "voucherDate", "openAmount"));
+    const d = comparePeriods([purchase(1, "2026-09-03", 1000), purchase(2, "2026-10-03", 3000), inbox], AS_OF, { dataComplete: true });
+    expect(d.notEvaluated.some((n) => n.reason === "UNASSIGNED_DOCUMENTS")).toBe(false);
+  });
+});
+
+describe("review round 3: every exclusion cause and booked statuses", () => {
+  const base = () => [purchase(1, "2026-10-03", 3000), purchase(2, "2026-09-03", 1000)];
+  it.each([
+    ["unknown status (current period)", () => rec(9, { voucherDate: "2026-10-02", totalAmount: 20 }, statusConflict)],
+    ["unusable currency (current period)", () => fromRow(without(row(9, { voucherDate: "2026-10-02", voucherStatus: "paid", openAmount: 0 }), "currency"))],
+    ["CRITICAL issue (previous same period)", () => rec(9, { voucherDate: "2026-09-02", totalAmount: 30, voucherStatus: "paid", openAmount: 0 }, grossConflict)],
+  ])("an excluded reviewed document (%s) blocks the anomaly rule", (_label, excluded) => {
+    const c = comparePeriods([...base(), excluded()], AS_OF, { dataComplete: true });
+    expect(c.anomalies).toEqual([]);
+    expect(c.notEvaluated).toContainEqual({ subject: { type: "METRIC", metric: "reliableExpenses" }, reason: "EXCLUDED_DOCUMENTS" });
+  });
+
+  it("overdue and statuses of unverified payment meaning (e.g. sepadebit) count as booked expenses; a missing status value does not", () => {
+    const c = comparePeriods(
+      [
+        purchase(1, "2026-10-02", 100, { voucherStatus: "overdue", openAmount: 100 }),
+        purchase(2, "2026-10-02", 200, { voucherStatus: "sepadebit", openAmount: 200 }),
+        rec(3, { voucherDate: "2026-10-02", totalAmount: 400, voucherStatus: "paid", openAmount: 0 }, (r) => ({ ...r, status: { value: null, quality: "MISSING", source: "voucherlist", reason: "FIELD_ABSENT" } })),
+      ],
+      AS_OF,
+      { dataComplete: true },
+    );
+    expect(c.current.reliableExpenses.byCurrency).toEqual([{ currency: "EUR", cents: 30000, records: 2 }]);
+    expect(c.current.reliableExpenses.excluded.STATUS_UNKNOWN).toBe(1);
+  });
+
+  it("UNVERIFIED and unsafe values are never summed", () => {
+    const unverifiedGross = rec(1, { voucherDate: "2026-10-02", voucherStatus: "paid", openAmount: 0 }, (r) => ({ ...r, grossCents: { value: 99900, quality: "UNVERIFIED", source: "pdf-text" } }));
+    const unsafeGross = rec(2, { voucherDate: "2026-10-02", voucherStatus: "paid", openAmount: 0 }, (r) => ({ ...r, grossCents: { value: 1e300, quality: "STRUCTURED", source: "voucherlist" } }));
+    const c = comparePeriods([unverifiedGross, unsafeGross], AS_OF, { dataComplete: true });
+    expect(c.current.reliableExpenses.byCurrency).toEqual([]);
+    expect(c.current.reliableExpenses.excluded.AMOUNT_NOT_USABLE + c.current.reliableExpenses.excluded.CRITICAL_ISSUE).toBe(2);
+  });
+
+  it("an explicit undefined in the anomaly config falls back to the default", () => {
+    expect(resolveAnomalyConfig({ minRelativeChangePercent: undefined }).minRelativeChangePercent).toBe(30);
+  });
+
+  it("addDays refuses offsets that leave the calendar", () => {
+    expect(() => addDays("2026-10-07", 1e12)).toThrow(RangeError);
+  });
+});

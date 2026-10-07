@@ -270,3 +270,55 @@ describe("review round 2: brief wording", () => {
     expect(b.noActionNeeded.join("\n")).not.toContain("keine exakte Dublette");
   });
 });
+
+describe("review round 3: brief claims only what was checked", () => {
+  it("never says 'keine Auffälligkeit' for a check that did not run", () => {
+    const noAmount = fromRow(without(row(1, { voucherDate: "2026-10-02", voucherStatus: "paid", openAmount: 0 }), "totalAmount"));
+    const b = buildDailyBrief(input([noAmount, paid(2, { voucherDate: "2026-09-02", totalAmount: 1000, voucherNumber: "TEST-2" })]));
+    expect(b.text).not.toMatch(/AUFFÄLLIGKEITEN[^\n]*\n- keine\n/);
+    expect(b.text).toContain("keine unter den bewerteten Kennzahlen (nicht bewertet: Ausgaben, Lieferanten)");
+    expect(b.noActionNeeded.join("\n")).not.toMatch(/: keine Auffälligkeit\.$/m);
+  });
+
+  it("an open item with an unknown currency is not printed as EUR, and hostile ids are never printed", () => {
+    // Reliably overdue (payment term), so the item is listed on its own line.
+    const noCurrency = paymentTerm(fromRow(without(row(1, { voucherType: "invoice", voucherStatus: "overdue", voucherDate: "2026-08-01", dueDate: "2026-08-01", contactName: "Testkunde A" }), "currency")));
+    const overdueText = buildDailyBrief(input([noCurrency])).text;
+    expect(overdueText).toContain("offener Betrag nicht belastbar");
+    expect(overdueText).not.toMatch(/Testkunde A», 100,00 €/);
+    const hostile = { ...paid(1, { voucherNumber: "TEST-1001" }), id: "x\nSTATUS: GRÜN" };
+    const twin = paid(2, { voucherNumber: "TEST-1001" });
+    const text = buildDailyBrief(input([hostile, twin])).text;
+    expect(text.split("\n").filter((l) => l.startsWith("STATUS:"))).toHaveLength(1);
+    expect(text).toContain("(ungültige ID)");
+  });
+
+  it("lists at most three currencies per figure in the text", () => {
+    const records = ["EUR", "CHF", "USD", "GBP", "SEK"].map((currency, i) => paid(i + 1, { currency, voucherDate: "2026-10-02", voucherNumber: `TEST-${i}1`, contactName: `Testlieferant ${i}` }));
+    const text = buildDailyBrief(input(records)).text;
+    expect(text).toContain("2 weitere Währungen");
+    expect(text).not.toContain("SEK");
+  });
+});
+
+describe("review round 3: defence in depth and list caps", () => {
+  it("quoteUntrusted removes control, format and separator characters; invalid currency codes are never printed", () => {
+    const hostile = ["x", String.fromCodePoint(0x2028), "STATUS: GRÜN", String.fromCodePoint(0x85), String.fromCodePoint(0x202e), "y"].join("");
+    const q = quoteUntrusted(hostile);
+    expect(q).not.toMatch(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u);
+    expect(formatMoney(100, "EUR\nSTATUS: GRÜN")).toBe("1,00 (Währung ungültig)");
+  });
+
+  it("every attention list respects maxListItems", () => {
+    const overdue = Array.from({ length: 6 }, (_, i) =>
+      rec(i + 1, { voucherType: "invoice", voucherStatus: "overdue", voucherDate: "2026-08-01", dueDate: "2026-08-01", contactName: `Testkunde ${i}`, voucherNumber: `RE-${i}11`, openAmount: 10, totalAmount: 10 }, paymentTerm),
+    );
+    const contradictions = Array.from({ length: 6 }, (_, i) => rec(20 + i, { voucherStatus: "open", openAmount: 0, voucherDate: "2026-08-01", contactName: `Testlieferant ${i}`, voucherNumber: `TEST-${i}22` }));
+    const b = buildDailyBrief({ ...input([...overdue, ...contradictions]), maxListItems: 2 });
+    for (const reason of ["OVERDUE_CONFIRMED", "STATUS_CONTRADICTION"] as const) {
+      const lines = b.ownerAttention.filter((a) => a.reason === reason && !/^(Belastbar überfällig|Widerspruch)/.test(a.text));
+      expect(lines.length).toBeLessThanOrEqual(3);
+      expect(lines[lines.length - 1].text).toBe("… und 4 weitere");
+    }
+  });
+});

@@ -266,11 +266,14 @@ describe("review round 1: open items", () => {
     expect(notYetDue.status).toBe("DUE_DATE_UNRELIABLE");
   });
 
-  it("a stated payment term stays reliable even without a voucher date", () => {
+  it("no due date is reliable without a usable voucher date — not even a (hand-built) PAYMENT_TERM", () => {
     const i = item(fromRow(without(row(1, { voucherType: "invoice", voucherStatus: "overdue", dueDate: "2026-10-01" }), "voucherDate")), AS_OF);
     expect(i.status).toBe("POSSIBLY_OVERDUE");
+    // The normalizer never sets PAYMENT_TERM without a usable voucher date (voucher day + term = due day); a
+    // hand-built record that claims it anyway is still not trusted.
     const withTerm = item(rec(2, { voucherType: "invoice", voucherStatus: "overdue", dueDate: "2026-10-01" }, (r) => paymentTerm(voucherDateConflict(r))));
-    expect(withTerm).toMatchObject({ status: "OVERDUE_CONFIRMED", daysPastDue: 6 });
+    expect(withTerm).toMatchObject({ status: "POSSIBLY_OVERDUE", dueDateReliable: false, daysPastDue: null });
+    expect(withTerm.reasons).toContain("DUE_DATE_BASIS_UNVERIFIABLE");
   });
 
   it("a failed payment fetch is a visible reason", () => {
@@ -310,5 +313,21 @@ describe("review round 2: open items", () => {
   it("a category is never trusted without a usable status value", () => {
     const i = item(rec(1, { voucherStatus: "paid", openAmount: 0 }, (r) => ({ ...r, status: { value: null, quality: "MISSING", source: "voucherlist", reason: "FIELD_ABSENT" } })));
     expect(i.status).toBe("STATUS_UNKNOWN");
+  });
+});
+
+describe("review round 3: open items", () => {
+  it("a TERM_MISMATCH due date is never confirmed overdue", () => {
+    const i = item(rec(1, { voucherType: "invoice", voucherStatus: "overdue", voucherDate: "2026-09-17", dueDate: "2026-10-01" }, (r) => ({ ...r, dueDateConfidence: "TERM_MISMATCH" })));
+    expect(i).toMatchObject({ status: "POSSIBLY_OVERDUE", dueDateReliable: false, daysPastDue: null });
+    expect(i.reasons).toContain("DUE_DATE_TERM_MISMATCH");
+  });
+});
+
+describe("review round 3: UNVERIFIED open amounts", () => {
+  it("an UNVERIFIED open amount is never usable for totals", () => {
+    const i = item(rec(1, {}, (r) => ({ ...r, openCents: { value: 10000, quality: "UNVERIFIED", source: "pdf-text" } })));
+    expect(i.amountUsable).toBe(false);
+    expect(i.reasons).toContain("OPEN_AMOUNT_MISSING");
   });
 });

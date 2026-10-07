@@ -50,6 +50,7 @@ export const DUPLICATE_REASON_CODES = [
   "OUTSIDE_DAY_WINDOW",
   "VOUCHER_DAY_NOT_COMPARABLE",
   "UNREVIEWED_INVOLVED",
+  "KEPT_FROM_LIST_ANALYSIS",
 ] as const;
 export type DuplicateReasonCode = (typeof DUPLICATE_REASON_CODES)[number];
 
@@ -297,6 +298,33 @@ const CLASS_RANK: Readonly<Record<DuplicateClass, number>> = {
   NOT_DUPLICATE: 3,
 };
 
+/**
+ * Combine a list-only analysis with the analysis of the same documents after enrichment (details, file hashes).
+ * The enriched result wins for every pair it reports; a pair that only the list analysis reported is kept with the
+ * reason KEPT_FROM_LIST_ANALYSIS (e.g. a detail disputes a value, which makes it "not comparable"): a duplicate
+ * suspicion never disappears silently.
+ */
+export function mergeVerifiedAnalysis(listOnly: DuplicateAnalysis, verified: DuplicateAnalysis): DuplicateAnalysis {
+  const key = (f: PairResult) => `${f.recordIds[0].length}:${f.recordIds[0]}|${f.recordIds[1]}`;
+  const seen = new Set(verified.findings.map(key));
+  const kept = listOnly.findings
+    .filter((f) => !seen.has(key(f)))
+    .map((f) => ({ ...f, reasonCodes: [...f.reasonCodes, "KEPT_FROM_LIST_ANALYSIS" as const] }));
+  const findings = [...verified.findings, ...kept].sort(compareFindings);
+  const counts = { EXACT_DUPLICATE: 0, PROBABLE_DUPLICATE: 0, POSSIBLE_DUPLICATE: 0 };
+  for (const f of findings) counts[f.classification as keyof typeof counts] += 1;
+  return { ...verified, findings, counts, complete: verified.complete && listOnly.complete, limitReason: verified.complete && listOnly.complete ? null : "PAIR_LIMIT" };
+}
+
+function compareFindings(a: PairResult, b: PairResult): number {
+  return (
+    CLASS_RANK[a.classification] - CLASS_RANK[b.classification] ||
+    DUPLICATE_RULE_IDS.indexOf(a.rule as DuplicateRuleId) - DUPLICATE_RULE_IDS.indexOf(b.rule as DuplicateRuleId) ||
+    compareCodeUnits(a.recordIds[0], b.recordIds[0]) ||
+    compareCodeUnits(a.recordIds[1], b.recordIds[1])
+  );
+}
+
 /** Analyze all eligible records. Deterministic: the result does not depend on input order. */
 export function analyzeDuplicates(records: ReadonlyArray<FinanceRecord>, config: Partial<DuplicateConfig> = {}): DuplicateAnalysis {
   const cfg = resolveDuplicateConfig(config);
@@ -361,13 +389,7 @@ export function analyzeDuplicates(records: ReadonlyArray<FinanceRecord>, config:
     if (!complete) break;
   }
 
-  findings.sort(
-    (a, b) =>
-      CLASS_RANK[a.classification] - CLASS_RANK[b.classification] ||
-      DUPLICATE_RULE_IDS.indexOf(a.rule as DuplicateRuleId) - DUPLICATE_RULE_IDS.indexOf(b.rule as DuplicateRuleId) ||
-      compareCodeUnits(a.recordIds[0], b.recordIds[0]) ||
-      compareCodeUnits(a.recordIds[1], b.recordIds[1]),
-  );
+  findings.sort(compareFindings);
   const counts = { EXACT_DUPLICATE: 0, PROBABLE_DUPLICATE: 0, POSSIBLE_DUPLICATE: 0 };
   for (const f of findings) counts[f.classification as keyof typeof counts] += 1;
 

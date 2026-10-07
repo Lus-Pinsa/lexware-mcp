@@ -136,13 +136,13 @@ function rangeText(range: DayRange): string {
 
 function sumText(sums: ReadonlyArray<CurrencySum>): string {
   if (sums.length === 0) return formatMoney(0);
-  return sums.map((s) => formatMoney(s.cents, s.currency)).join(" und ");
+  return currencyLimited(sums, (s) => formatMoney(s.cents, s.currency), " und ");
 }
 
 function statusTotalText(t: StatusTotal): string {
   // An unknown amount is never shown as 0,00 €: without any usable amount there is no sum to show.
   if (t.openByCurrency.length === 0) return t.itemsWithoutUsableAmount > 0 ? "Betrag nicht belastbar" : formatMoney(0);
-  const sums = t.openByCurrency.map((s) => formatMoney(s.cents, s.currency)).join(" und ");
+  const sums = currencyLimited(t.openByCurrency, (s) => formatMoney(s.cents, s.currency), " und ");
   return t.itemsWithoutUsableAmount > 0 ? `${sums} belastbar, zusätzlich ohne belastbaren Betrag: ${t.itemsWithoutUsableAmount}` : sums;
 }
 
@@ -188,7 +188,32 @@ const NOT_EVALUATED_TEXT: Readonly<Record<NotEvaluated["reason"], string>> = {
   NOT_COMPUTABLE: "Wert nicht berechenbar",
   UNREVIEWED_SHARE_TOO_HIGH: "zu viele ungeprüfte Belege in einem der Zeiträume",
   EXCLUDED_DOCUMENTS: "geprüfte Belege ohne belastbaren Betrag oder mit kritischem Datenbefund im Vergleich",
+  UNASSIGNED_DOCUMENTS: "geprüfte Belege ohne belastbares Belegdatum, keinem Zeitraum zuordenbar",
 };
+
+/** Currencies listed per figure in the text; the rest is counted (the structured result keeps all). */
+const MAX_CURRENCIES_IN_TEXT = 3;
+
+function currencyLimited<T>(items: ReadonlyArray<T>, render: (item: T) => string, joiner: string): string {
+  const shown = items.slice(0, MAX_CURRENCIES_IN_TEXT).map(render).join(joiner);
+  const more = items.length - MAX_CURRENCIES_IN_TEXT;
+  return more > 0 ? `${shown}${joiner}${more} weitere Währungen` : shown;
+}
+
+/** Lexware ids are validated upstream; anything else is never printed (it could carry forged text). */
+function safeId(id: string): string {
+  return /^[A-Za-z0-9][A-Za-z0-9-]{0,63}$/.test(id) ? id : "(ungültige ID)";
+}
+
+/** Anomaly checks that did not run for a reason other than a zero base (where the rule cannot fire by definition). */
+function skippedAnomalyChecks(p: PeriodComparison): string[] {
+  const names = new Set<string>();
+  for (const n of p.notEvaluated) {
+    if (n.reason === "BASE_ZERO") continue;
+    names.add(n.subject.type === "METRIC" ? (n.subject.metric === "reliableExpenses" ? "Ausgaben" : "Lexware-Rechnungserlöse") : "Lieferanten");
+  }
+  return [...names];
+}
 
 const CONTRADICTION_REASONS: ReadonlySet<OpenItemReason> = new Set<OpenItemReason>([
   "OPEN_AMOUNT_ZERO_WHILE_OPEN",
@@ -204,19 +229,20 @@ function directionText(item: OpenItem): string {
 }
 
 function openItemRef(item: OpenItem): string {
-  const amount = isUsable(item.openCents) ? formatMoney(item.openCents.value, item.currency ?? "EUR") : "offener Betrag unbekannt";
+  const amount =
+    isUsable(item.openCents) && item.currency !== null ? formatMoney(item.openCents.value, item.currency) : "offener Betrag nicht belastbar";
   return `${directionText(item)} ${quoteUntrusted(item.voucherNumber)} vom ${day(item.voucherDate)}, ${quoteUntrusted(item.counterpartyName)}, ${amount}`;
 }
 
 function recordRef(record: FinanceRecord | undefined, id: string): string {
-  if (!record) return `Beleg ${id}`;
+  if (!record) return `Beleg ${safeId(id)}`;
   const gross = grossAmount(record);
   const number = isUsable(record.voucherNumber) ? record.voucherNumber.value : null;
   const date = isUsable(record.voucherDate) ? record.voucherDate.value : null;
   const name = isUsable(record.counterparty.name) ? record.counterparty.name.value : null;
   const amount = gross ? formatMoney(gross.cents, gross.currency) : "Betrag unbekannt";
   const unreviewed = record.statusCategory === "UNCHECKED" ? ", ungeprüft" : "";
-  return `${quoteUntrusted(number)} vom ${day(date)}, ${quoteUntrusted(name)}, ${amount}${unreviewed} (ID ${record.id})`;
+  return `${quoteUntrusted(number)} vom ${day(date)}, ${quoteUntrusted(name)}, ${amount}${unreviewed} (ID ${safeId(record.id)})`;
 }
 
 function ruleTextDe(rule: DuplicateRuleId, windowDays: number): string {
@@ -245,13 +271,15 @@ const CLASS_TEXT: Readonly<Record<PairResult["classification"], string>> = {
 
 function moneyRow(rows: ReadonlyArray<MoneyComparison>, metric: MoneyComparison["metric"], label: string): string[] {
   const out: string[] = [];
-  for (const row of rows.filter((r) => r.metric === metric)) {
+  const matching = rows.filter((r) => r.metric === metric);
+  for (const row of matching.slice(0, MAX_CURRENCIES_IN_TEXT)) {
     const rel = row.relative.ok ? formatPercentTenths(row.relative.tenthsOfPercent) : row.relative.reason === "BASE_ZERO" ? "relativ nicht definiert (Basis 0)" : "relativ nicht berechenbar";
     out.push(
       `- ${label}: ${formatMoney(row.current, row.currency)} vs. ${formatMoney(row.comparison, row.currency)} · ` +
         `Δ ${formatMoneyDelta(row.absoluteDiff, row.currency)} · ${rel}`,
     );
   }
+  if (matching.length > MAX_CURRENCIES_IN_TEXT) out.push(`- ${label}: ${matching.length - MAX_CURRENCIES_IN_TEXT} weitere Währungen (siehe strukturiertes Ergebnis)`);
   if (out.length === 0) out.push(`- ${label}: ${formatMoney(0)} vs. ${formatMoney(0)} · Δ ${formatMoneyDelta(0)} · relativ nicht definiert (Basis 0)`);
   return out;
 }
@@ -428,8 +456,11 @@ export function buildDailyBrief(input: BriefInput): DailyBrief {
   } else if (dup.complete && exactReviewed.length === 0) {
     info.push(`Dublettenprüfung (verglichene Belege: ${dup.recordsConsidered}): keine exakte Dublette zwischen zwei geprüften Belegen.`);
   }
+  const skipped = skippedAnomalyChecks(p);
   if (p.dataComplete && p.anomalies.length === 0) {
-    info.push(`Auffälligkeitsregel (≥ ${formatPercentNumber(p.rule.minRelativeChangePercent)} % und ≥ ${formatMoney(p.rule.minAbsoluteChangeCents, p.rule.currency)}): keine Auffälligkeit.`);
+    // "No anomaly" is only claimed for checks that ran.
+    const scope = skipped.length === 0 ? "keine Auffälligkeit." : `keine Auffälligkeit unter den bewerteten Kennzahlen; nicht bewertet: ${skipped.join(", ")}.`;
+    info.push(`Auffälligkeitsregel (≥ ${formatPercentNumber(p.rule.minRelativeChangePercent)} % und ≥ ${formatMoney(p.rule.minAbsoluteChangeCents, p.rule.currency)}): ${scope}`);
   }
   for (const n of p.notEvaluated) info.push(notEvaluatedText(n));
   const openConfirmed = mergeTotals(t.RECEIVABLE.OPEN_CONFIRMED, t.PAYABLE.OPEN_CONFIRMED);
@@ -541,7 +572,13 @@ function renderText(
   );
   lines.push("");
   lines.push(`AUFFÄLLIGKEITEN (Regel: ≥ ${formatPercentNumber(p.rule.minRelativeChangePercent)} % und ≥ ${formatMoney(p.rule.minAbsoluteChangeCents, p.rule.currency)}, MTD vs. Vormonat gleicher Zeitraum)`);
-  if (p.anomalies.length === 0) lines.push(p.dataComplete ? "- keine" : "- nicht bewertet (Belegliste unvollständig)");
+  const skippedChecks = skippedAnomalyChecks(p);
+  if (p.anomalies.length === 0) {
+    if (!p.dataComplete) lines.push("- nicht bewertet (Belegliste unvollständig)");
+    else lines.push(skippedChecks.length === 0 ? "- keine" : `- keine unter den bewerteten Kennzahlen (nicht bewertet: ${skippedChecks.join(", ")})`);
+  } else if (skippedChecks.length > 0) {
+    lines.push(`- nicht bewertet: ${skippedChecks.join(", ")}`);
+  }
   for (const a of listWithLimit(p.anomalies.map(anomalyText), limit)) lines.push(`- ${a}`);
   lines.push("");
   lines.push("OWNER ATTENTION");

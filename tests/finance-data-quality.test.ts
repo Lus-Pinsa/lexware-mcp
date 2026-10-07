@@ -143,3 +143,11 @@ describe("review round 2: data quality", () => {
     expect(resolveDataQualityConfig({ poorCriticalSharePercent: undefined })).toEqual(DEFAULT_DATA_QUALITY_CONFIG);
   });
 });
+
+describe("review round 3: data quality", () => {
+  it("rejected rows outrank NO_DATA, and an unusable status value counts as unknown status", () => {
+    expect(assessDataQuality({ records: [], listComplete: true, fetchFailures: 0, rejectedRows: 12 })).toMatchObject({ grade: "LIMITED", triggeredBy: ["ROWS_REJECTED"] });
+    const noStatus = rec(2, { voucherStatus: "paid", openAmount: 0 }, (r) => ({ ...r, status: { value: null, quality: "MISSING", source: "voucherlist", reason: "FIELD_ABSENT" } }));
+    expect(assess([clean(1), noStatus]).findings.find((f) => f.code === "STATUS_UNKNOWN")).toMatchObject({ count: 1, effect: "LIMITED" });
+  });
+});

@@ -152,7 +152,13 @@ export interface Anomaly {
 
 export interface NotEvaluated {
   readonly subject: AnomalySubject;
-  readonly reason: "DATA_INCOMPLETE" | "BASE_ZERO" | "NOT_COMPUTABLE" | "UNREVIEWED_SHARE_TOO_HIGH" | "EXCLUDED_DOCUMENTS";
+  readonly reason:
+    | "DATA_INCOMPLETE"
+    | "BASE_ZERO"
+    | "NOT_COMPUTABLE"
+    | "UNREVIEWED_SHARE_TOO_HIGH"
+    | "EXCLUDED_DOCUMENTS"
+    | "UNASSIGNED_DOCUMENTS";
   /** For SUPPLIERS entries: how many suppliers share this reason. */
   readonly count?: number;
 }
@@ -222,6 +228,10 @@ export interface PeriodComparison {
 
 const isPurchaseInvoice = (r: FinanceRecord) => r.kind === "EXPENSE" && r.role === "INVOICE";
 const isSalesInvoice = (r: FinanceRecord) => r.kind === "REVENUE" && r.role === "INVOICE";
+const metricPredicate = { reliableExpenses: isPurchaseInvoice, lexwareInvoiceRevenue: isSalesInvoice } as const;
+/** Not an inbox, draft or voided document: its amount would count once its period is known. */
+const isReviewedDocument = (r: FinanceRecord) =>
+  r.statusCategory !== "UNCHECKED" && r.statusCategory !== "VOIDED" && r.statusCategory !== "DRAFT";
 
 function addToCurrency(map: Map<string, { cents: number | null; records: number }>, currency: string, cents: number): void {
   const entry = map.get(currency) ?? { cents: 0, records: 0 };
@@ -534,6 +544,15 @@ export function comparePeriods(
       if (metric === "reliableExpenses") {
         suppliersEvaluable = false;
         suppliersBlockedBy = "UNREVIEWED_SHARE_TOO_HIGH";
+      }
+      continue;
+    }
+    // Reviewed documents of this metric without a usable voucher day could belong to either period.
+    if (unique.some((r) => metricPredicate[metric](r) && isReviewedDocument(r) && voucherDay(r) === null)) {
+      notEvaluated.push({ subject, reason: "UNASSIGNED_DOCUMENTS" });
+      if (metric === "reliableExpenses") {
+        suppliersEvaluable = false;
+        suppliersBlockedBy = "UNASSIGNED_DOCUMENTS";
       }
       continue;
     }

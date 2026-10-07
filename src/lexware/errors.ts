@@ -34,6 +34,31 @@ export function isNotFound(err: unknown): boolean {
   return err instanceof LexwareApiError && err.kind === "not_found";
 }
 
+/**
+ * A binary download exceeded the caller's size limit. Raised before (declared Content-Length) or while
+ * reading the body; the partial body is discarded. Not a Lexware error: the request itself succeeded.
+ */
+export class ResponseTooLargeError extends Error {
+  readonly limitBytes: number;
+  /** The Content-Length Lexware declared, when it declared one. */
+  readonly declaredBytes: number | null;
+
+  constructor(limitBytes: number, declaredBytes: number | null) {
+    super(`Response exceeds the size limit of ${limitBytes} bytes; download aborted.`);
+    this.name = "ResponseTooLargeError";
+    this.limitBytes = limitBytes;
+    this.declaredBytes = declaredBytes;
+  }
+}
+
+/** A request path was refused locally (dot segments, query/fragment in the path, or not on a read allowlist). */
+export class UnsafeRequestPathError extends Error {
+  constructor(reason: string) {
+    super(`Refused Lexware request path: ${reason}.`);
+    this.name = "UnsafeRequestPathError";
+  }
+}
+
 /** Max IssueList entries rendered into a message before we summarize the remainder. */
 const MAX_ISSUES = 25;
 /** Max characters of a raw error body rendered into a message (truncate, never drop). */

@@ -6,7 +6,7 @@
  * and requires Security Board sign-off (see ai-company/policies/finance-write-gates.md).
  */
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { McpServer } from "skybridge/server";
 import { describe, expect, it, vi } from "vitest";
@@ -174,7 +174,8 @@ describe("get-voucher-file-text is read-only and fingerprints the exact bytes", 
 
     expect(res.structuredContent.sha256).toBe(createHash("sha256").update(bytes).digest("hex"));
     expect(res.structuredContent.isPdf).toBe(false);
-    expect(client.getBinary).toHaveBeenCalledWith("/v1/files/file-1", "application/pdf");
+    // The download is size-limited (10 MiB) so a hostile or huge file cannot exhaust memory.
+    expect(client.getBinary).toHaveBeenCalledWith("/v1/files/file-1", "application/pdf", { maxBytes: 10 * 1024 * 1024 });
     expect(client.post).not.toHaveBeenCalled();
     expect(client.postMultipart).not.toHaveBeenCalled();
   });
@@ -237,5 +238,102 @@ describe("ensure-lus-voucher-webhook can only create the fixed subscription", ()
     await tools.get("ensure-lus-voucher-webhook")!.handler({});
     expect(post).toHaveBeenCalledTimes(1);
     expect(post).toHaveBeenCalledWith("/v1/event-subscriptions", FIXED);
+  });
+});
+
+/*
+ * Phase 2 truth layer (finance core). These tests pin that the new read path stays technically read-only:
+ * no new write-capable tool, a GET-only client facade, and finance modules that cannot reach a write call.
+ */
+describe("Phase 2 finance truth layer stays read-only", () => {
+  it("adds no write-capable tool: the production write set is unchanged and get-server-info is read-only and local", () => {
+    const prod = capture((s) => registerTools(s, {} as LexwareClient, cfg(PRODUCTION)));
+    const writes = [...prod.values()].filter((t) => t.annotations?.readOnlyHint !== true).map((t) => t.name);
+    expect(writes.sort()).toEqual([...PRODUCTION_WRITE_TOOLS].sort());
+    const info = prod.get("get-server-info");
+    expect(info?.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
+  });
+
+  it("READ_ONLY still registers only read-only tools, including get-server-info", () => {
+    const ro = capture((s) => registerTools(s, {} as LexwareClient, cfg({ ...PRODUCTION, LEXWARE_ENABLE_FINALIZE: "true", LEXWARE_READ_ONLY: "true" })));
+    expect(ro.has("get-server-info")).toBe(true);
+    for (const t of ro.values()) expect(t.annotations?.readOnlyHint).toBe(true);
+  });
+
+  it("get-server-info reports zero write-capable tools in READ_ONLY and never touches the Lexware client", async () => {
+    const ro = capture((s) => registerTools(s, readOnlyClient() as unknown as LexwareClient, cfg({ LEXWARE_READ_ONLY: "true" })));
+    const res = await ro.get("get-server-info")!.handler({});
+    const tools = res.structuredContent.tools as { writeCapable: string[]; registeredCount: number };
+    expect(tools.writeCapable).toEqual([]);
+    expect(tools.registeredCount).toBe(ro.size);
+  });
+
+  it("the finance client facade exposes only get/getBinary", async () => {
+    const { createReadOnlyLexwareClient } = await import("../src/lexware/read-only-client.js");
+    const facade = createReadOnlyLexwareClient(readOnlyClient() as unknown as LexwareClient);
+    expect(Object.keys(facade).sort()).toEqual(["get", "getBinary"]);
+    expect(Object.isFrozen(facade)).toBe(true);
+  });
+
+  it("finance modules contain no write path (recursive structural scan + import allowlist)", () => {
+    const root = join(process.cwd(), "src/finance");
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        if (e.isDirectory()) walk(join(dir, e.name));
+        else if (e.name.endsWith(".ts")) files.push(join(dir, e.name));
+      }
+    };
+    walk(root);
+    expect(files.length).toBeGreaterThan(0);
+    // Imports a finance module may use: its own modules, the GET-only facade type, file inspection, errors, untrusted-text helpers.
+    const allowedImport = /^(\.\/[a-z-]+\.js|\.\.\/lexware\/(read-only-client|file-inspection|errors)\.js|\.\.\/untrusted\.js)$/;
+    for (const f of files) {
+      const src = readFileSync(f, "utf8");
+      const rel = f.slice(root.length + 1);
+      for (const forbidden of [
+        /\.post\s*\(/,
+        /\.request\s*\(/,
+        /postMultipart/,
+        /\bfetch\s*\(/,
+        /node:fs/,
+        /child_process/,
+        /\beval\s*\(/,
+        /new Function/,
+        /process\.env/,
+        /\bimport\s*\(/, // dynamic import would bypass the import allowlist
+        /\brequire\s*\(/,
+        /^\s*import\s+["']/m, // side-effect import
+      ]) {
+        expect({ file: rel, match: forbidden.test(src) }).toEqual({ file: rel, match: false });
+      }
+      for (const m of src.matchAll(/from\s+["']([^"']+)["']/g)) {
+        expect({ file: rel, import: m[1], allowed: allowedImport.test(m[1]) }).toEqual({ file: rel, import: m[1], allowed: true });
+      }
+    }
+  });
+
+  it("get-voucher-file-text reads through the GET-only facade (not the full client)", () => {
+    const files = readFileSync(join(process.cwd(), "src/tools/files.ts"), "utf8");
+    expect(files).toMatch(/const readOnly = createReadOnlyLexwareClient\(client\)/);
+    expect(files).toMatch(/inspectLexwareFile\(\s*readOnly,/);
+  });
+
+  it("the finance loader runs end-to-end through the facade without any write call", async () => {
+    const { loadFinanceSnapshot } = await import("../src/finance/loader.js");
+    const { createReadOnlyLexwareClient } = await import("../src/lexware/read-only-client.js");
+    const client = readOnlyClient({
+      get: vi.fn(async (path: string) => {
+        if (path === "/v1/voucherlist") return { content: [], totalPages: 0, last: true };
+        throw new Error(`unexpected ${path}`);
+      }),
+    });
+    const snap = await loadFinanceSnapshot(createReadOnlyLexwareClient(client as unknown as LexwareClient), {
+      window: { from: "2026-09-01", to: "2026-09-30", basis: "voucherDate" },
+    });
+    expect(snap.completeness.list).toBe("COMPLETE");
+    expect(client.post).not.toHaveBeenCalled();
+    expect(client.postMultipart).not.toHaveBeenCalled();
+    expect(client.request).not.toHaveBeenCalled();
   });
 });

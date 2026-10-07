@@ -7,6 +7,7 @@ import {
 } from "skybridge/server";
 
 import { bearerAuthMiddleware } from "./auth.js";
+import { SERVER_NAME, SERVER_VERSION, buildLogLabel, resolveBuildInfo } from "./build-info.js";
 import {
   ConfigError,
   describeCapabilities,
@@ -137,8 +138,8 @@ const client = new LexwareClient({
 
 const server = new McpServer(
   {
-    name: "lexware-office",
-    version: "0.1.7",
+    name: SERVER_NAME,
+    version: SERVER_VERSION,
   },
   {
     capabilities: {},
@@ -489,10 +490,12 @@ registerTools(
    STARTUP LOGGING
    ============================================================ */
 
+const buildInfo = resolveBuildInfo(process.env);
+
 console.error(
   `[lexware-mcp] starting — ${describeCapabilities(
     config,
-  )} bodyLimit=${
+  )} build=${buildLogLabel(buildInfo)} bodyLimit=${
     bodyParsingConfigured
       ? `${JSON_BODY_LIMIT} (/mcp, post-auth)`
       : "default(~100kb)"

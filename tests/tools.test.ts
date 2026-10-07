@@ -47,6 +47,8 @@ const READ_TOOLS = [
   "get-pending-voucher-events",
   "reconcile-recent-vouchers",
   "get-voucher-file-text",
+  // Phase 2 truth layer: local, read-only introspection (build commit, tiers, registered tools)
+  "get-server-info",
 ];
 const DRAFT_TOOLS = [
   "create-contact",

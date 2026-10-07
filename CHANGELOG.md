@@ -7,6 +7,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Finance truth layer (Phase 2, PR 1)** — `src/finance/`: canonical, read-only finance data model with explicit
+  missing-value semantics (a missing amount is never turned into 0), per-value provenance and quality
+  (STRUCTURED / DERIVED / UNVERIFIED / PLACEHOLDER / CONFLICT / MISSING), deterministic data-quality issues,
+  exact integer-cent amounts, Europe/Berlin calendar days, and a budgeted loader that reads Lexware only through
+  a frozen GET-only client facade with a path allowlist (`src/lexware/read-only-client.ts`). No new MCP tool
+  exposes it yet (that follows with the finance intelligence PR).
+- **`get-server-info`** (read tier, local): build commit (`RENDER_GIT_COMMIT`), active tiers, exact list and count
+  of registered tools incl. write-capable ones — to verify what a deployment really exposes (e.g. a stale client
+  tool list vs. a misconfigured server). Never returns secrets; does not call Lexware. The startup log line now
+  also carries `build=<sha|unknown|invalid_format>`.
 - **LU'S expense read pipeline** (already deployed; documented here): signature-verified
   `POST /webhooks/lexware` receiver (`LEXWARE_WEBHOOK_PUBLIC_KEY`, RSA-SHA512, fail-closed 503 without key)
   that queues `voucher.created` events in an in-memory pending queue; read tools
@@ -24,6 +34,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   dependency review, CodeQL; PR template; code owners for safety-gate files.
 
 ### Security
+- **PDF input hardening** for `get-voucher-file-text` (and the finance loader): 10 MiB download limit (aborted
+  while streaming, re-checked after download), parsing in an isolated worker thread (256 MB heap limit, empty
+  environment, output discarded, terminated after 15 s or when the process memory grows by more than 384 MB — a
+  hostile PDF no longer blocks the event loop, and its memory use is bounded by that watchdog; measured peak about
+  500 MB process RSS, so instance sizing still has to be confirmed), one parse at a time (fail fast with
+  `parser_busy` instead of queueing),
+  first 20 pages only, capped text, and extracted text returned as UNTRUSTED content
+  (control/bidi/zero-width/tag/variation-selector characters removed, markup, URL schemes and `www.` links
+  neutralized, nonce-delimited block with a fixed "data, not instructions" preamble).
+- **Lexware client:** request paths with `.`/`..` segments (incl. percent-encoded, encoded separators and `..;`),
+  backslashes, TAB/CR/LF, percent-encoded control characters (e.g. `%00`) or malformed/overlong percent-encoding
+  are refused before sending; a malformed `maxBytes` is refused instead of meaning "unlimited".
+
+### Changed
+- `get-voucher-file-text` output: all previous `structuredContent` fields are kept; new fields `pagesParsed`,
+  `pageLimitApplied`, `untrustedContent`, `contentWarning`, `limits`. Behaviour changes: `mimeType` is normalized
+  (parameters stripped, lower-cased, `null` if malformed), `extractedText` is sanitized/neutralized (e.g. `<` → `‹`,
+  `https:` → `https[:]`), character counts are code points, and pdf-parse page markers are no longer included —
+  a scanned PDF without a text layer is now correctly reported as OCR_REQUIRED. New `extractionStatus` values: `parse_timeout`,
+  `parser_busy` (all parser slots in use; retryable, says nothing about the file) and `file_too_large`.
 - **Dependency hardening:** semver-compatible updates of vulnerable transitive dependencies
   (incl. critical `proxy-addr` 2.0.8, `qs`, `body-parser`, `fast-uri`, `ip-address`, `@hono/node-server`, `hono`,
   `postcss`, `nanoid`, `source-map-js`, `browserslist`, `brace-expansion`) and a scoped override that gives

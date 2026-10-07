@@ -1,4 +1,4 @@
-import { LexwareApiError, describeErrorBody } from "./errors.js";
+import { LexwareApiError, ResponseTooLargeError, UnsafeRequestPathError, describeErrorBody } from "./errors.js";
 import { RateLimiter } from "./rate-limiter.js";
 
 export interface LexwareClientOptions {
@@ -29,6 +29,42 @@ export interface RequestOptions {
    * (Lexware does not execute a throttled call) regardless of this flag.
    */
   idempotent: boolean;
+}
+
+export interface BinaryOptions {
+  /** Abort and throw {@link ResponseTooLargeError} once the body exceeds this many bytes. */
+  maxBytes?: number;
+}
+
+/**
+ * Refuse request paths the WHATWG URL parser would rewrite: `.`/`..` segments (including percent-encoded
+ * forms), backslashes (treated as `/`) and TAB/CR/LF (silently removed). Otherwise an id like ".." passed
+ * through encodeURIComponent, or a raw "\\", could climb out of the intended resource.
+ */
+export function assertSafeRequestPath(path: string): void {
+  if (/[\\\t\r\n]/.test(path)) throw new UnsafeRequestPathError("path contains a backslash or control whitespace");
+  const pathOnly = path.split(/[?#]/, 1)[0];
+  for (const segment of pathOnly.split("/")) {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      // Malformed or overlong escapes (e.g. "%zz", "%c0%ae") have no meaning for a client; a server might still
+      // decode them leniently, so they are refused.
+      throw new UnsafeRequestPathError("path contains malformed percent-encoding");
+    }
+    for (const ch of decoded) {
+      const code = ch.codePointAt(0) ?? 0;
+      // Encoded control characters (e.g. "..%00") could be truncated or stripped by a server.
+      if (code < 0x20 || code === 0x7f) throw new UnsafeRequestPathError("path contains an encoded control character");
+    }
+    // Encoded separators (%2F, %5C) and ";" matrix parameters ("..;x") could form a dot segment on a server
+    // that decodes or strips them, so every decoded sub-segment is checked.
+    for (const part of decoded.split(/[/\\]/)) {
+      const base = part.split(";", 1)[0];
+      if (base === "." || base === "..") throw new UnsafeRequestPathError("path contains a dot segment");
+    }
+  }
 }
 
 const RETRYABLE_STATUS = new Set([500, 502, 503, 504]);
@@ -103,17 +139,54 @@ export class LexwareClient {
   async getBinary(
     path: string,
     accept = "application/pdf",
+    options: BinaryOptions = {},
   ): Promise<{ data: Buffer; contentType: string }> {
+    const { maxBytes } = options;
+    // A malformed limit must never silently mean "unlimited": refuse before sending anything.
+    if (maxBytes !== undefined && !(Number.isFinite(maxBytes) && maxBytes >= 0)) {
+      throw new RangeError("maxBytes must be a finite number >= 0");
+    }
     const res = await this.sendWithRetry("GET", path, {
       headers: { Authorization: `Bearer ${this.apiKey}`, Accept: accept },
       idempotent: true,
     });
+    const contentType = res.headers.get("content-type") ?? accept;
+    if (maxBytes === undefined) {
+      try {
+        return { data: Buffer.from(await res.arrayBuffer()), contentType };
+      } catch (err) {
+        throw this.bodyReadError("GET", path, err);
+      }
+    }
+
+    // Size-limited read: refuse early on a declared oversize body, otherwise stop as soon as the limit is passed.
+    const lengthHeader = res.headers.get("content-length")?.trim() ?? "";
+    const declaredBytes = /^\d+$/.test(lengthHeader) ? Number(lengthHeader) : null;
+    if (declaredBytes !== null && declaredBytes > maxBytes) {
+      await this.drain(res);
+      throw new ResponseTooLargeError(maxBytes, declaredBytes);
+    }
+    const chunks: Uint8Array[] = [];
+    let total = 0;
     try {
-      const data = Buffer.from(await res.arrayBuffer());
-      return { data, contentType: res.headers.get("content-type") ?? accept };
+      const reader = res.body?.getReader();
+      if (reader) {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          total += value.byteLength;
+          if (total > maxBytes) {
+            await reader.cancel().catch(() => undefined);
+            throw new ResponseTooLargeError(maxBytes, declaredBytes);
+          }
+          chunks.push(value);
+        }
+      }
     } catch (err) {
+      if (err instanceof ResponseTooLargeError) throw err;
       throw this.bodyReadError("GET", path, err);
     }
+    return { data: Buffer.concat(chunks, total), contentType };
   }
 
   /**
@@ -227,6 +300,7 @@ export class LexwareClient {
   }
 
   private buildUrl(path: string, query?: RequestOptions["query"]): string {
+    assertSafeRequestPath(path);
     const url = new URL(`${this.baseUrl}${path.startsWith("/") ? path : `/${path}`}`);
     if (query) {
       for (const [k, v] of Object.entries(query)) {

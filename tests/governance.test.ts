@@ -372,9 +372,17 @@ describe("secret & business-data scanner", () => {
     iban: "IBAN " + "DE89" + " 3704 0044 0532 0130 00",
     "german-vat-id": "USt-IdNr " + "DE" + "123456789",
     jwt: "eyJ" + "a".repeat(12) + ".eyJ" + "b".repeat(12) + "." + "c".repeat(12),
+    "render-deploy-hook": "curl https://api.render.com/deploy/" + "srv-abc123" + "?key=" + "K".repeat(12),
+    "google-api-key": "key " + "AI" + "za" + "B".repeat(35),
+    "stripe-live-key": "sk" + "_live_" + "C".repeat(24),
+    "npm-token": "npm" + "_" + "D".repeat(36),
+    "url-credentials": "postgres://" + "lus" + ":" + "s3cr3tpw" + "@" + "db.internal:5432/x",
+    "bearer-literal": "Authorization: " + "Bearer " + "E".repeat(40),
+    "filled-secret-env (database)": "DATABASE" + "_URL=" + "postgres://u:" + "p".repeat(12) + "@h/d",
   };
 
-  it.each(Object.entries(samples))("flags %s without echoing the value", (rule, line) => {
+  it.each(Object.entries(samples))("flags %s without echoing the value", (label, line) => {
+    const rule = label.replace(/ \(.*\)$/, "");
     const findings = scanText("sample.txt", line) as { rule: string }[];
     expect(findings.map((f) => f.rule)).toContain(rule);
     expect(JSON.stringify(findings)).not.toContain(line);
@@ -384,5 +392,10 @@ describe("secret & business-data scanner", () => {
     expect(scanText("a", "LEXWARE" + "_API_KEY=")).toEqual([]);
     expect(scanText("a", "DE00" + " 1234 5678 9012 3456 78")).toEqual([]);
     expect(scanText("a", "DE" + "123456789 secret-scan:allow")).toEqual([]);
+    expect(scanText("a", "https://api.lexware.io/v1/vouchers?page=0")).toEqual([]);
+    expect(scanText("a", "https://user@example.com/path")).toEqual([]);
+    expect(scanText("a", "Authorization: Bearer <MCP_AUTH_TOKEN>")).toEqual([]);
+    expect(scanText("a", "Authorization: Bearer ${token}")).toEqual([]);
+    expect(scanText("a", "DATABASE" + "_URL=")).toEqual([]);
   });
 });

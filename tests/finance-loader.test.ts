@@ -100,7 +100,7 @@ describe("loadFinanceSnapshot — read-only, budgeted, honest about completeness
     expect(byId.get(id(2))?.taxCents.quality).toBe("PLACEHOLDER");
     expect(byId.get(id(3))?.lineItems.value?.[0].categoryName.value).toBe("Wareneingang Test");
     expect(byId.get(id(3))?.payment.availability).toBe("AVAILABLE");
-    expect(byId.get(id(4))?.netCents.value).toBe(18900);
+    expect(byId.get(id(4))?.netCents.value).toBe(10000);
     expect(byId.get(id(2))?.payment.availability).toBe("SKIPPED");
     expect(byId.get(id(5))?.kind).toBe("NON_FINANCIAL");
     expect(snap.quality).toMatchObject({ records: 5, financialRecords: 4, unreviewedRecords: 2 });
@@ -333,5 +333,26 @@ describe("review round 3: paging metadata, parser_busy accounting, locale-indepe
     const { client } = fakeLexware((path) => (path === "/v1/voucherlist" ? page(rows) : new LexwareApiError(404, "x")));
     const snap = await loadFinanceSnapshot(client, { window: WINDOW, now: NOW, includeDetails: false, includePayments: false });
     expect(snap.records.map((r) => r.id)).toEqual(["B-1", "a-1", "b-1"]);
+  });
+});
+
+describe("PR 2 round 2: loader seeding and details filter", () => {
+  it("seedFrom re-uses the list of an earlier snapshot of the same window and refuses another window", async () => {
+    const { client, calls } = fakeLexware(standardRoute([paidRow(3), invoiceRow(4)]));
+    const first = await loadFinanceSnapshot(client, { window: WINDOW, now: NOW, includeDetails: false, includePayments: false });
+    const listReads = calls.filter((c) => c.path === "/v1/voucherlist").length;
+    const second = await loadFinanceSnapshot(client, { window: WINDOW, now: NOW, seedFrom: first, includePayments: false, enrichOnly: (r) => r.id === id(4) });
+    expect(calls.filter((c) => c.path === "/v1/voucherlist").length).toBe(listReads);
+    expect(second.completeness.list).toBe(first.completeness.list);
+    expect(second.records.find((r) => r.id === id(4))?.provenance.detail).toBe("FETCHED");
+    await expect(loadFinanceSnapshot(client, { window: { ...WINDOW, from: "2026-09-02" }, now: NOW, seedFrom: first })).rejects.toBeInstanceOf(RangeError);
+  });
+
+  it("detailsOnly narrows detail requests without narrowing payments", async () => {
+    const { client, calls } = fakeLexware(standardRoute([paidRow(3), invoiceRow(4)]));
+    await loadFinanceSnapshot(client, { window: WINDOW, now: NOW, detailsOnly: (r) => r.id === id(4) });
+    expect(calls.some((c) => c.path === `/v1/vouchers/${id(3)}`)).toBe(false);
+    expect(calls.some((c) => c.path === `/v1/invoices/${id(4)}`)).toBe(true);
+    expect(calls.some((c) => c.path === `/v1/payments/${id(3)}`)).toBe(true);
   });
 });

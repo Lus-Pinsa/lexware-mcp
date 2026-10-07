@@ -49,6 +49,12 @@ const READ_TOOLS = [
   "get-voucher-file-text",
   // Phase 2 truth layer: local, read-only introspection (build commit, tiers, registered tools)
   "get-server-info",
+  // Phase 2 finance intelligence (read-only, GET facade only)
+  "get-finance-snapshot",
+  "analyze-voucher-duplicates",
+  "get-open-items",
+  "compare-finance-periods",
+  "get-finance-daily-brief",
 ];
 const DRAFT_TOOLS = [
   "create-contact",

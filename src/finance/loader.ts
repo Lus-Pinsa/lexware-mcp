@@ -52,6 +52,19 @@ export interface LoadOptions {
   readonly timeZone?: string;
   readonly now?: () => Date;
   readonly extractor?: PdfTextExtractor;
+  /**
+   * Narrow details, payments and attachment inspection to the list records this predicate accepts (e.g. only
+   * open sales documents, or duplicate candidates). Records it rejects stay list-based (DETAIL_NOT_FETCHED).
+   */
+  readonly enrichOnly?: (record: FinanceRecord) => boolean;
+  /** Further narrows only the detail requests (e.g. payments for all open documents, details for sales documents). */
+  readonly detailsOnly?: (record: FinanceRecord) => boolean;
+  /**
+   * Re-use the voucher list of an earlier snapshot of the SAME window and time zone instead of reading it again (e.g.
+   * to enrich duplicate candidates found in a list-only load). Its list completeness, rejected rows and list errors
+   * carry over. Its records are used as they are, so the seed should be a list-only snapshot.
+   */
+  readonly seedFrom?: FinanceSnapshot;
 }
 
 export const DEFAULT_MAX_REQUESTS = 150;
@@ -194,7 +207,22 @@ export async function loadFinanceSnapshot(client: ReadOnlyLexwareClient, options
   let listReason: Completeness["listReason"] = "OK";
   let rowIndex = 0;
 
-  for (let page = 0; ; page++) {
+  const seed = options.seedFrom;
+  if (seed) {
+    const w = seed.window;
+    if (w.from !== window.from || w.to !== window.to || w.basis !== window.basis || seed.timeZone !== timeZone) {
+      throw new RangeError("seedFrom must come from the same window and time zone");
+    }
+    for (const r of seed.records) byId.set(r.id, r);
+    rejectedRows.push(...seed.rejectedRows);
+    duplicateRowsDropped = seed.completeness.duplicateRowsDropped;
+    list = seed.completeness.list;
+    listReason = seed.completeness.listReason;
+    errors.push(...seed.errors.filter((e) => e.stage === "list"));
+  }
+
+  // Skipped entirely when a seed provides the list.
+  for (let page = 0; !seed; page++) {
     if (page >= maxListPages) {
       list = "PARTIAL";
       listReason = "PAGE_LIMIT";
@@ -262,7 +290,7 @@ export async function loadFinanceSnapshot(client: ReadOnlyLexwareClient, options
   }
 
   // Local window check (Lexware's filter semantics are not relied on for inclusiveness).
-  let outsideWindowDropped = 0;
+  let outsideWindowDropped = seed ? seed.completeness.outsideWindowDropped : 0;
   const records = new Map<string, FinanceRecord>();
   for (const r of byId.values()) {
     const day = basisDay(r, window.basis, timeZone);
@@ -282,9 +310,11 @@ export async function loadFinanceSnapshot(client: ReadOnlyLexwareClient, options
       return da === db ? cmp(a.id, b.id) : cmp(db, da);
     })
     .map((r) => r.id);
+  // Records that get details, payments and attachment inspection (all financial records unless narrowed).
   const financial = order.filter((id) => {
-    const k = records.get(id)!.kind;
-    return k === "EXPENSE" || k === "REVENUE";
+    const r = records.get(id)!;
+    if (r.kind !== "EXPENSE" && r.kind !== "REVENUE") return false;
+    return options.enrichOnly ? options.enrichOnly(r) : true;
   });
   const set = (r: FinanceRecord) => records.set(r.id, r);
   const get = (id: string) => records.get(id)!;
@@ -292,7 +322,9 @@ export async function loadFinanceSnapshot(client: ReadOnlyLexwareClient, options
   // 2. Posting categories (one request) when bookkeeping details will be read.
   let categories: Completeness["categories"] = "NOT_NEEDED";
   let categoryIndex: CategoryIndex | null = null;
-  const needsCategories = includeDetails && financial.some((id) => detailSourceFor(get(id).voucherType)?.source === "voucher");
+  const wantsDetail = (id: string) => (options.detailsOnly ? options.detailsOnly(get(id)) : true);
+  const needsCategories =
+    includeDetails && financial.some((id) => wantsDetail(id) && detailSourceFor(get(id).voucherType)?.source === "voucher");
   if (needsCategories) {
     try {
       categoryIndex = buildCategoryIndex(await budgeted(() => client.get<unknown>("/v1/posting-categories")));
@@ -311,7 +343,7 @@ export async function loadFinanceSnapshot(client: ReadOnlyLexwareClient, options
   if (includeDetails) {
     for (const id of financial) {
       const target = detailSourceFor(get(id).voucherType);
-      if (!target) continue;
+      if (!target || !wantsDetail(id)) continue;
       details.needed += 1;
       try {
         const raw = await budgeted(() => client.get<unknown>(`${target.path}/${encodeURIComponent(id)}`));

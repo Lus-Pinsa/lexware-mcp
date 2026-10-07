@@ -74,20 +74,25 @@ describe("createReadOnlyLexwareClient — GET-only facade", () => {
   it("the default allowlist contains only read resources needed by the finance pipeline", () => {
     expect([...FINANCE_READ_PATHS].sort()).toEqual(
       [
-        "/v1/contacts",
         "/v1/credit-notes",
         "/v1/down-payment-invoices",
         "/v1/files",
         "/v1/invoices",
         "/v1/payments",
         "/v1/posting-categories",
-        "/v1/profile",
         "/v1/voucherlist",
         "/v1/vouchers",
       ].sort(),
     );
     expect(Object.isFrozen(FINANCE_READ_PATHS)).toBe(true);
     expect(() => assertReadPathAllowed("/v1/articles", ["/v1/articles"])).not.toThrow();
+  });
+
+  it.each(["/v1/contacts", "/v1/contacts/abc", "/v1/profile"])("no longer allows %j (not used by the finance pipeline)", async (path) => {
+    const c = spyClient();
+    const ro = createReadOnlyLexwareClient(c as unknown as LexwareClient);
+    await expect(ro.get(path)).rejects.toBeInstanceOf(UnsafeRequestPathError);
+    expect(c.get).not.toHaveBeenCalled();
   });
 });
 

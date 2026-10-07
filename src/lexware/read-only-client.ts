@@ -21,7 +21,10 @@ export interface ReadOnlyLexwareClient {
   ) => Promise<{ data: Buffer; contentType: string }>;
 }
 
-/** Lexware resources the finance pipeline may read. A path matches an entry exactly or as `<entry>/…`. */
+/**
+ * Lexware resources the finance pipeline actually reads (least privilege). A path matches an entry exactly or as
+ * `<entry>/…`.
+ */
 export const FINANCE_READ_PATHS: readonly string[] = Object.freeze([
   "/v1/voucherlist",
   "/v1/vouchers",
@@ -31,8 +34,6 @@ export const FINANCE_READ_PATHS: readonly string[] = Object.freeze([
   "/v1/payments",
   "/v1/posting-categories",
   "/v1/files",
-  "/v1/profile",
-  "/v1/contacts",
 ]);
 
 /** Throw unless `path` is a clean absolute path on the allowlist. */

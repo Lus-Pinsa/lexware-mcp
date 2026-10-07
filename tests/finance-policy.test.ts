@@ -337,3 +337,69 @@ describe("Phase 2 finance truth layer stays read-only", () => {
     expect(client.request).not.toHaveBeenCalled();
   });
 });
+
+describe("Phase 2 finance intelligence stays read-only", () => {
+  const INTELLIGENCE_TOOLS = [
+    "get-finance-snapshot",
+    "analyze-voucher-duplicates",
+    "get-open-items",
+    "compare-finance-periods",
+    "get-finance-daily-brief",
+  ];
+  const PURE_MODULES = ["calendar", "amounts", "facts", "duplicates", "open-items", "periods", "data-quality", "brief"];
+
+  it("registers the intelligence tools in the read tier only — in production and in READ_ONLY — and changes no write tool", () => {
+    const prod = capture((s) => registerTools(s, {} as LexwareClient, cfg(PRODUCTION)));
+    const ro = capture((s) => registerTools(s, {} as LexwareClient, cfg({ ...PRODUCTION, LEXWARE_ENABLE_FINALIZE: "true", LEXWARE_READ_ONLY: "true" })));
+    for (const name of INTELLIGENCE_TOOLS) {
+      expect({ name, prod: prod.get(name)?.annotations }).toMatchObject({ name, prod: { readOnlyHint: true, destructiveHint: false } });
+      expect({ name, ro: ro.has(name) }).toEqual({ name, ro: true });
+    }
+    const writes = [...prod.values()].filter((t) => t.annotations?.readOnlyHint !== true).map((t) => t.name);
+    expect(writes.sort()).toEqual([...PRODUCTION_WRITE_TOOLS].sort());
+  });
+
+  it("every intelligence tool runs end-to-end without any write call or pending-queue change", async () => {
+    const before = listPendingVoucherEvents().length;
+    const client = readOnlyClient({
+      get: vi.fn(async (path: string) => {
+        if (path === "/v1/voucherlist") return { content: [], totalPages: 0, last: true };
+        throw new Error(`unexpected ${path}`);
+      }),
+    });
+    const tools = capture((s) => registerTools(s, client as unknown as LexwareClient, cfg(PRODUCTION)));
+    for (const name of INTELLIGENCE_TOOLS) await tools.get(name)!.handler({});
+    expect(client.post).not.toHaveBeenCalled();
+    expect(client.postMultipart).not.toHaveBeenCalled();
+    expect(client.request).not.toHaveBeenCalled();
+    expect(client.delete).not.toHaveBeenCalled();
+    expect(listPendingVoucherEvents().length).toBe(before);
+  });
+
+  it("the tool module reads only through the GET-only facade and touches no server state", () => {
+    const src = readFileSync(join(process.cwd(), "src/tools/finance-intelligence.ts"), "utf8");
+    expect(src).toMatch(/const readOnly = createReadOnlyLexwareClient\(client\)/);
+    expect(src).toMatch(/loadFinanceSnapshot\(readOnly,/);
+    for (const forbidden of [/\bclient\.(get|getBinary|post|request|postMultipart)\b/, /\.post\s*\(/, /postMultipart/, /\.request\s*\(/, /process\.env/, /pending-voucher-events/, /\bfetch\s*\(/, /node:fs/]) {
+      expect({ forbidden: String(forbidden), match: forbidden.test(src) }).toEqual({ forbidden: String(forbidden), match: false });
+    }
+    // The full client appears exactly twice outside imports: in the signature and when it is wrapped.
+    const code = src
+      .replace(/\/\*[\s\S]*?\*\//g, " ") // block comments, wherever they are
+      .replace(/\/\/[^\n]*/g, " ") // line comments
+      .split("\n")
+      .filter((line) => !/^\s*import\b/.test(line))
+      .join("\n");
+    expect(code.match(/\bclient\b/g)).toHaveLength(2);
+    expect(code).toMatch(/registerFinanceIntelligenceTools\(server: McpServer, client: LexwareClient,/);
+  });
+
+  it("the business logic modules are pure: no clock, no randomness, no locale-dependent formatting", () => {
+    for (const name of PURE_MODULES) {
+      const src = readFileSync(join(process.cwd(), `src/finance/${name}.ts`), "utf8");
+      for (const forbidden of [/Date\.now/, /new Date\(\s*\)/, /Math\.random/, /\bIntl\b/, /toLocale[A-Za-z]*\(/, /localeCompare/, /performance\.now/, /hrtime/, /from\s+["']\.\.\/lexware\//, /from\s+["']\.\/loader\.js["']/]) {
+        expect({ module: name, forbidden: String(forbidden), match: forbidden.test(src) }).toEqual({ module: name, forbidden: String(forbidden), match: false });
+      }
+    }
+  });
+});

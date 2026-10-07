@@ -83,8 +83,8 @@ function listRow(n: number, over: Record<string, unknown> = {}): Record<string, 
     voucherStatus: "open",
     voucherNumber: `TEST-ADV-${n}`,
     voucherDate: "2026-09-12T00:00:00.000+02:00",
-    createdDate: "2026-09-12T16:25:11.000+02:00",
-    updatedDate: "2026-09-15T17:49:41.000+02:00",
+    createdDate: "2026-09-12T10:30:00.000+02:00",
+    updatedDate: "2026-09-15T11:00:00.000+02:00",
     dueDate: "2026-09-20T00:00:00.000+02:00",
     contactId: uid(500 + n),
     contactName: "Testlieferant Adversarial GmbH",
@@ -102,8 +102,8 @@ function invoiceRow(n: number, over: Record<string, unknown> = {}): Record<strin
     voucherStatus: "overdue",
     voucherNumber: `RE-TEST-ADV-${n}`,
     voucherDate: "2026-09-29T00:00:00.000+02:00",
-    createdDate: "2026-09-29T09:29:56.000+02:00",
-    updatedDate: "2026-09-29T09:29:56.000+02:00",
+    createdDate: "2026-09-29T14:05:30.000+02:00",
+    updatedDate: "2026-09-29T14:05:30.000+02:00",
     dueDate: "2026-10-13T00:00:00.000+02:00",
     contactId: uid(600 + n),
     contactName: "Testkunde Adversarial GmbH",
@@ -127,8 +127,8 @@ function voucherDetail(n: number, over: Record<string, unknown> = {}): Record<st
     contactId: uid(500 + n),
     voucherItems: [{ amount: 100, taxAmount: 19, taxRatePercent: 19, categoryId: CATEGORY_GOODS }],
     files: [uid(9000 + n)],
-    createdDate: "2026-09-12T16:25:11.174+02:00",
-    updatedDate: "2026-09-15T17:49:41.082+02:00",
+    createdDate: "2026-09-12T10:30:00.300+02:00",
+    updatedDate: "2026-09-15T11:00:00.400+02:00",
     archived: false,
     ...over,
   };
@@ -139,7 +139,7 @@ function salesDetail(n: number, over: Record<string, unknown> = {}): Record<stri
     id: uid(n),
     voucherStatus: "open",
     voucherNumber: `RE-TEST-ADV-${n}`,
-    voucherDate: "2026-09-29T09:29:53.000+02:00",
+    voucherDate: "2026-09-29T14:05:20.000+02:00",
     dueDate: "2026-10-13T00:00:00.000+02:00",
     address: { contactId: uid(600 + n), name: "Testkunde Adversarial GmbH" },
     lineItems: [
@@ -149,8 +149,8 @@ function salesDetail(n: number, over: Record<string, unknown> = {}): Record<stri
     taxConditions: { taxType: "net" },
     paymentConditions: { paymentTermDuration: 14 },
     files: { documentFileId: uid(9100 + n) },
-    createdDate: "2026-09-29T09:29:56.157+02:00",
-    updatedDate: "2026-09-29T09:29:56.475+02:00",
+    createdDate: "2026-09-29T14:05:30.250+02:00",
+    updatedDate: "2026-09-29T14:05:31.500+02:00",
     archived: false,
     ...over,
   };
@@ -449,7 +449,7 @@ describe("[dates] Europe/Berlin calendar days", () => {
     const invalid = [
       "2026-02-29", "2100-02-29", "1900-02-29", "2026-04-31", "2026-00-10", "2026-01-00", "2026-13-01",
       "2026-02-29T10:00:00Z", "2026-02-30T10:00:00+02:00", "2026-04-31T00:00:00Z", "2026-09-29T25:00:00Z",
-      "2026-09-29T23:60:00Z", "2026-09-29T09:29:53+99:99", "2026-09-29T09:29:53+00:60",
+      "2026-09-29T23:60:00Z", "2026-09-29T14:05:20+99:99", "2026-09-29T14:05:20+00:60",
     ];
     for (const s of invalid) if (parseLexwareDate(s, BERLIN).ok) problems.push(`accepted invalid ${s}`);
     for (const s of ["2024-02-29", "2000-02-29", "2026-12-31"]) if (!parseLexwareDate(s, BERLIN).ok) problems.push(`refused valid ${s}`);
@@ -458,22 +458,22 @@ describe("[dates] Europe/Berlin calendar days", () => {
     const exact: Array<[string, string, string]> = [
       ["2026-09-29T00:10:00+05:45", "2026-09-28", "2026-09-28T18:25:00.000Z"], // Nepal: Berlin is still the 28th
       ["2026-01-15T22:00:00-03:30", "2026-01-16", "2026-01-16T01:30:00.000Z"],
-      ["2026-09-29T09:29:53z", "2026-09-29", "2026-09-29T09:29:53.000Z"],
-      ["2026-09-29T09:29:53+0200", "2026-09-29", "2026-09-29T07:29:53.000Z"],
-      ["2026-09-29t09:29:53+02:00", "2026-09-29", "2026-09-29T07:29:53.000Z"],
-      ["2026-09-29T09:29+02:00", "2026-09-29", "2026-09-29T07:29:00.000Z"],
+      ["2026-09-29T14:05:20z", "2026-09-29", "2026-09-29T14:05:20.000Z"],
+      ["2026-09-29T14:05:20+0200", "2026-09-29", "2026-09-29T12:05:20.000Z"],
+      ["2026-09-29t14:05:20+02:00", "2026-09-29", "2026-09-29T12:05:20.000Z"],
+      ["2026-09-29T14:05+02:00", "2026-09-29", "2026-09-29T12:05:00.000Z"],
       ["2026-09-29T24:00:00Z", "2026-09-30", "2026-09-30T00:00:00.000Z"],
-      ["2026-09-29T09:29:53.123456789+02:00", "2026-09-29", "2026-09-29T07:29:53.123Z"],
-      ["  2026-09-29T09:29:53+02:00  ", "2026-09-29", "2026-09-29T07:29:53.000Z"],
+      ["2026-09-29T14:05:20.123456789+02:00", "2026-09-29", "2026-09-29T12:05:20.123Z"],
+      ["  2026-09-29T14:05:20+02:00  ", "2026-09-29", "2026-09-29T12:05:20.000Z"],
     ];
     for (const [input, day, instant] of exact) {
       const r = parseLexwareDate(input, BERLIN);
       if (r.ok && (r.day !== day || r.instant !== instant)) problems.push(`${input} mis-parsed as ${JSON.stringify(r)}`);
     }
     const noOffset = [
-      "2026-09-29T09:29:53", "2026-09-29T09:29:53.123", "2026-09-29T09:29", "2026-09-29T09", "2026-09-29T00:00:00",
-      "2026-09-29t09:29:53", "2026-09-29 09:29:53", "2026-09-29T09:29:53+", "2026-09-29T09:29:53+2",
-      "2026-09-29T09:29:53 CEST", "2026-09-29T09:29:53Europe/Berlin", "20260929T092953", "2026-09-29T09:29:53+02:00:00",
+      "2026-09-29T14:05:20", "2026-09-29T14:05:20.123", "2026-09-29T14:05", "2026-09-29T09", "2026-09-29T00:00:00",
+      "2026-09-29t14:05:20", "2026-09-29 14:05:20", "2026-09-29T14:05:20+", "2026-09-29T14:05:20+2",
+      "2026-09-29T14:05:20 CEST", "2026-09-29T14:05:20Europe/Berlin", "20260929T140520", "2026-09-29T14:05:20+02:00:00",
     ];
     for (const s of noOffset) if (parseLexwareDate(s, BERLIN).ok) problems.push(`offset-less/garbled timestamp accepted: ${s}`);
     expect(problems).toEqual([]);
@@ -487,7 +487,7 @@ describe("[dates] Europe/Berlin calendar days", () => {
 describe("[truth layer] invariants under garbage", () => {
   const JUNK: unknown[] = [
     undefined, null, "", " ", "abc", "0", "12.50", "<b>x</b>", "![x](https://evil.example/a)", 0, -0, 1, -1, 12.5, 123.456, 1e12, 1e13, -1e13, 1e-9,
-    Number.NaN, Number.POSITIVE_INFINITY, true, false, [], [1, "a"], {}, { a: 1 }, `${ZWSP}x`, "2026-09-29T09:29:53", "2026-09-29T09:29:53+02:00",
+    Number.NaN, Number.POSITIVE_INFINITY, true, false, [], [1, "a"], {}, { a: 1 }, `${ZWSP}x`, "2026-09-29T14:05:20", "2026-09-29T14:05:20+02:00",
     "2026-02-30", "2026-09-29", "EUR", "usd", "XXXX", "unchecked", "open", "overdue", "paid", "draft", "voided", "UNCHECKED", " open ", "gross", "net",
     "vatfree", uid(1), uid(2), "../x", "a b",
   ];
@@ -1126,7 +1126,7 @@ describe("[loader] honest, budgeted, read-only", () => {
     expect(problems).toEqual([]);
     expect(raw.get).not.toHaveBeenCalled();
     expect(raw.getBinary).not.toHaveBeenCalled();
-    for (const ok of ["/v1/contacts", "/v1/contacts/abc", "/v1/vouchers/abc-1", "/v1/files/x"]) await ro.get(ok);
+    for (const ok of ["/v1/payments", "/v1/payments/abc", "/v1/vouchers/abc-1", "/v1/files/x"]) await ro.get(ok);
     expect(raw.get).toHaveBeenCalledTimes(4);
     expect(raw.post).not.toHaveBeenCalled();
     expect(raw.request).not.toHaveBeenCalled();

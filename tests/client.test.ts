@@ -319,3 +319,56 @@ describe("LexwareClient", () => {
     expect(n).toBe(2);
   });
 });
+
+describe("redirect policy (never contact another origin)", () => {
+  const redirect = (location: string, status = 302) => new Response(null, { status, headers: { location } });
+
+  it("refuses a redirect to another origin without following it, for get and getBinary", async () => {
+    for (const call of [(c: LexwareClient) => c.get("/v1/x"), (c: LexwareClient) => c.getBinary("/v1/files/f1")]) {
+      const fetchFn = vi.fn(async () => redirect("https://evil.test/steal"));
+      await expect(call(makeClient(fetchFn as unknown as typeof fetch))).rejects.toThrow(/Refused Lexware redirect to another origin/);
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      expect((fetchFn.mock.calls[0] as unknown as [string, RequestInit])[1].redirect).toBe("manual");
+    }
+  });
+
+  it("follows a same-origin redirect for GET (bounded) and keeps the request headers", async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(redirect("/v1/y", 307))
+      .mockResolvedValueOnce(json({ ok: true }));
+    const result = await makeClient(fetchFn as unknown as typeof fetch).get("/v1/x");
+    expect(result).toEqual({ ok: true });
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(fetchFn.mock.calls[1][0]).toBe("https://api.test/v1/y");
+  });
+
+  it("stops after three same-origin hops and refuses redirects of non-GET requests", async () => {
+    const loop = vi.fn(async () => redirect("/v1/again"));
+    await expect(makeClient(loop as unknown as typeof fetch).get("/v1/x")).rejects.toThrow(/Refused Lexware redirect/);
+    expect(loop).toHaveBeenCalledTimes(4);
+    const post = vi.fn(async () => redirect("/v1/y", 307));
+    await expect(makeClient(post as unknown as typeof fetch).post("/v1/x", {})).rejects.toThrow(/non-GET/);
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a redirect without a usable Location and does not retry a refused redirect", async () => {
+    const fetchFn = vi.fn(async () => new Response(null, { status: 302 }));
+    await expect(makeClient(fetchFn as unknown as typeof fetch).get("/v1/x")).rejects.toThrow(/Refused Lexware redirect/);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("API key redaction in upstream errors", () => {
+  it("never surfaces the configured API key from an echoing upstream error", async () => {
+    const fetchFn = vi.fn(async () => json({ message: "Invalid credentials: Bearer secret-key", echo: { auth: "secret-key" } }, 401));
+    const err = await makeClient(fetchFn as unknown as typeof fetch)
+      .get("/v1/x")
+      .catch((e: unknown) => e as LexwareApiError);
+    expect(err).toBeInstanceOf(LexwareApiError);
+    expect(err.message).not.toContain("secret-key");
+    expect(err.message).toContain("[REDACTED]");
+    expect(JSON.stringify(err.body)).not.toContain("secret-key");
+    expect(err.status).toBe(401);
+  });
+});

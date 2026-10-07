@@ -379,6 +379,12 @@ describe("secret & business-data scanner", () => {
     "url-credentials": "postgres://" + "lus" + ":" + "s3cr3tpw" + "@" + "db.internal:5432/x",
     "bearer-literal": "Authorization: " + "Bearer " + "E".repeat(40),
     "filled-secret-env (database)": "DATABASE" + "_URL=" + "postgres://u:" + "p".repeat(12) + "@h/d",
+    "filled-secret-env (db password)": "DB" + "_PASSWORD=" + "q".repeat(16),
+    "filled-secret-env (encryption key)": "ENCRYPTION" + "_KEY=" + "r".repeat(32),
+    "filled-secret-env (backup key)": "BACKUP_ENCRYPTION" + "_KEY=" + "s".repeat(32),
+    "filled-secret-env (whatsapp)": "WHATSAPP" + "_TOKEN=" + "t".repeat(32),
+    "filled-secret-env (github)": "export GITHUB" + "_TOKEN=" + "u".repeat(32),
+    "stripe-live-key (restricted)": "rk" + "_live_" + "F".repeat(24),
   };
 
   it.each(Object.entries(samples))("flags %s without echoing the value", (label, line) => {
@@ -397,5 +403,17 @@ describe("secret & business-data scanner", () => {
     expect(scanText("a", "Authorization: Bearer <MCP_AUTH_TOKEN>")).toEqual([]);
     expect(scanText("a", "Authorization: Bearer ${token}")).toEqual([]);
     expect(scanText("a", "DATABASE" + "_URL=")).toEqual([]);
+    // Minimum lengths keep obvious placeholders out.
+    expect(scanText("a", "Authorization: Bearer " + "x".repeat(31))).toEqual([]);
+    expect(scanText("a", "postgres://" + "user:pw" + "@host/db")).toEqual([]);
+    expect(scanText("a", "sk" + "_test_" + "G".repeat(24))).toEqual([]);
+  });
+
+  it("stays linear on adversarial lines (no catastrophic backtracking)", () => {
+    for (const line of ["a.".repeat(1_000_000), "a+".repeat(1_000_000) + "://", ("x://" + "a".repeat(300) + ":").repeat(6000)]) {
+      const started = performance.now();
+      scanText("big.txt", line);
+      expect(performance.now() - started).toBeLessThan(2000);
+    }
   });
 });

@@ -32,6 +32,7 @@ Jede Anforderung hat eine ID (`P-xx`). PR 3 muss jede MUSS-Anforderung mit Test 
 | P-21 | MUSS: Verschlüsselung in Ruhe. Die Plattform-Verschlüsselung (Disk oder Managed DB) ist Pflicht. FINANCIAL- und PERSONAL-DATA-Felder, die über Zähler und Hashes hinausgehen, werden zusätzlich auf Anwendungsebene verschlüsselt (AES-256-GCM, zufällige Nonce, Schlüssel aus dem Secret-Store, Schlüssel-ID im Datensatz). |
 | P-22 | MUSS: Schlüssel liegen nie im Repository, nie in der DB und nie im Log. Eine Schlüsselrotation ist ohne Datenverlust möglich: Neuverschlüsselung im Hintergrund, alte Schlüssel-ID weiter lesbar bis zur Migration. |
 | P-23 | MUSS (Datei-basiert, z. B. SQLite auf einer Disk): Dateirechte `0600`, Verzeichnis `0700`, Eigentümer ist der Laufzeit-User `node` (nicht root). Der Pfad liegt außerhalb des App-Verzeichnisses und des Docker-Build-Kontexts. |
+| P-24 | MUSS: Netzwerk-Isolation. Die Datenbank hat keinen öffentlichen Endpunkt, oder nur mit IP-Allowlist auf den Dienst. Verbindungen nur mit Zertifikatsprüfung (P-20). |
 
 ## 3. Berechtigungen
 
@@ -66,7 +67,7 @@ Jede Anforderung hat eine ID (`P-xx`). PR 3 muss jede MUSS-Anforderung mit Test 
 
 | ID | Anforderung |
 |---|---|
-| P-60 | MUSS: Ein Backup-Verfahren ist dokumentiert und automatisiert: Häufigkeit, Aufbewahrung und Speicherort. Backups sind verschlüsselt und liegen getrennt von der Laufzeitumgebung. Die Kosten entscheidet der Owner (P-00). |
+| P-60 | MUSS: Ein Backup-Verfahren ist dokumentiert und automatisiert: Häufigkeit, Aufbewahrung und Speicherort. Backups sind verschlüsselt und liegen getrennt von der Laufzeitumgebung. Der Backup-Schlüssel ist ein **anderer** als der Laufzeitschlüssel, und die Backup-Zugangsdaten stehen im Credential-Inventar von `../incident-response.md`. Die Kosten entscheidet der Owner (P-00). |
 | P-61 | MUSS: Ein Restore-Runbook in `incident-response.md` oder im Persistence-PR. |
 | P-62 | MUSS: Restore-Verifikation. Ein Test oder Skript stellt ein Backup in einer leeren Instanz wieder her und prüft Schema-Version, Integritätsprüfung, Anzahl je Tabelle und Prüfsummen. Ohne erfolgreiche Restore-Probe darf ein Backup nicht als „vorhanden“ gemeldet werden. |
 | P-63 | SOLL: Eine Restore-Probe vor jeder destruktiven Migration. |

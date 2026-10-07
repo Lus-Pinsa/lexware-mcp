@@ -111,6 +111,23 @@ describe("loadConfig", () => {
     expect(open.auth).toMatchObject({ mode: "oauth", allowedEmailDomains: [] });
   });
 
+  it("validates OAUTH_ALLOW_ANY_USER even when an allowlist is set", () => {
+    expect(() =>
+      loadConfig({
+        LEXWARE_API_KEY: "k",
+        OAUTH_ISSUER: "https://auth.example.com",
+        SERVER_URL: "https://x.example.com",
+        OAUTH_ALLOWED_EMAIL_DOMAINS: "example.com",
+        OAUTH_ALLOW_ANY_USER: "maybe",
+      } as NodeJS.ProcessEnv),
+    ).toThrow(ConfigError);
+  });
+
+  it("warns below exactly 32 token characters, not at 32", () => {
+    expect(loadConfig({ LEXWARE_API_KEY: "k", MCP_AUTH_TOKEN: "c".repeat(31) } as NodeJS.ProcessEnv).warnings).toHaveLength(1);
+    expect(loadConfig({ LEXWARE_API_KEY: "k", MCP_AUTH_TOKEN: "c".repeat(32) } as NodeJS.ProcessEnv).warnings).toEqual([]);
+  });
+
   it("warns (but starts) when the static token is shorter than 32 characters", () => {
     const short = loadConfig({ LEXWARE_API_KEY: "k", MCP_AUTH_TOKEN: "b".repeat(20) } as NodeJS.ProcessEnv);
     expect(short.warnings.join(" ")).toMatch(/shorter than 32/);

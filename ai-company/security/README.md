@@ -15,7 +15,7 @@ Prinzipien: Zero Trust, Least Privilege, Defense in Depth, Fail Closed, explizit
 | [`supply-chain-and-platform.md`](supply-chain-and-platform.md) | npm, Actions, Ruleset Soll/Ist, Repo-Einstellungen, Render, Provenance |
 | [`contracts/persistence-security-contract.md`](contracts/persistence-security-contract.md) | verbindliche Anforderungen P-00 bis P-92 für PR 3 |
 | [`contracts/multi-tenant-security-contract.md`](contracts/multi-tenant-security-contract.md) | Tenant-Grenzen T-01 bis T-13 |
-| [`contracts/voice-messaging-security-contract.md`](contracts/voice-messaging-security-contract.md) | WhatsApp/Telefon V-01 bis V-10 („nie: telefonisches Ja → Überweisung“) |
+| [`contracts/voice-messaging-security-contract.md`](contracts/voice-messaging-security-contract.md) | WhatsApp/Telefon V-01 bis V-11 („nie: telefonisches Ja → Überweisung“) |
 | [`incident-response.md`](incident-response.md) | Credential-Inventar mit Wirkungsbereich; Detect, Contain, Revoke, Rotate, Recover, Audit |
 
 ## Ergebnis in einem Satz

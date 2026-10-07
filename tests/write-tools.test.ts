@@ -307,6 +307,38 @@ describe("get-document dispatch + get-voucher-file", () => {
     expect(getBinary).toHaveBeenCalledWith("/v1/files/file-7", undefined, { maxBytes: 15 * 1024 * 1024 });
     expect(res.structuredContent.fileId).toBe("file-7");
   });
+
+  it("get-document refuses inherited object members as voucherType before any request", async () => {
+    const get = vi.fn(async () => ({}));
+    const client = { get } as unknown as LexwareClient;
+    const handlers = handlersFor((s, c) => registerDocumentReadTools(s, c, "https://app.test"), client);
+    for (const voucherType of ["constructor", "__proto__", "toString", "hasOwnProperty", "valueOf", "isPrototypeOf"]) {
+      await expect(handlers["get-document"]({ id: "d1", voucherType }), voucherType).rejects.toThrow(/Unknown voucherType/);
+    }
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it("get-voucher-file refuses a file id from upstream that is not one plain path segment", async () => {
+    for (const bad of [[], {}, 7, "", ".", "..", "a/b", "../x", "a b", "x".repeat(129)]) {
+      const get = vi.fn(async () => ({ files: [bad] }));
+      const getBinary = vi.fn();
+      const client = { get, getBinary } as unknown as LexwareClient;
+      const handlers = handlersFor((s, c) => registerDocumentReadTools(s, c, "https://app.test"), client);
+      await expect(handlers["get-voucher-file"]({ id: "v1", fileIndex: 0 }), JSON.stringify(bad)).rejects.toThrow(/no attached file/);
+      expect(getBinary).not.toHaveBeenCalled();
+    }
+  });
+
+  it("get-document-link refuses dot-segment ids that a browser would normalize away", async () => {
+    const handlers = handlersFor((s, c) => registerDocumentReadTools(s, c, "https://app.test"), {} as LexwareClient);
+    for (const id of [".", ".."]) {
+      await expect(handlers["get-document-link"]({ resourceType: "invoices", id, action: "view" }), id).rejects.toThrow(/Invalid document id/);
+    }
+    const ok = (await handlers["get-document-link"]({ resourceType: "invoices", id: "a.b", action: "view" })) as {
+      structuredContent: { url: string };
+    };
+    expect(ok.structuredContent.url).toBe("https://app.test/permalink/invoices/view/a.b");
+  });
 });
 
 const docBody = {

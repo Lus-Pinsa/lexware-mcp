@@ -43,6 +43,7 @@ Kombinationen erhöhen die Klasse. Ein Betrag allein ist schwach. Betrag und sek
 |---|---|---|
 | Keine Secrets oder Business-Daten in Git | `ai-company/scripts/secret-scan.mjs` (CI `secret-scan`, Pflichtcheck), GitHub Secret Scanning und Push Protection (aktiv) | Ruleset `main-protection`, Repo-API `security_and_analysis` |
 | Keine Secrets in Tool-Ausgaben | `get-server-info` liefert `secretsIncluded: false`; Fehlerpfade werden in `src/lexware/errors.ts` bereinigt | `tests/server-info.test.ts`, `tests/errors.test.ts` (`describeErrorBody`) |
+| Keine Lexware-IDs oder Belegdaten in Webhook-Logs | `src/webhook-receiver.ts` loggt nur feste Begründungen und Zähler | `tests/webhook-receiver.test.ts` |
 | Keine PII im OAuth-Log | `src/oauth.ts` loggt keine E-Mail-Adressen | Regressionstest in `tests/oauth.test.ts` (Log-Spy auf `console.error`) |
 | Fremdtext als Daten | `src/untrusted.ts` markiert PDF- und Belegtext; der Finance-Brief zitiert Fremdtext nur in «» ohne Steuerzeichen | `tests/untrusted.test.ts`, `tests/finance-brief.test.ts` |
 | Agents lesen keine `.env` | `.claude/settings.json` (deny) und `.claude/hooks/guard.mjs` | `tests/governance.test.ts` (Guard-Hook-Block) |

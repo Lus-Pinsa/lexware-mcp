@@ -13,16 +13,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Webhook bodies are validated after the signature check (object shape, string types, bounded id/date formats);
   optional `LEXWARE_ORGANIZATION_ID` ignores signed events of other Lexware organizations; the in-memory event
   queue is capped at 1000 (oldest dropped); webhook logs carry only validated fields.
-- OAuth mode refuses to start without `OAUTH_ALLOWED_EMAIL_DOMAINS` unless `OAUTH_ALLOW_ANY_USER=true` is explicit.
+- **Breaking:** OAuth mode refuses to start without `OAUTH_ALLOWED_EMAIL_DOMAINS` unless `OAUTH_ALLOW_ANY_USER=true`
+  is explicit. Migration: set `OAUTH_ALLOWED_EMAIL_DOMAINS` (recommended) or `OAUTH_ALLOW_ANY_USER=true`.
 - Lexware error texts are cleaned like other untrusted text (control/invisible characters, markup, URLs, line
   breaks; capped) before reaching the model.
 - Binary downloads (`download-file`, `render-*-pdf`, `get-document-file`, `get-voucher-file`) are capped at 15 MiB.
+- The Lexware client follows redirects only within the configured Lexware origin and only for GET (at most 3);
+  any other redirect is refused instead of followed. The configured API key is redacted from upstream error texts.
+- `get-document` accepts only its own `voucherType` table keys (no inherited object members); `get-voucher-file`
+  requires a plain id segment from upstream data; `get-document-link` refuses `.`/`..` ids.
+- `/MCP` and other case variants skip the pre-auth body parser like `/mcp` (Express routing is case-insensitive).
+- Webhook logs no longer contain Lexware ids or dates; queue overflow is logged and reported by
+  `get-pending-voucher-events` (`droppedSinceStart`). The webhook receiver is a tested module
+  (`src/webhook-receiver.ts`); HTTP hardening helpers live in `src/http-hardening.ts`.
+- OAuth pre-verification logs print only short plain header values and bounded single-line errors.
 - Startup warning for static tokens shorter than 32 characters; `X-Powered-By` disabled; the pre-auth request log
   no longer contains client headers.
 - Docker image: Node 24 LTS (the line CI tests on) pinned by digest, skybridge telemetry disabled; Dependabot no
   longer proposes Node major bumps automatically.
 - `secret-scan` additionally detects Render deploy hooks, Google/Stripe/npm tokens, URL credentials, bearer
-  literals and future persistence secrets.
+  literals and future persistence secrets (all rules linear-time).
 
 ### Added
 - **Finance intelligence (Phase 2, PR 2)** — five READ-tier tools on pure, deterministic modules in `src/finance/`

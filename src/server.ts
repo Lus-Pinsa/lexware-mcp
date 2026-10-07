@@ -1,4 +1,3 @@
-import { createVerify } from "node:crypto";
 import express, { type Request, type Response } from "express";
 import {
   mcpAuthMetadataRouter,
@@ -19,8 +18,9 @@ import {
   createAccessTokenVerifier,
 } from "./oauth.js";
 import { registerTools } from "./tools/index.js";
-import { addPendingVoucherEvent } from "./pending-voucher-events.js";
-import { evaluateLexwareWebhook } from "./lexware/webhook.js";
+import { addPendingVoucherEvent, droppedPendingVoucherEvents } from "./pending-voucher-events.js";
+import { hardenApp, isLexwareWebhookPath, isMcpPath, preAuthDebugLine } from "./http-hardening.js";
+import { createLexwareWebhookHandler } from "./webhook-receiver.js";
 /**
  * Base64 file uploads
  * (upload-file / upload-voucher-file)
@@ -28,12 +28,6 @@ import { evaluateLexwareWebhook } from "./lexware/webhook.js";
  */
 const JSON_BODY_LIMIT = "12mb";
 
-const isMcpPath = (p: string): boolean =>
-  p === "/mcp" || p.startsWith("/mcp/");
-
-const isLexwareWebhookPath = (p: string): boolean =>
-  p === "/webhooks/lexware" ||
-  p.startsWith("/webhooks/lexware/");
 
 /**
  * Reconfigure body parsing so large uploads work WITHOUT widening
@@ -151,7 +145,7 @@ const bodyParsingConfigured =
   deferMcpBodyParsing(server.express);
 
 // Do not advertise the framework in every response.
-server.express.disable("x-powered-by");
+hardenApp(server.express);
 
 /* ============================================================
    HEALTH CHECK
@@ -169,43 +163,6 @@ server.express.get(
 /* ============================================================
    LEXWARE WEBHOOK
    ============================================================ */
-
-/**
- * Lexware signs webhook payloads.
- *
- * Public key comes from:
- * LEXWARE_WEBHOOK_PUBLIC_KEY
- */
-function verifyLexwareWebhookSignature(
-  rawBody: Buffer,
-  signatureBase64: string,
-  publicKey: string,
-): boolean {
-  try {
-    const verifier =
-      createVerify("RSA-SHA512");
-
-    verifier.update(rawBody);
-    verifier.end();
-
-    return verifier.verify(
-      publicKey,
-      Buffer.from(
-        signatureBase64,
-        "base64",
-      ),
-    );
-  } catch (err) {
-    console.error(
-      "[lexware-webhook] signature verification error",
-      err instanceof Error
-        ? err.message
-        : "unknown error",
-    );
-
-    return false;
-  }
-}
 
 function getLexwareWebhookPublicKey():
   | string
@@ -255,91 +212,13 @@ server.express.post(
     limit: "64kb",
   }),
 
-  (req: Request, res: Response) => {
-    const publicKey =
-      getLexwareWebhookPublicKey();
-
-    if (!publicKey) {
-      console.error(
-        "[lexware-webhook] LEXWARE_WEBHOOK_PUBLIC_KEY missing",
-      );
-
-      res.sendStatus(503);
-      return;
-    }
-
-    const signature =
-      req.get("x-lxo-signature");
-
-    if (!signature) {
-      console.error(
-        "[lexware-webhook] missing X-Lxo-Signature",
-      );
-
-      res.sendStatus(401);
-      return;
-    }
-
-    if (!Buffer.isBuffer(req.body)) {
-      console.error(
-        "[lexware-webhook] body is not raw Buffer",
-      );
-
-      res.sendStatus(400);
-      return;
-    }
-
-    const rawBody =
-      req.body as Buffer;
-
-    const valid =
-      verifyLexwareWebhookSignature(
-        rawBody,
-        signature,
-        publicKey,
-      );
-
-    if (!valid) {
-      console.error(
-        "[lexware-webhook] invalid signature",
-      );
-
-      res.sendStatus(401);
-      return;
-    }
-
-    // A valid signature proves Lexware signed it, not that it concerns OUR organization: validate shape,
-    // types, lengths and (when configured) the organizationId before anything is queued or logged.
-    const decision = evaluateLexwareWebhook(rawBody, config.webhookOrganizationId);
-
-    if (decision.action === "reject") {
-      console.error(`[lexware-webhook] rejected reason=${decision.reason}`);
-      res.sendStatus(400);
-      return;
-    }
-
-    if (decision.action === "ignore") {
-      // Fields passed strict patterns, so they are safe to log; foreign organization ids are not logged.
-      console.error(
-        decision.reason === "foreign_organization"
-          ? "[lexware-webhook] ignored reason=foreign_organization"
-          : `[lexware-webhook] ignored event=${decision.event.eventType} resourceId=${decision.event.resourceId}`,
-      );
-      res.sendStatus(204);
-      return;
-    }
-
-    const pending = addPendingVoucherEvent({
-      resourceId: decision.event.resourceId,
-      eventDate: decision.event.eventDate,
-    });
-
-    console.error(
-      `[lexware-webhook] NEW VOUCHER resourceId=${decision.event.resourceId} eventDate=${decision.event.eventDate} pending=${pending.count} added=${pending.added}`,
-    );
-
-    res.sendStatus(204);
-  },
+  createLexwareWebhookHandler({
+    getPublicKey: getLexwareWebhookPublicKey,
+    organizationId: config.webhookOrganizationId,
+    enqueue: addPendingVoucherEvent,
+    droppedTotal: droppedPendingVoucherEvents,
+    log: (line) => console.error(line),
+  }),
 );
 
 /* ============================================================
@@ -349,19 +228,13 @@ server.express.post(
 server.use(
   (req, _res, next) => {
     if (
-      req.path === "/mcp" ||
-      req.path.startsWith("/mcp/") ||
-      req.path.startsWith(
+      isMcpPath(req.path) ||
+      req.path.toLowerCase().startsWith(
         "/.well-known/",
       )
     ) {
-      // Pre-auth line: no client-controlled header text (log forging, noise), just method/path/auth presence.
       console.error(
-        `[debug] ${req.method} ${JSON.stringify(req.path.slice(0, 200))} auth=${
-          req.headers.authorization
-            ? "yes"
-            : "no"
-        }`,
+        preAuthDebugLine(req.method, req.path, Boolean(req.headers.authorization)),
       );
     }
 

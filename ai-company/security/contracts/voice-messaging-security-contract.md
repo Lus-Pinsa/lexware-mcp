@@ -32,6 +32,7 @@ Basis: Security Architecture Gate, `main` = `8f938aa`.
 | V-08 | **Ausgabe-Minimierung.** Antworten in Messaging-Kanälen enthalten nur das Nötige: keine vollständigen IBANs, keine Belegdateien, keine Kontaktlisten. Sprachausgaben nennen Beträge nur nach erfolgreicher Identitätsprüfung (V-01). |
 | V-09 | **Anbieter.** WhatsApp Business API und Telefonie sind externe, kostenpflichtige Dienste. Ihre Anbindung braucht eine Owner-Freigabe (Kosten, AVV/DSGVO, Datenstandort). Anbieter-Tokens sind SECRET und liegen nur im Secret-Store. |
 | V-10 | **Notfall.** Der Kanal ist per Konfiguration sofort abschaltbar (Kill-Switch). Bei Verdacht auf Missbrauch werden alle offenen vorbereiteten Aktionen verworfen (siehe `../incident-response.md`). |
+| V-11 | **Aufbewahrung beim Anbieter.** Aufnahmen, Transkripte und Nachrichten beim Kanal-Anbieter haben eine dokumentierte, minimale Frist (Standard: keine Aufnahme, Transkripte höchstens 30 Tage), mit Löschweg und Auftragsverarbeitungsvertrag. |
 
 ## Abnahme
 

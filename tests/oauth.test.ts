@@ -190,3 +190,29 @@ describe("createAccessTokenVerifier", () => {
     }
   });
 });
+
+describe("pre-verification logging of attacker-controlled token headers", () => {
+  it("prints only short plain header values and a bounded single-line error", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const verify = createAccessTokenVerifier(settings({ allowedEmailDomains: ["example.com"] }), { jwks });
+      const b64 = (v: unknown) => Buffer.from(JSON.stringify(v)).toString("base64url");
+      const forged = `${b64({ alg: "RS256", kid: "x\n[lexware-mcp] FORGED line", typ: "J".repeat(500) })}.${b64({ sub: "u" })}.c2ln`;
+      await expect(verify(forged)).rejects.toThrow();
+      const calls = spy.mock.calls.map((c) => c.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" "));
+      const header = calls.find((c) => c.includes("OAuth token header"));
+      expect(header).toBeDefined();
+      expect(header).toContain('"kid":"(invalid)"');
+      expect(header).toContain('"typ":"(invalid)"');
+      expect(header).toContain('"alg":"RS256"');
+      expect(calls.join("\n")).not.toContain("FORGED");
+      for (const line of calls.filter((c) => c.includes("jwtVerify failed"))) {
+        expect(line).not.toMatch(/[\r\n]/);
+        expect(line.length).toBeLessThan(300);
+      }
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+

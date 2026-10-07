@@ -112,9 +112,14 @@ export function describeErrorBody(status: number, statusText: string, body: unkn
   }
 
   // Error bodies can echo third-party input (supplier names, remarks, file names). Strip control/invisible
-  // characters and neutralize markup, URLs and line breaks so the message cannot pose as instructions or links.
-  const detail = cleanUntrustedText(parts.join(" | "), { maxChars: MAX_DETAIL_CHARS, singleLine: true }).text;
-  const safeStatusText = cleanUntrustedText(statusText, { maxChars: 100, singleLine: true }).text;
+  // characters and neutralize markup, URLs and line breaks, so the text cannot render as links, images or HTML or
+  // fake line structure. It is still third-party text: callers must treat it as data, not as instructions.
+  // Pre-cut generously before cleaning so a huge body is never processed character by character.
+  const joined = parts.join(" | ");
+  const raw = joined.length > MAX_DETAIL_CHARS * 2 ? joined.slice(0, MAX_DETAIL_CHARS * 2) : joined;
+  const cleaned = cleanUntrustedText(raw, { maxChars: MAX_DETAIL_CHARS, singleLine: true });
+  const detail = cleaned.truncated || raw.length < joined.length ? `${cleaned.text}…` : cleaned.text;
+  const safeStatusText = cleanUntrustedText(statusText.slice(0, 200), { maxChars: 100, singleLine: true }).text;
   return detail ? `Lexware API ${status}: ${detail}` : `Lexware API ${status} ${safeStatusText}`.trim();
 }
 

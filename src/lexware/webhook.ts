@@ -6,8 +6,8 @@
  * shape, types and lengths are checked before anything is queued or logged, and (when configured) the
  * `organizationId` must match. Pure; no I/O.
  */
-import { ORGANIZATION_ID_PATTERN } from "../config.js";
-
+/** Shape of a Lexware organization id (a UUID in practice); also bounds what can reach the logs. */
+export const ORGANIZATION_ID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
 /** Lexware resource ids (UUIDs in practice); bounded so a signed body cannot flood queue or logs. */
 const RESOURCE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const EVENT_TYPE_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/;

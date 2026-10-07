@@ -4,13 +4,13 @@
  * Parsed and validated once at startup from environment variables. Kept free of
  * any Skybridge/Express imports so it can be unit-tested in isolation.
  */
+import { ORGANIZATION_ID_PATTERN } from "./lexware/webhook.js";
 
 /** Minimum length for `MCP_AUTH_TOKEN`. A 32-hex-char token is 32 chars. */
 export const MIN_TOKEN_LENGTH = 16;
 /** Tokens shorter than this still start, with a startup warning (`openssl rand -hex 32` gives 64). */
 export const RECOMMENDED_TOKEN_LENGTH = 32;
-/** Shape of a Lexware organization id (a UUID in practice); also bounds what can reach the logs. */
-export const ORGANIZATION_ID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
+
 
 /** Thrown when the environment is misconfigured. Message is safe to print. */
 export class ConfigError extends Error {
@@ -175,7 +175,9 @@ function resolveAuth(env: NodeJS.ProcessEnv): AuthConfig {
       .filter(Boolean);
     // Fail closed: without an allowlist every account the IdP accepts (incl. self-signup) could read the
     // whole Lexware organization. Running open to any IdP user must be an explicit decision.
-    if (allowedEmailDomains.length === 0 && !parseBool(env.OAUTH_ALLOW_ANY_USER, false)) {
+    // Parsed unconditionally so a malformed value is reported even when an allowlist is set.
+    const allowAnyUser = parseBool(env.OAUTH_ALLOW_ANY_USER, false);
+    if (allowedEmailDomains.length === 0 && !allowAnyUser) {
       throw new ConfigError(
         "OAuth mode requires OAUTH_ALLOWED_EMAIL_DOMAINS (comma-separated). To accept any user of the IdP " +
           "instead, set OAUTH_ALLOW_ANY_USER=true explicitly.",

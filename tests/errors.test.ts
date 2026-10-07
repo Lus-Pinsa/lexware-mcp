@@ -39,7 +39,20 @@ describe("describeErrorBody", () => {
   it("cleans the status text fallback and caps the whole detail", () => {
     expect(describeErrorBody(503, "Down\n<b>now</b>", undefined)).toBe("Lexware API 503 Down ‹b›now‹/b›");
     const issues = Array.from({ length: 25 }, (_, i) => ({ source: `f${i}`, message: "m".repeat(400) }));
-    expect(describeErrorBody(422, "x", { IssueList: issues }).length).toBeLessThanOrEqual(4000 + "Lexware API 422: ".length);
+    const capped = describeErrorBody(422, "x", { IssueList: issues });
+    // 4000 cleaned characters plus an explicit truncation marker.
+    expect(capped.length).toBe("Lexware API 422: ".length + 4000 + 1);
+    expect(capped.endsWith("…")).toBe(true);
+    // The status text fallback is capped at 100 characters.
+    expect(describeErrorBody(500, "S".repeat(5000), undefined)).toBe(`Lexware API 500 ${"S".repeat(100)}`);
+  });
+
+  it("bounds the work on huge bodies (pre-cut before cleaning)", () => {
+    const huge = { message: "x".repeat(5_000_000) };
+    const started = performance.now();
+    const msg = describeErrorBody(400, "Bad Request", huge);
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(msg.length).toBe("Lexware API 400: ".length + 4000 + 1);
   });
 
   it("keeps a short plain-text body verbatim", () => {

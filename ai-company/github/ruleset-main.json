@@ -32,7 +32,8 @@
           { "context": "secret-scan (credentials + business data)", "integration_id": 15368 },
           { "context": "audit (production dependencies)", "integration_id": 15368 },
           { "context": "dependency-review (new dependencies in PR)", "integration_id": 15368 },
-          { "context": "analyze", "integration_id": 15368 }
+          { "context": "analyze", "integration_id": 15368 },
+          { "context": "docker", "integration_id": 15368 }
         ]
       }
     },

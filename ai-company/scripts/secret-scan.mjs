@@ -26,7 +26,8 @@ export const RULES = [
   { id: "stripe-live-key", re: /\b(?:sk|rk)_live_[0-9A-Za-z]{20,}\b/ },
   { id: "npm-token", re: /\bnpm_[A-Za-z0-9]{36}\b/ },
   // Credentials embedded in a URL authority, i.e. user and secret before the host (DB, proxy, git remotes).
-  { id: "url-credentials", re: /\b[a-z][a-z0-9+.-]*:\/\/[^\s:@/'"]+:[^\s@/'"]{6,}@[^\s/'"]+/i },
+  // Bounded scheme and a cheap pre-filter keep this linear (an unbounded scheme backtracks quadratically).
+  { id: "url-credentials", re: /\b[a-z][a-z0-9+.-]{0,31}:\/\/[^\s:@/'"]{1,256}:[^\s@/'"]{6,256}@[^\s/'"]+/i, pre: "://" },
   { id: "bearer-literal", re: /\bBearer\s+[A-Za-z0-9._~+/-]{32,}=*/ },
   {
     id: "filled-secret-env",
@@ -55,6 +56,7 @@ export function scanText(file, text) {
   text.split("\n").forEach((line, i) => {
     if (line.includes("secret-scan:allow")) return;
     for (const rule of RULES) {
+      if (rule.pre && !line.includes(rule.pre)) continue;
       const m = rule.re.exec(line);
       if (m && (!rule.validate || rule.validate(m[0]))) findings.push({ file, line: i + 1, rule: rule.id });
     }

@@ -53,6 +53,8 @@ export function addPendingVoucherEvent(input: {
   added: boolean;
   event: PendingVoucherEvent;
   count: number;
+  /** Oldest events dropped to make room for this one (0 or 1). */
+  dropped: number;
 } {
   const event: PendingVoucherEvent = {
     eventType: "voucher.created",
@@ -66,6 +68,7 @@ export function addPendingVoucherEvent(input: {
   const alreadyExists =
     pendingVoucherEvents.has(key);
 
+  let dropped = 0;
   if (!alreadyExists) {
     // Map iteration order is insertion order, so the first key is the oldest event.
     while (pendingVoucherEvents.size >= MAX_PENDING_VOUCHER_EVENTS) {
@@ -73,6 +76,7 @@ export function addPendingVoucherEvent(input: {
       if (oldest.done) break;
       pendingVoucherEvents.delete(oldest.value);
       droppedOverflow++;
+      dropped++;
     }
     pendingVoucherEvents.set(key, event);
   }
@@ -83,6 +87,7 @@ export function addPendingVoucherEvent(input: {
       pendingVoucherEvents.get(key) ??
       event,
     count: pendingVoucherEvents.size,
+    dropped,
   };
 }
 

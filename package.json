@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "skybridge dev",
     "dev:tunnel": "skybridge dev --tunnel",
-    "build": "tsc -b --force",
+    "build": "tsc -b --force && node scripts/copy-persistence-migrations.mjs",
     "build:views": "skybridge build",
     "start": "node dist/server.js",
     "typecheck": "tsc -b --force",

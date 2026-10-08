@@ -4,6 +4,7 @@ import {
   appendAuditEvent,
   getTenantBinding,
   insertWebhookEvent,
+  listAppliedSchemaMigrations,
   listPendingWebhookEvents,
   type PersistenceDatabase,
   type QueryResult,
@@ -46,6 +47,18 @@ describe("tenant-scoped persistence repository", () => {
       withTenantTransaction("not-a-tenant" as never, { transaction } as PersistenceDatabase, async () => "x"),
     ).rejects.toThrow(/tenant/i);
     expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it("reads and validates the schema migration ledger without tenant fallback", async () => {
+    const tx = executor([
+      { version: 1, name: "foundation", checksum: sha256Hex("m1") },
+      { version: 2, name: "webhook_event_date", checksum: sha256Hex("m2") },
+    ]);
+    await expect(listAppliedSchemaMigrations(tx)).resolves.toEqual([
+      { version: 1, name: "foundation", checksum: sha256Hex("m1") },
+      { version: 2, name: "webhook_event_date", checksum: sha256Hex("m2") },
+    ]);
+    expect(tx.query.mock.calls[0][0].values).toEqual([]);
   });
 
   it("reads a tenant binding only by the explicit tenant id", async () => {

@@ -1,6 +1,8 @@
 import { createEncryptionKeyring, sha256Hex, type EncryptionKeyring } from "./crypto.js";
 import { type TenantId, PersistenceValidationError, parseTenantId } from "./types.js";
 
+const ORGANIZATION_ID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
+
 export interface DisabledPersistenceRuntimeConfig {
   readonly enabled: false;
 }
@@ -129,6 +131,12 @@ export function loadPersistenceRuntimeConfig(
       "LEXWARE_ORGANIZATION_ID is required when persistence is enabled.",
     );
   }
+  const normalizedOrganizationId = organizationId.trim().toLowerCase();
+  if (!ORGANIZATION_ID_PATTERN.test(normalizedOrganizationId)) {
+    throw new PersistenceValidationError(
+      "LEXWARE_ORGANIZATION_ID is invalid for persistence binding.",
+    );
+  }
 
   const currentKeyId = required(env, "PERSISTENCE_CURRENT_KEY_ID");
   const keyring = parseKeyring(required(env, "PERSISTENCE_KEYRING"), currentKeyId);
@@ -155,7 +163,7 @@ export function loadPersistenceRuntimeConfig(
     secrets,
   } as EnabledPersistenceRuntimeConfig;
 
-  const organizationIdHash = sha256Hex(organizationId.trim().toLowerCase());
+  const organizationIdHash = sha256Hex(normalizedOrganizationId);
   Object.defineProperties(config, {
     organizationIdHash: { value: organizationIdHash, enumerable: false },
     toJSON: {

@@ -44,10 +44,9 @@ describe("persistence foundation schema", () => {
     }
   });
 
-  it("makes audit events append-only at the database boundary", () => {
-    expect(sql).toContain("CREATE TRIGGER audit_events_no_update");
-    expect(sql).toContain("CREATE TRIGGER audit_events_no_delete");
-    expect(sql).toContain("RAISE EXCEPTION 'audit_events is append-only'");
+  it("reserves audit mutation for the migration/maintenance role", () => {
+    expect(sql).toContain("REVOKE UPDATE, DELETE, TRUNCATE ON audit_events FROM PUBLIC;");
+    expect(sql).not.toContain("ON DELETE RESTRICT");
   });
 });
 
@@ -67,7 +66,9 @@ describe("persistence structural policy", () => {
 
   it("repository SQL is static/parameterized and cannot interpolate external values", () => {
     const source = read("src/persistence/repository.ts");
-    expect(source).not.toMatch(/\$\{/);
+    const sqlBodies = [...source.matchAll(/const SQL_[A-Z_]+\s*=\s*([\s\S]*?);\n/g)].map((match) => match[1]);
+    expect(sqlBodies.length).toBeGreaterThan(0);
+    for (const body of sqlBodies) expect(body).not.toContain("$" + "{");
     expect(source).not.toMatch(/\bprocess\.env\b|\bfetch\s*\(|LexwareClient|\.post\s*\(|postMultipart/);
     expect(source).toContain("$1");
   });

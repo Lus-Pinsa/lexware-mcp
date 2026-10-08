@@ -1,15 +1,15 @@
 # Persistence Foundation — proposed architecture
 
-Status: **DESIGN READY / IMPLEMENTATION BLOCKED ON P-00**  
+Status: **DESIGN READY / P-00 OWNER APPROVED**  
 Date: 2026-10-08
 
 This package prepares Phase 2 persistence without implementing or provisioning storage yet.
 
-## Owner decision still required
+## Owner decision
 
-Persistence contract P-00 requires Luigi to approve the paid durable-storage direction before implementation begins.
+**P-00 approved by Luigi on 2026-10-08.**
 
-Recommended target: **managed PostgreSQL**.
+Approved direction: **managed PostgreSQL** for durable production storage. This approval covers the architecture and the small paid durable-storage baseline when deployment reaches that step; it is not blanket authorization for future destructive migrations or unrelated paid services.
 
 Why:
 - transactions and crash consistency,
@@ -18,11 +18,11 @@ Why:
 - managed backup/restore path,
 - no SQLite-to-Postgres migration dead-end when a second tenant exists.
 
-No database is provisioned by this PR and no recurring cost is created.
+No database is provisioned by this design PR and no recurring cost is created by the documentation change itself.
 
 ## First implementation scope
 
-After P-00 approval, the first code PR should persist only:
+The first implementation PR should persist only:
 
 1. explicit tenants,
 2. durable Lexware webhook events,

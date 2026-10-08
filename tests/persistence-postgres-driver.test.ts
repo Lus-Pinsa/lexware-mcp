@@ -24,7 +24,7 @@ describe("Postgres persistence driver", () => {
     const db = createPostgresDatabase(
       {
         connectionString:
-          "postgresql://synthetic:synthetic@db.internal.example.test/lus?sslmode=disable&ssl=true",
+          "postgresql://db.internal.example.test/lus?sslmode=disable&ssl=true",
       },
       fake.factory as never,
     );
@@ -51,7 +51,7 @@ describe("Postgres persistence driver", () => {
   it("pins repository work to the transaction client and parameterizes values", async () => {
     const fake = fakeFactory();
     const db = createPostgresDatabase(
-      { connectionString: "postgres://u:p@db.internal.example.test/lus" },
+      { connectionString: "postgres://db.internal.example.test/lus" },
       fake.factory as never,
     );
     const tenant = parseTenantId("00000000-0000-4000-8000-0000000000aa");
@@ -80,7 +80,7 @@ describe("Postgres persistence driver", () => {
     for (const connectionString of [
       "",
       "https://db.example.test/lus",
-      "postgres://u:p@/lus",
+      "postgres:///",
       "postgres://u:p@db.example.test/",
     ]) {
       expect(() => createPostgresDatabase({ connectionString }, fake.factory as never)).toThrow(
@@ -89,7 +89,7 @@ describe("Postgres persistence driver", () => {
     }
     expect(() =>
       createPostgresDatabase(
-        { connectionString: "postgres://u:p@db.example.test/lus", maxConnections: 0 },
+        { connectionString: "postgres://db.example.test/lus", maxConnections: 0 },
         fake.factory as never,
       ),
     ).toThrow(/maxConnections/);
@@ -131,7 +131,7 @@ describe("Postgres persistence driver", () => {
       },
     });
     const db = createPostgresDatabase(
-      { connectionString: "postgres://u:p@db.example.test/lus" },
+      { connectionString: "postgres://db.example.test/lus" },
       transactionFactory as never,
     );
 

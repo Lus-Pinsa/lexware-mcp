@@ -38,6 +38,8 @@ export interface WebhookEventInsert {
   readonly eventKeyHash: string;
   readonly eventType: "voucher.created";
   readonly resource: EncryptedValue;
+  readonly eventDate: string;
+  readonly eventDate: string;
   readonly receivedAt: string;
   readonly payloadChecksum: string;
   readonly source: "lexware_webhook";
@@ -61,11 +63,11 @@ const SQL_GET_TENANT =
   "SELECT tenant_id, organization_id_hash, status FROM tenants WHERE tenant_id = $1";
 const SQL_INSERT_WEBHOOK =
   "INSERT INTO webhook_events " +
-  "(tenant_id, event_key_hash, event_type, resource_ciphertext, resource_nonce, resource_auth_tag, key_id, received_at, payload_checksum, source, request_budget_status, quality_status) " +
-  "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) " +
+  "(tenant_id, event_key_hash, event_type, resource_ciphertext, resource_nonce, resource_auth_tag, key_id, event_date, received_at, payload_checksum, source, request_budget_status, quality_status) " +
+  "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) " +
   "ON CONFLICT (tenant_id, event_key_hash) DO NOTHING";
 const SQL_LIST_PENDING =
-  "SELECT tenant_id, event_key_hash, event_type, resource_ciphertext, resource_nonce, resource_auth_tag, key_id, received_at, payload_checksum, source, request_budget_status, quality_status " +
+  "SELECT tenant_id, event_key_hash, event_type, resource_ciphertext, resource_nonce, resource_auth_tag, key_id, event_date, received_at, payload_checksum, source, request_budget_status, quality_status " +
   "FROM webhook_events WHERE tenant_id = $1 AND acknowledged_at IS NULL ORDER BY received_at ASC, event_key_hash ASC LIMIT $2";
 const SQL_ACK_EVENT =
   "UPDATE webhook_events SET acknowledged_at = $3 " +
@@ -169,6 +171,7 @@ export async function insertWebhookEvent(
   validateWebhookEvent(event);
   const eventKeyHash = assertSha256Hex(event.eventKeyHash, "event key hash");
   const payloadChecksum = assertSha256Hex(event.payloadChecksum, "payload checksum");
+  const eventDate = assertIsoTimestamp(event.eventDate, "eventDate");
   const receivedAt = assertIsoTimestamp(event.receivedAt, "receivedAt");
 
   const result = await tx.query({
@@ -181,6 +184,7 @@ export async function insertWebhookEvent(
       bytes(event.resource.nonce),
       bytes(event.resource.authTag),
       event.resource.keyId,
+      eventDate,
       receivedAt,
       payloadChecksum,
       event.source,
@@ -209,6 +213,7 @@ export async function listPendingWebhookEvents(
     resource_nonce: Uint8Array;
     resource_auth_tag: Uint8Array;
     key_id: string;
+    event_date: string | Date;
     received_at: string | Date;
     payload_checksum: string;
     source: string;
@@ -233,6 +238,8 @@ export async function listPendingWebhookEvents(
         eventKeyHash: assertSha256Hex(row.event_key_hash, "event key hash"),
         eventType: assertWebhookType(row.event_type),
         resource,
+        eventDate:
+          row.event_date instanceof Date ? row.event_date.toISOString() : assertIsoTimestamp(row.event_date, "eventDate"),
         receivedAt:
           row.received_at instanceof Date ? row.received_at.toISOString() : assertIsoTimestamp(row.received_at, "receivedAt"),
         payloadChecksum: assertSha256Hex(row.payload_checksum, "payload checksum"),

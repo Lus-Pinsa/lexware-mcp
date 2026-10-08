@@ -1,6 +1,10 @@
 import type { McpServer } from "skybridge/server";
 import type { Config } from "../config.js";
 import type { LexwareClient } from "../lexware/client.js";
+import {
+  createMemoryPendingVoucherEventStore,
+  type PendingVoucherEventStore,
+} from "../persistence/pending-voucher-store.js";
 
 import {
   registerArticleDeleteTools,
@@ -63,6 +67,7 @@ export function registerTools(
   client: LexwareClient,
   config: Config,
   runtime: ServerRuntime = { env: process.env, startedAt: PROCESS_STARTED_AT },
+  pendingStore: PendingVoucherEventStore = createMemoryPendingVoucherEventStore(),
 ): void {
   const { capabilities } = config;
 
@@ -98,7 +103,7 @@ export function registerTools(
   /*
    * Claude can read pending voucher.created events.
    */
-  registerPendingVoucherEventReadTools(server);
+  registerPendingVoucherEventReadTools(server, pendingStore);
 
   /*
    * Read-only restart/reconciliation fallback.
@@ -113,6 +118,7 @@ export function registerTools(
   registerVoucherReconciliationReadTools(
     server,
     client,
+    pendingStore,
   );
 
   /*
@@ -163,6 +169,7 @@ export function registerTools(
      */
     registerPendingVoucherEventWriteTools(
       server,
+      pendingStore,
     );
   }
 

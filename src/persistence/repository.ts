@@ -39,7 +39,6 @@ export interface WebhookEventInsert {
   readonly eventType: "voucher.created";
   readonly resource: EncryptedValue;
   readonly eventDate: string;
-  readonly eventDate: string;
   readonly receivedAt: string;
   readonly payloadChecksum: string;
   readonly source: "lexware_webhook";
@@ -51,6 +50,7 @@ export interface PendingWebhookEvent {
   readonly eventKeyHash: string;
   readonly eventType: "voucher.created";
   readonly resource: EncryptedValue;
+  readonly eventDate: string;
   readonly receivedAt: string;
   readonly payloadChecksum: string;
   readonly source: "lexware_webhook";

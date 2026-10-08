@@ -112,6 +112,13 @@ LEXWARE_API_KEY=... MCP_AUTH_TOKEN=... npm start
 | `LEXWARE_ORGANIZATION_ID` | — | Your Lexware organization id. When set, signed webhooks of any **other** organization are ignored (any Lexware customer can subscribe to a public callback URL). Strongly recommended with the webhook |
 | `PORT` | `8080` | Listen port (your platform may inject this) |
 | `LEXWARE_DEBUG_LOGGING` | `false` | Verbose logs (never secrets/bodies) |
+| `PERSISTENCE_ENABLED` | `false` | Phase-2 durable persistence master switch; disabled unless explicitly enabled |
+| `PERSISTENCE_DATABASE_URL` | — (**required when persistence is enabled**) | **SECRET** runtime-role PostgreSQL URL; runtime role is DML-only and must not have DDL/BYPASSRLS |
+| `LUS_TENANT_ID` | — (**required when persistence is enabled**) | Explicit internal UUIDv4 tenant id; there is no implicit/default tenant |
+| `PERSISTENCE_CURRENT_KEY_ID` | — (**required when persistence is enabled**) | Key id used for new AES-256-GCM field encryption |
+| `PERSISTENCE_KEYRING_JSON` | — (**required when persistence is enabled**) | **SECRET** JSON object mapping key ids to base64-encoded 32-byte keys; supports key rotation |
+| `PERSISTENCE_AUDIT_ACTOR_SALT` | — (**required when persistence is enabled**) | **SECRET** base64-encoded 32-byte HMAC salt for audit actor identifiers |
+
 
 ¹ The server needs **either** `OAUTH_ISSUER` (OAuth) **or** `MCP_AUTH_TOKEN` (static). It
 **refuses to start** with neither, unless `MCP_ALLOW_UNAUTHENTICATED=true`.
@@ -165,6 +172,7 @@ domain) is in [docs/cloud-run.md](docs/cloud-run.md).
   `reconcile-recent-vouchers` is the fallback against Lexware as source of truth).
 - `ai-company/` + `.claude/` — the LU'S multi-agent foundation (Cloud CEO, boards, governance, safety
   gates); see [ai-company/README.md](ai-company/README.md).
+- `src/persistence/` — tenant-first PostgreSQL foundation: AES-256-GCM field encryption, RLS-aware repositories, checksummed forward-only migrations, explicit tenant bootstrap/verification, and secret-safe runtime configuration. Persistence is disabled by default and is not an alternative legal archive; Lexware remains the source of truth.
 - `src/server.ts` — wires it together on the Skybridge Express server.
 
 ## Development

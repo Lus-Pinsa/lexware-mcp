@@ -123,12 +123,29 @@ export function loadPersistenceRuntimeConfig(
     "PERSISTENCE_AUDIT_ACTOR_SALT",
   );
 
-  return Object.freeze({
-    enabled: true,
-    databaseUrl,
+  const config = {
+    enabled: true as const,
     tenantId,
-    organizationIdHash,
-    keyring,
-    auditActorSalt,
+  } as {
+    enabled: true;
+    tenantId: TenantId;
+    organizationIdHash: string;
+    databaseUrl: string;
+    keyring: EncryptionKeyring;
+    auditActorSalt: Uint8Array;
+  };
+
+  // Keep FINANCIAL/SECRET fields out of ordinary object enumeration and JSON logs.
+  Object.defineProperties(config, {
+    organizationIdHash: { value: organizationIdHash, enumerable: false },
+    databaseUrl: { value: databaseUrl, enumerable: false },
+    keyring: { value: keyring, enumerable: false },
+    auditActorSalt: { value: auditActorSalt, enumerable: false },
+    toJSON: {
+      value: () => ({ enabled: true, tenantConfigured: true, secretsIncluded: false }),
+      enumerable: false,
+    },
   });
+
+  return Object.freeze(config);
 }

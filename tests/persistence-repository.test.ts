@@ -4,6 +4,7 @@ import {
   appendAuditEvent,
   getTenantBinding,
   insertWebhookEvent,
+  inspectRuntimePrivileges,
   listAppliedSchemaMigrations,
   listPendingWebhookEvents,
   type PersistenceDatabase,
@@ -47,6 +48,49 @@ describe("tenant-scoped persistence repository", () => {
       withTenantTransaction("not-a-tenant" as never, { transaction } as PersistenceDatabase, async () => "x"),
     ).rejects.toThrow(/tenant/i);
     expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it("reads runtime privilege facts without exposing credentials or dynamic identifiers", async () => {
+    const row = {
+      role_name: "lus_runtime",
+      is_superuser: false,
+      bypass_rls: false,
+      can_create_database: false,
+      can_create_role: false,
+      can_create_in_database: false,
+      can_create_in_public_schema: false,
+      migrations_select: true,
+      migrations_mutate: false,
+      tenants_select: true,
+      tenants_mutate: false,
+      webhook_dml: true,
+      webhook_delete: false,
+      audit_append: true,
+      audit_mutate: false,
+      role_memberships: 0,
+    };
+    const tx = executor([row]);
+    await expect(inspectRuntimePrivileges(tx)).resolves.toEqual({
+      roleName: "lus_runtime",
+      isSuperuser: false,
+      bypassRls: false,
+      canCreateDatabase: false,
+      canCreateRole: false,
+      canCreateInDatabase: false,
+      canCreateInPublicSchema: false,
+      migrationsSelect: true,
+      migrationsMutate: false,
+      tenantsSelect: true,
+      tenantsMutate: false,
+      webhookDml: true,
+      webhookDelete: false,
+      auditAppend: true,
+      auditMutate: false,
+      roleMemberships: 0,
+    });
+    expect(tx.query.mock.calls[0][0].values).toEqual([]);
+    expect(tx.query.mock.calls[0][0].text).toContain("has_table_privilege");
+    expect(tx.query.mock.calls[0][0].text).not.toContain("PERSISTENCE_DATABASE_URL");
   });
 
   it("reads and validates the schema migration ledger without tenant fallback", async () => {

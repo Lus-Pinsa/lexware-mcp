@@ -3,8 +3,11 @@ import {
   addPendingVoucherEvent,
   droppedPendingVoucherEvents,
   listPendingVoucherEvents,
+  MAX_PENDING_VOUCHER_EVENTS as LEGACY_MAX_PENDING_VOUCHER_EVENTS,
   type PendingVoucherEvent,
 } from "./pending-voucher-events.js";
+
+export const MAX_PENDING_VOUCHER_EVENTS = LEGACY_MAX_PENDING_VOUCHER_EVENTS;
 
 const RESOURCE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const EVENT_DATE_PATTERN =

@@ -18,9 +18,18 @@ import {
   createAccessTokenVerifier,
 } from "./oauth.js";
 import { registerTools } from "./tools/index.js";
-import { addPendingVoucherEvent, droppedPendingVoucherEvents } from "./pending-voucher-events.js";
 import { hardenApp, isLexwareWebhookPath, isMcpPath, preAuthDebugLine } from "./http-hardening.js";
 import { createLexwareWebhookHandler } from "./webhook-receiver.js";
+import { createMemoryPendingVoucherEventStore } from "./pending-voucher-store.js";
+import { createDurablePendingVoucherEventStore } from "./persistence/pending-voucher-store.js";
+import {
+  createPostgresDatabase,
+  type ManagedPersistenceDatabase,
+} from "./persistence/postgres-driver.js";
+import { loadPersistenceRuntimeConfig } from "./persistence/runtime-config.js";
+import { verifyConfiguredTenantBinding } from "./persistence/tenant-binding.js";
+import { assertMigrationStateCurrent } from "./persistence/migration-runner.js";
+import { listAppliedSchemaMigrations } from "./persistence/repository.js";
 /**
  * Base64 file uploads
  * (upload-file / upload-voucher-file)
@@ -128,6 +137,57 @@ const client = new LexwareClient({
 });
 
 /* ============================================================
+   PERSISTENCE / PENDING EVENT STORE
+   ============================================================ */
+
+const persistenceConfig =
+  loadPersistenceRuntimeConfig(
+    process.env,
+    config.webhookOrganizationId,
+  );
+
+let persistenceDb:
+  | ManagedPersistenceDatabase
+  | undefined;
+
+let pendingVoucherStore =
+  createMemoryPendingVoucherEventStore();
+
+if (persistenceConfig.enabled) {
+  persistenceDb =
+    createPostgresDatabase({
+      connectionString:
+        persistenceConfig.secrets
+          .getDatabaseUrl(),
+      applicationName:
+        "lus-lexware-mcp",
+    });
+
+  // Persistence is fail-closed. When explicitly enabled there is no RAM fallback.
+  const appliedMigrations =
+    await persistenceDb.transaction(
+      (tx) => listAppliedSchemaMigrations(tx),
+    );
+  assertMigrationStateCurrent(
+    appliedMigrations,
+  );
+
+  await verifyConfiguredTenantBinding(
+    persistenceConfig,
+    persistenceDb,
+  );
+
+  pendingVoucherStore =
+    createDurablePendingVoucherEventStore({
+      db: persistenceDb,
+      tenantId:
+        persistenceConfig.tenantId,
+      keyring:
+        persistenceConfig.secrets.keyring,
+    });
+}
+
+/* ============================================================
    MCP SERVER
    ============================================================ */
 
@@ -215,8 +275,10 @@ server.express.post(
   createLexwareWebhookHandler({
     getPublicKey: getLexwareWebhookPublicKey,
     organizationId: config.webhookOrganizationId,
-    enqueue: addPendingVoucherEvent,
-    droppedTotal: droppedPendingVoucherEvents,
+    enqueue: (event) =>
+      pendingVoucherStore.enqueue(event),
+    droppedTotal: () =>
+      pendingVoucherStore.droppedTotal(),
     log: (line) => console.error(line),
   }),
 );
@@ -315,6 +377,8 @@ registerTools(
   server,
   client,
   config,
+  undefined,
+  pendingVoucherStore,
 );
 
 /* ============================================================
@@ -326,7 +390,7 @@ const buildInfo = resolveBuildInfo(process.env);
 console.error(
   `[lexware-mcp] starting — ${describeCapabilities(
     config,
-  )} build=${buildLogLabel(buildInfo)} bodyLimit=${
+  )} build=${buildLogLabel(buildInfo)} persistence=${pendingVoucherStore.mode} bodyLimit=${
     bodyParsingConfigured
       ? `${JSON_BODY_LIMIT} (/mcp, post-auth)`
       : "default(~100kb)"

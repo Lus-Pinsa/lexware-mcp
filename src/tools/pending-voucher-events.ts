@@ -2,10 +2,9 @@ import type { McpServer } from "skybridge/server";
 import { z } from "zod";
 
 import {
-  acknowledgePendingVoucherEvent,
-  droppedPendingVoucherEvents,
-  listPendingVoucherEvents,
-} from "../pending-voucher-events.js";
+  createMemoryPendingVoucherEventStore,
+  type PendingVoucherEventStore,
+} from "../pending-voucher-store.js";
 
 import { RO, text, WRITE } from "./shared.js";
 
@@ -14,6 +13,7 @@ import { RO, text, WRITE } from "./shared.js";
  */
 export function registerPendingVoucherEventReadTools(
   server: McpServer,
+  store: PendingVoucherEventStore = createMemoryPendingVoucherEventStore(),
 ): void {
   server.registerTool(
     {
@@ -23,9 +23,9 @@ export function registerPendingVoucherEventReadTools(
       annotations: RO,
     },
     async () => {
-      const events = listPendingVoucherEvents();
-      // The queue is bounded: if events were dropped, "pending" is incomplete and must say so.
-      const droppedSinceStart = droppedPendingVoucherEvents();
+      const events = await store.list();
+      // The memory queue can drop on overflow. Durable mode returns 503 before exceeding capacity.
+      const droppedSinceStart = store.droppedTotal();
       const overflowNote =
         droppedSinceStart > 0
           ? `WARNING: ${droppedSinceStart} older event(s) were dropped because the queue was full — this list is incomplete; run reconcile-recent-vouchers.`
@@ -75,6 +75,7 @@ export function registerPendingVoucherEventReadTools(
  */
 export function registerPendingVoucherEventWriteTools(
   server: McpServer,
+  store: PendingVoucherEventStore = createMemoryPendingVoucherEventStore(),
 ): void {
   server.registerTool(
     {
@@ -93,7 +94,7 @@ export function registerPendingVoucherEventWriteTools(
     },
     async ({ resourceId }) => {
       const result =
-        acknowledgePendingVoucherEvent(
+        await store.acknowledge(
           resourceId,
         );
 

@@ -38,6 +38,7 @@ export interface WebhookEventInsert {
   readonly eventKeyHash: string;
   readonly eventType: "voucher.created";
   readonly resource: EncryptedValue;
+  readonly eventDate: string;
   readonly receivedAt: string;
   readonly payloadChecksum: string;
   readonly source: "lexware_webhook";
@@ -49,6 +50,7 @@ export interface PendingWebhookEvent {
   readonly eventKeyHash: string;
   readonly eventType: "voucher.created";
   readonly resource: EncryptedValue;
+  readonly eventDate: string;
   readonly receivedAt: string;
   readonly payloadChecksum: string;
   readonly source: "lexware_webhook";
@@ -56,20 +58,24 @@ export interface PendingWebhookEvent {
   readonly qualityStatus: QualityStatus;
 }
 
+const SQL_LIST_SCHEMA_MIGRATIONS =
+  "SELECT version::int AS version, name, checksum FROM schema_migrations ORDER BY version ASC";
 const SQL_SET_TENANT = "SELECT set_config('app.tenant_id', $1, true) AS tenant_id";
 const SQL_GET_TENANT =
   "SELECT tenant_id, organization_id_hash, status FROM tenants WHERE tenant_id = $1";
 const SQL_INSERT_WEBHOOK =
   "INSERT INTO webhook_events " +
-  "(tenant_id, event_key_hash, event_type, resource_ciphertext, resource_nonce, resource_auth_tag, key_id, received_at, payload_checksum, source, request_budget_status, quality_status) " +
-  "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) " +
+  "(tenant_id, event_key_hash, event_type, resource_ciphertext, resource_nonce, resource_auth_tag, key_id, event_date, received_at, payload_checksum, source, request_budget_status, quality_status) " +
+  "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) " +
   "ON CONFLICT (tenant_id, event_key_hash) DO NOTHING";
 const SQL_LIST_PENDING =
-  "SELECT tenant_id, event_key_hash, event_type, resource_ciphertext, resource_nonce, resource_auth_tag, key_id, received_at, payload_checksum, source, request_budget_status, quality_status " +
+  "SELECT tenant_id, event_key_hash, event_type, resource_ciphertext, resource_nonce, resource_auth_tag, key_id, event_date, received_at, payload_checksum, source, request_budget_status, quality_status " +
   "FROM webhook_events WHERE tenant_id = $1 AND acknowledged_at IS NULL ORDER BY received_at ASC, event_key_hash ASC LIMIT $2";
 const SQL_ACK_EVENT =
   "UPDATE webhook_events SET acknowledged_at = $3 " +
   "WHERE tenant_id = $1 AND event_key_hash = $2 AND acknowledged_at IS NULL";
+const SQL_COUNT_PENDING =
+  "SELECT count(*)::int AS count FROM webhook_events WHERE tenant_id = $1 AND acknowledged_at IS NULL";
 const SQL_LOCK_TENANT =
   "SELECT tenant_id FROM tenants WHERE tenant_id = $1 FOR UPDATE";
 const SQL_GET_LATEST_AUDIT =
@@ -124,6 +130,38 @@ function validateWebhookEvent(event: WebhookEventInsert): void {
   validateEncryptedValue(event.resource);
 }
 
+export interface AppliedSchemaMigration {
+  readonly version: number;
+  readonly name: string;
+  readonly checksum: string;
+}
+
+export async function listAppliedSchemaMigrations(
+  tx: SqlExecutor,
+): Promise<readonly AppliedSchemaMigration[]> {
+  const result = await tx.query<{
+    version: number;
+    name: string;
+    checksum: string;
+  }>({ text: SQL_LIST_SCHEMA_MIGRATIONS, values: [] });
+
+  return Object.freeze(
+    result.rows.map((row) => {
+      if (!Number.isSafeInteger(row.version) || row.version < 1) {
+        throw new PersistenceValidationError("Invalid applied schema migration version.");
+      }
+      if (!/^[a-z0-9_]{1,64}$/.test(row.name)) {
+        throw new PersistenceValidationError("Invalid applied schema migration name.");
+      }
+      return Object.freeze({
+        version: row.version,
+        name: row.name,
+        checksum: assertSha256Hex(row.checksum, "applied schema migration checksum"),
+      });
+    }),
+  );
+}
+
 export async function withTenantTransaction<T>(
   tenantId: TenantId,
   db: PersistenceDatabase,
@@ -134,6 +172,21 @@ export async function withTenantTransaction<T>(
     await tx.query({ text: SQL_SET_TENANT, values: [checkedTenantId] });
     return work(tx);
   });
+}
+
+export async function lockTenantForUpdate(
+  tenantId: TenantId,
+  tx: SqlExecutor,
+): Promise<void> {
+  const checkedTenantId = parseTenantId(tenantId);
+  const locked = await tx.query<{ tenant_id: string }>({
+    text: SQL_LOCK_TENANT,
+    values: [checkedTenantId],
+  });
+  const row = locked.rows[0];
+  if (locked.rowCount !== 1 || row === undefined || parseTenantId(row.tenant_id) !== checkedTenantId) {
+    throw new PersistenceValidationError("Tenant unavailable for locked persistence operation.");
+  }
 }
 
 export async function getTenantBinding(
@@ -169,6 +222,7 @@ export async function insertWebhookEvent(
   validateWebhookEvent(event);
   const eventKeyHash = assertSha256Hex(event.eventKeyHash, "event key hash");
   const payloadChecksum = assertSha256Hex(event.payloadChecksum, "payload checksum");
+  const eventDate = assertIsoTimestamp(event.eventDate, "eventDate");
   const receivedAt = assertIsoTimestamp(event.receivedAt, "receivedAt");
 
   const result = await tx.query({
@@ -181,6 +235,7 @@ export async function insertWebhookEvent(
       bytes(event.resource.nonce),
       bytes(event.resource.authTag),
       event.resource.keyId,
+      eventDate,
       receivedAt,
       payloadChecksum,
       event.source,
@@ -209,6 +264,7 @@ export async function listPendingWebhookEvents(
     resource_nonce: Uint8Array;
     resource_auth_tag: Uint8Array;
     key_id: string;
+    event_date: string | Date;
     received_at: string | Date;
     payload_checksum: string;
     source: string;
@@ -233,6 +289,8 @@ export async function listPendingWebhookEvents(
         eventKeyHash: assertSha256Hex(row.event_key_hash, "event key hash"),
         eventType: assertWebhookType(row.event_type),
         resource,
+        eventDate:
+          row.event_date instanceof Date ? row.event_date.toISOString() : assertIsoTimestamp(row.event_date, "eventDate"),
         receivedAt:
           row.received_at instanceof Date ? row.received_at.toISOString() : assertIsoTimestamp(row.received_at, "receivedAt"),
         payloadChecksum: assertSha256Hex(row.payload_checksum, "payload checksum"),
@@ -242,6 +300,22 @@ export async function listPendingWebhookEvents(
       });
     }),
   );
+}
+
+export async function countPendingWebhookEvents(
+  tenantId: TenantId,
+  tx: SqlExecutor,
+): Promise<number> {
+  const checkedTenantId = parseTenantId(tenantId);
+  const result = await tx.query<{ count: number }>({
+    text: SQL_COUNT_PENDING,
+    values: [checkedTenantId],
+  });
+  const count = result.rows[0]?.count;
+  if (!Number.isSafeInteger(count) || (count as number) < 0) {
+    throw new PersistenceValidationError("Invalid pending webhook count.");
+  }
+  return count as number;
 }
 
 export async function acknowledgeWebhookEvent(
@@ -267,15 +341,7 @@ export async function appendAuditEvent(
   input: Omit<AuditEntryInput, "tenantId" | "previousHash">,
 ): Promise<{ readonly entryHash: string; readonly previousHash: string | null }> {
   const checkedTenantId = parseTenantId(tenantId);
-
-  const locked = await tx.query<{ tenant_id: string }>({
-    text: SQL_LOCK_TENANT,
-    values: [checkedTenantId],
-  });
-  const lockedTenant = locked.rows[0]?.tenant_id;
-  if (locked.rowCount !== 1 || lockedTenant === undefined || parseTenantId(lockedTenant) !== checkedTenantId) {
-    throw new PersistenceValidationError("Tenant unavailable for audit append.");
-  }
+  await lockTenantForUpdate(checkedTenantId, tx);
 
   const latest = await tx.query<{ entry_hash: string }>({
     text: SQL_GET_LATEST_AUDIT,

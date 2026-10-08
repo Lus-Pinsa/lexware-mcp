@@ -4,6 +4,7 @@ import {
   appendAuditEvent,
   getTenantBinding,
   insertWebhookEvent,
+  listAppliedSchemaMigrations,
   listPendingWebhookEvents,
   type PersistenceDatabase,
   type QueryResult,
@@ -48,6 +49,18 @@ describe("tenant-scoped persistence repository", () => {
     expect(transaction).not.toHaveBeenCalled();
   });
 
+  it("reads and validates the schema migration ledger without tenant fallback", async () => {
+    const tx = executor([
+      { version: 1, name: "foundation", checksum: sha256Hex("m1") },
+      { version: 2, name: "webhook_event_date", checksum: sha256Hex("m2") },
+    ]);
+    await expect(listAppliedSchemaMigrations(tx)).resolves.toEqual([
+      { version: 1, name: "foundation", checksum: sha256Hex("m1") },
+      { version: 2, name: "webhook_event_date", checksum: sha256Hex("m2") },
+    ]);
+    expect(tx.query.mock.calls[0][0].values).toEqual([]);
+  });
+
   it("reads a tenant binding only by the explicit tenant id", async () => {
     const orgHash = sha256Hex("synthetic-org");
     const tx = executor([{ tenant_id: TENANT, organization_id_hash: orgHash, status: "active" }]);
@@ -73,6 +86,7 @@ describe("tenant-scoped persistence repository", () => {
       eventKeyHash,
       eventType: "voucher.created",
       resource,
+      eventDate: "2026-10-08T16:59:00.000Z",
       receivedAt: "2026-10-08T17:00:00.000Z",
       payloadChecksum,
       source: "lexware_webhook",
@@ -100,6 +114,7 @@ describe("tenant-scoped persistence repository", () => {
         field: "resource_id",
         recordId: eventKeyHash,
       }),
+      eventDate: "2026-10-08T16:59:00Z",
       receivedAt: "2026-10-08T17:00:00Z",
       payloadChecksum: sha256Hex("payload"),
       source: "lexware_webhook",
@@ -120,6 +135,7 @@ describe("tenant-scoped persistence repository", () => {
         resource_nonce: new Uint8Array(12),
         resource_auth_tag: new Uint8Array(16),
         key_id: "k1",
+        event_date: "2026-10-08T16:59:00Z",
         received_at: "2026-10-08T17:00:00Z",
         payload_checksum: sha256Hex("payload"),
         source: "lexware_webhook",
@@ -152,6 +168,7 @@ describe("tenant-scoped persistence repository", () => {
         resource_nonce: new Uint8Array(12),
         resource_auth_tag: new Uint8Array(16),
         key_id: "k1",
+        event_date: "2026-10-08T16:59:00Z",
         received_at: "2026-10-08T17:00:00Z",
         payload_checksum: sha256Hex("payload"),
         source: "lexware_webhook",
@@ -169,6 +186,7 @@ describe("tenant-scoped persistence repository", () => {
         eventKeyHash: sha256Hex("event-key"),
         eventType: "voucher.created",
         resource: { ciphertext: new Uint8Array(), nonce: new Uint8Array(12), authTag: new Uint8Array(16), keyId: "k1" },
+        eventDate: "2026-10-08T16:59:00Z",
         receivedAt: "2026-10-08T17:00:00Z",
         payloadChecksum: sha256Hex("payload"),
         source: "lexware_webhook",

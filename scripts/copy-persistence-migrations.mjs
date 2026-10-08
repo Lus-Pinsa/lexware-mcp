@@ -5,7 +5,7 @@ const source = join(process.cwd(), "src", "persistence", "migrations");
 const target = join(process.cwd(), "dist", "persistence", "migrations");
 
 const files = readdirSync(source)
-  .filter((name) => /^\d{3}_[a-z0-9-]+\.sql$/.test(name))
+  .filter((name) => /^\d{3}_[a-z0-9_-]+\.sql$/.test(name))
   .sort();
 
 if (files.length === 0) {

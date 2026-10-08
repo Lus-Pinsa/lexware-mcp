@@ -8,8 +8,9 @@ import type {
 } from "../lexware/types.js";
 
 import {
-  listPendingVoucherEvents,
-} from "../pending-voucher-events.js";
+  createMemoryPendingVoucherEventStore,
+  type PendingVoucherEventStore,
+} from "../pending-voucher-store.js";
 
 import {
   jsonNum,
@@ -181,7 +182,7 @@ function reconciliationCandidateDetail(
  * Purpose:
  *
  * Compare recent vouchers from Lexware (Source of Truth)
- * against the current in-memory Pending Queue.
+ * against the current Pending Queue.
  *
  * IMPORTANT:
  *
@@ -210,6 +211,7 @@ function reconciliationCandidateDetail(
 export function registerVoucherReconciliationReadTools(
   server: McpServer,
   client: LexwareClient,
+  pendingStore: PendingVoucherEventStore = createMemoryPendingVoucherEventStore(),
 ): void {
   server.registerTool(
     {
@@ -219,7 +221,7 @@ export function registerVoucherReconciliationReadTools(
       description:
         "READ-ONLY restart/reconciliation fallback for the LU'S Lexware Pending Queue. " +
         "Loads bookkeeping vouchers created in Lexware during the requested creation-date window and compares " +
-        "them with the current in-memory pending voucher queue. Vouchers missing from the queue are returned as " +
+        "them with the current pending voucher queue. Vouchers missing from the queue are returned as " +
         "reconciliation candidates. A candidate is NOT proof of a missed webhook: it may have been acknowledged " +
         "earlier or the RAM queue may have been cleared by a restart/redeploy. This tool never modifies Lexware, " +
         "never acknowledges events and never changes the pending queue.",
@@ -394,7 +396,7 @@ export function registerVoucherReconciliationReadTools(
        * No mutation.
        */
       const pending =
-        listPendingVoucherEvents();
+        await pendingStore.list();
 
       const pendingIds =
         new Set(
@@ -426,7 +428,7 @@ export function registerVoucherReconciliationReadTools(
         );
 
       /*
-       * Recent Lexware vouchers missing from current RAM queue.
+       * Recent Lexware vouchers missing from current queue.
        *
        * These are candidates only.
        *

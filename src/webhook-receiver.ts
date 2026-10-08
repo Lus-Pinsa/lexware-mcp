@@ -7,7 +7,7 @@
  * Log lines carry no Lexware ids or dates (FINANCIAL per ai-company/security/data-classification.md), only fixed
  * reason codes and counts.
  */
-import { createVerify } from "node:crypto";
+import { createHash, createVerify } from "node:crypto";
 
 import { evaluateLexwareWebhook } from "./lexware/webhook.js";
 
@@ -32,7 +32,11 @@ export interface WebhookReceiverDeps {
   readonly getPublicKey: () => string | undefined;
   /** When set, events of any other Lexware organization are ignored. */
   readonly organizationId?: string;
-  readonly enqueue: (event: { resourceId: string; eventDate: string }) => WebhookQueueResult;
+  readonly enqueue: (event: {
+    resourceId: string;
+    eventDate: string;
+    payloadChecksum: string;
+  }) => Promise<WebhookQueueResult>;
   /** Total events dropped since start (for the overflow warning). */
   readonly droppedTotal: () => number;
   readonly log: (line: string) => void;
@@ -50,8 +54,10 @@ export function verifyLexwareWebhookSignature(rawBody: Buffer, signatureBase64: 
   }
 }
 
-export function createLexwareWebhookHandler(deps: WebhookReceiverDeps): (req: WebhookRequest, res: WebhookResponse) => void {
-  return (req, res) => {
+export function createLexwareWebhookHandler(
+  deps: WebhookReceiverDeps,
+): (req: WebhookRequest, res: WebhookResponse) => Promise<void> {
+  return async (req, res) => {
     const publicKey = deps.getPublicKey();
     if (!publicKey) {
       deps.log("[lexware-webhook] LEXWARE_WEBHOOK_PUBLIC_KEY missing");
@@ -99,7 +105,22 @@ export function createLexwareWebhookHandler(deps: WebhookReceiverDeps): (req: We
       return;
     }
 
-    const pending = deps.enqueue({ resourceId: decision.event.resourceId, eventDate: decision.event.eventDate });
+    const payloadChecksum = createHash("sha256").update(rawBody).digest("hex");
+    let pending: WebhookQueueResult;
+    try {
+      pending = await deps.enqueue({
+        resourceId: decision.event.resourceId,
+        eventDate: decision.event.eventDate,
+        payloadChecksum,
+      });
+    } catch {
+      // Returning 503 is deliberate: Lexware may retry; a verified event is
+      // never acknowledged as accepted before the queue commit succeeds.
+      deps.log("[lexware-webhook] queue unavailable");
+      res.sendStatus(503);
+      return;
+    }
+
     deps.log(`[lexware-webhook] NEW VOUCHER pending=${pending.count} added=${pending.added}`);
     if (pending.dropped > 0) {
       deps.log(

@@ -100,7 +100,7 @@ describe("persistence structural policy", () => {
     const copyScript = read("scripts/copy-persistence-migrations.mjs");
     expect(copyScript).toContain('"src", "persistence", "migrations"');
     expect(copyScript).toContain('"dist", "persistence", "migrations"');
-    expect(copyScript).toContain("/^\\d{3}_[a-z0-9-]+\\.sql$/");
+    expect(copyScript).toContain("/^\\d{3}_[a-z0-9_-]+\\.sql$/");
   });
 
   it("adds no dependency on Lexware write surfaces", () => {
@@ -115,12 +115,13 @@ describe("persistence structural policy", () => {
 
 describe("schema version fail-closed helpers", () => {
   it("accepts only the exact known schema version", () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(1);
-    expect(assessSchemaVersion(1)).toBe("AVAILABLE");
+    expect(CURRENT_SCHEMA_VERSION).toBe(2);
+    expect(assessSchemaVersion(2)).toBe("AVAILABLE");
     expect(assessSchemaVersion(null)).toBe("UNAVAILABLE");
     expect(assessSchemaVersion(0)).toBe("INTEGRITY_FAILED");
-    expect(assessSchemaVersion(2)).toBe("VERSION_MISMATCH");
-    expect(() => requireKnownSchemaVersion(2)).toThrow(/VERSION_MISMATCH/);
+    expect(assessSchemaVersion(1)).toBe("VERSION_MISMATCH");
+    expect(assessSchemaVersion(3)).toBe("VERSION_MISMATCH");
+    expect(() => requireKnownSchemaVersion(1)).toThrow(/VERSION_MISMATCH/);
   });
 });
 

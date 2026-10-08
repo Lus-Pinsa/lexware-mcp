@@ -72,13 +72,17 @@ function validateEventDate(value: string): string {
 }
 
 function eventKeyHash(resourceId: string, eventDate: string): string {
-  return sha256Hex("voucher.created\u0000" + resourceId + "\u0000" + eventDate);
+  return sha256Hex("voucher.created\\0" + resourceId + "\\0" + eventDate);
 }
 
 export function createMemoryPendingVoucherEventStore(): PendingVoucherEventStore {
   return Object.freeze({
     mode: "memory" as const,
-    async enqueue(input) {
+    async enqueue(input: {
+      readonly resourceId: string;
+      readonly eventDate: string;
+      readonly payloadChecksum: string;
+    }) {
       validateResourceId(input.resourceId);
       validateEventDate(input.eventDate);
       const result = addPendingVoucherEvent({
@@ -114,7 +118,11 @@ export function createDurablePendingVoucherEventStore(options: {
   return Object.freeze({
     mode: "postgres" as const,
 
-    async enqueue(input) {
+    async enqueue(input: {
+      readonly resourceId: string;
+      readonly eventDate: string;
+      readonly payloadChecksum: string;
+    }) {
       const resourceId = validateResourceId(input.resourceId);
       const eventDate = validateEventDate(input.eventDate);
       const payloadChecksum = assertSha256Hex(

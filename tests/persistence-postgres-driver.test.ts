@@ -20,7 +20,7 @@ function fakeFactory() {
 }
 
 describe("Postgres persistence driver", () => {
-  it("always enforces TLS verify-full and strips URL-level SSL overrides", async () => {
+  it("defaults to TLS verify-full and strips URL-level SSL overrides", async () => {
     const fake = fakeFactory();
     const db = createPostgresDatabase(
       {
@@ -47,6 +47,33 @@ describe("Postgres persistence driver", () => {
 
     await db.close();
     expect(fake.end).toHaveBeenCalledWith({ timeout: 5 });
+  });
+
+  it("supports explicit TLS require without permitting plaintext fallback", async () => {
+    const fake = fakeFactory();
+    const db = createPostgresDatabase(
+      {
+        connectionString: "postgresql://db.internal.example.test/lus?sslmode=disable",
+        tlsMode: "require",
+      },
+      fake.factory as never,
+    );
+    expect(fake.calls[0].connectionString).not.toContain("sslmode");
+    expect(fake.calls[0].options.ssl).toBe("require");
+    await db.close();
+  });
+
+  it("rejects an unknown TLS mode", () => {
+    const fake = fakeFactory();
+    expect(() =>
+      createPostgresDatabase(
+        {
+          connectionString: "postgresql://db.example.test/lus",
+          tlsMode: "disable" as never,
+        },
+        fake.factory as never,
+      ),
+    ).toThrow(/TLS mode/);
   });
 
   it("pins repository work to the transaction client and parameterizes values", async () => {

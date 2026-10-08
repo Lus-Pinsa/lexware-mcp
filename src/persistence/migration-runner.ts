@@ -27,6 +27,16 @@ const SQL_INSERT_MIGRATION =
 const DESTRUCTIVE_SQL =
   /\b(?:DROP\s+(?:TABLE|SCHEMA|COLUMN)|TRUNCATE\b|ALTER\s+TABLE[\s\S]{0,200}\bDROP\b)\b/i;
 
+export function assertSafeMigrationSql(sql: string): string {
+  if (sql.length < 1 || sql.length > 1024 * 1024) {
+    throw new PersistenceValidationError("Invalid migration file size.");
+  }
+  if (DESTRUCTIVE_SQL.test(sql)) {
+    throw new PersistenceValidationError("Destructive migration requires a separate approved path.");
+  }
+  return sql;
+}
+
 function migrationPath(file: string): string {
   return fileURLToPath(new URL("./migrations/" + file, import.meta.url));
 }

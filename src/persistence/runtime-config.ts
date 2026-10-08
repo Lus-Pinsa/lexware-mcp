@@ -18,6 +18,7 @@ export interface EnabledPersistenceRuntimeConfig {
   readonly tenantId: TenantId;
   readonly organizationIdHash: string;
   readonly expectedRuntimeRole: string;
+  readonly tlsMode: "verify-full" | "require";
   readonly secrets: PersistenceRuntimeSecrets;
 }
 
@@ -132,6 +133,13 @@ export function loadPersistenceRuntimeConfig(
   if (!/^[A-Za-z0-9_-]{1,63}$/.test(expectedRuntimeRole)) {
     throw new PersistenceValidationError("Invalid PERSISTENCE_RUNTIME_ROLE.");
   }
+
+  const tlsModeRaw =
+    env.PERSISTENCE_TLS_MODE?.trim() || "verify-full";
+  if (tlsModeRaw !== "verify-full" && tlsModeRaw !== "require") {
+    throw new PersistenceValidationError("Invalid PERSISTENCE_TLS_MODE.");
+  }
+  const tlsMode = tlsModeRaw;
   if (!organizationId?.trim()) {
     throw new PersistenceValidationError(
       "LEXWARE_ORGANIZATION_ID is required when persistence is enabled.",
@@ -167,6 +175,7 @@ export function loadPersistenceRuntimeConfig(
     enabled: true as const,
     tenantId,
     expectedRuntimeRole,
+    tlsMode,
     secrets,
   } as EnabledPersistenceRuntimeConfig;
 

@@ -114,6 +114,7 @@ LEXWARE_API_KEY=... MCP_AUTH_TOKEN=... npm start
 | `LEXWARE_DEBUG_LOGGING` | `false` | Verbose logs (never secrets/bodies) |
 | `PERSISTENCE_ENABLED` | `false` | Phase-2 persistence master switch; disabled unless explicitly enabled |
 | `PERSISTENCE_DATABASE_URL` | — | **SECRET**, required when persistence is enabled; runtime-role PostgreSQL URL |
+| `PERSISTENCE_TLS_MODE` | `verify-full` | DB TLS policy. `require` is an explicit encrypted-only exception for private networks that cannot support CA/hostname verification |
 | `LUS_TENANT_ID` | — | Required when persistence is enabled; explicit internal UUIDv4 tenant id, no implicit/default tenant |
 | `PERSISTENCE_RUNTIME_ROLE` | `lus_runtime` | Exact PostgreSQL role required at runtime; startup rejects owner/superuser/DDL/BYPASSRLS or broader table privileges |
 | `PERSISTENCE_CURRENT_KEY_ID` | — | Required when persistence is enabled; key id used for new AES-256-GCM writes |
@@ -173,7 +174,8 @@ domain) is in [docs/cloud-run.md](docs/cloud-run.md).
   `reconcile-recent-vouchers` is the fallback against Lexware as source of truth).
 - `ai-company/` + `.claude/` — the LU'S multi-agent foundation (Cloud CEO, boards, governance, safety
   gates); see [ai-company/README.md](ai-company/README.md).
-- `src/persistence/` — tenant-first PostgreSQL foundation (RLS-aware repositories, AES-256-GCM field encryption, checksummed migrations, and fail-closed runtime/tenant configuration). Persistence remains disabled by default and Lexware remains the source of truth.\n- `src/server.ts` — wires it together on the Skybridge Express server.
+- `src/persistence/` — tenant-first PostgreSQL foundation (RLS-aware repositories, AES-256-GCM field encryption, checksummed migrations, and fail-closed runtime/tenant configuration). Persistence remains disabled by default and Lexware remains the source of truth.
+- `src/server.ts` — wires it together on the Skybridge Express server.
 
 ## Development
 

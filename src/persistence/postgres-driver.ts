@@ -31,8 +31,11 @@ export class PersistenceDatabaseError extends Error {
   }
 }
 
+export type PostgresTlsMode = "verify-full" | "require";
+
 export interface PostgresDriverSettings {
   readonly connectionString: string;
+  readonly tlsMode?: PostgresTlsMode;
   readonly maxConnections?: number;
   readonly connectTimeoutSeconds?: number;
   readonly idleTimeoutSeconds?: number;
@@ -150,6 +153,10 @@ function createDriver(
   factory: DriverFactory,
 ): DriverClient {
   const connectionString = normalizedConnectionString(settings.connectionString);
+  const tlsMode = settings.tlsMode ?? "verify-full";
+  if (tlsMode !== "verify-full" && tlsMode !== "require") {
+    throw new PersistenceValidationError("Invalid database TLS mode.");
+  }
   const max = boundedInteger(settings.maxConnections, 4, 1, 16, "database maxConnections");
   const connectTimeout = boundedInteger(
     settings.connectTimeoutSeconds,
@@ -171,7 +178,7 @@ function createDriver(
   }
 
   return factory(connectionString, {
-    ssl: "verify-full",
+    ssl: tlsMode,
     max,
     connect_timeout: connectTimeout,
     idle_timeout: idleTimeout,

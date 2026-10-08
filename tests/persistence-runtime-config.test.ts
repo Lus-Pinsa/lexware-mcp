@@ -42,6 +42,7 @@ describe("persistence runtime configuration", () => {
 
     expect(config.tenantId).toBe(TENANT);
     expect(config.expectedRuntimeRole).toBe("lus_runtime");
+    expect(config.tlsMode).toBe("verify-full");
     expect(config.organizationIdHash).toBe(sha256Hex(ORG.toLowerCase()));
     expect(config.secrets.keyring.currentKeyId).toBe("k1");
     expect(config.secrets.getDatabaseUrl()).toBe(env.PERSISTENCE_DATABASE_URL);
@@ -82,6 +83,22 @@ describe("persistence runtime configuration", () => {
     if (!config.enabled) throw new Error("expected enabled config");
     expect(config.secrets.keyring.getKey("__proto__")).toHaveLength(32);
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it("requires an explicit valid TLS mode and never permits disable", () => {
+    const required = loadPersistenceRuntimeConfig(
+      enabledEnv({ PERSISTENCE_TLS_MODE: "require" }),
+      ORG,
+    );
+    if (!required.enabled) throw new Error("expected enabled config");
+    expect(required.tlsMode).toBe("require");
+
+    expect(() =>
+      loadPersistenceRuntimeConfig(
+        enabledEnv({ PERSISTENCE_TLS_MODE: "disable" }),
+        ORG,
+      ),
+    ).toThrow(/PERSISTENCE_TLS_MODE/);
   });
 
   it("allows an explicit validated runtime role name", () => {

@@ -163,6 +163,8 @@ if (persistenceConfig.enabled) {
       connectionString:
         persistenceConfig.secrets
           .getDatabaseUrl(),
+      tlsMode:
+        persistenceConfig.tlsMode,
       applicationName:
         "lus-lexware-mcp",
     });

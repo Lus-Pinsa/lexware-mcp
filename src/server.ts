@@ -29,7 +29,11 @@ import {
 import { loadPersistenceRuntimeConfig } from "./persistence/runtime-config.js";
 import { verifyConfiguredTenantBinding } from "./persistence/tenant-binding.js";
 import { assertMigrationStateCurrent } from "./persistence/migration-runner.js";
-import { listAppliedSchemaMigrations } from "./persistence/repository.js";
+import {
+  inspectRuntimePrivileges,
+  listAppliedSchemaMigrations,
+} from "./persistence/repository.js";
+import { assertLeastPrivilegeRuntimeRole } from "./persistence/runtime-privileges.js";
 /**
  * Base64 file uploads
  * (upload-file / upload-voucher-file)
@@ -170,6 +174,15 @@ if (persistenceConfig.enabled) {
     );
   assertMigrationStateCurrent(
     appliedMigrations,
+  );
+
+  const runtimePrivileges =
+    await persistenceDb.transaction(
+      (tx) => inspectRuntimePrivileges(tx),
+    );
+  assertLeastPrivilegeRuntimeRole(
+    runtimePrivileges,
+    persistenceConfig.expectedRuntimeRole,
   );
 
   await verifyConfiguredTenantBinding(

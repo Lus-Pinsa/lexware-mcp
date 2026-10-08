@@ -52,4 +52,4 @@ Status: proposed test plan. No persistence code exists yet.
 
 ## Gate
 
-Implementation remains BLOCKED until P-00 owner approval. No test result may be marked green before executable evidence exists.
+**P-00 owner approval was given on 2026-10-08 for managed PostgreSQL.** Implementation may proceed, but no test result may be marked green before executable evidence exists. Destructive migrations, production rollout, and irreversible operations still require their own gates.

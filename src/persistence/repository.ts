@@ -1,3 +1,4 @@
+import { type AuditEntryInput, computeAuditEntryHash, validateAuditEntry } from "./audit.js";
 import { validateEncryptedValue } from "./crypto.js";
 import {
   type EncryptedValue,
@@ -69,6 +70,14 @@ const SQL_LIST_PENDING =
 const SQL_ACK_EVENT =
   "UPDATE webhook_events SET acknowledged_at = $3 " +
   "WHERE tenant_id = $1 AND event_key_hash = $2 AND acknowledged_at IS NULL";
+const SQL_LOCK_TENANT =
+  "SELECT tenant_id FROM tenants WHERE tenant_id = $1 FOR UPDATE";
+const SQL_GET_LATEST_AUDIT =
+  "SELECT entry_hash FROM audit_events WHERE tenant_id = $1 ORDER BY created_at DESC, audit_id DESC LIMIT 1";
+const SQL_INSERT_AUDIT =
+  "INSERT INTO audit_events " +
+  "(audit_id, tenant_id, actor_hash, action, result, item_count, created_at, previous_hash, entry_hash) " +
+  "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)";
 
 function assertIsoTimestamp(value: string, field: string): string {
   if (
@@ -249,4 +258,56 @@ export async function acknowledgeWebhookEvent(
     values: [checkedTenantId, checkedHash, checkedTime],
   });
   return Object.freeze({ acknowledged: result.rowCount === 1 });
+}
+
+
+export async function appendAuditEvent(
+  tenantId: TenantId,
+  tx: SqlExecutor,
+  input: Omit<AuditEntryInput, "tenantId" | "previousHash">,
+): Promise<{ readonly entryHash: string; readonly previousHash: string | null }> {
+  const checkedTenantId = parseTenantId(tenantId);
+
+  const locked = await tx.query<{ tenant_id: string }>({
+    text: SQL_LOCK_TENANT,
+    values: [checkedTenantId],
+  });
+  const lockedTenant = locked.rows[0]?.tenant_id;
+  if (locked.rowCount !== 1 || lockedTenant === undefined || parseTenantId(lockedTenant) !== checkedTenantId) {
+    throw new PersistenceValidationError("Tenant unavailable for audit append.");
+  }
+
+  const latest = await tx.query<{ entry_hash: string }>({
+    text: SQL_GET_LATEST_AUDIT,
+    values: [checkedTenantId],
+  });
+  const previousHash =
+    latest.rows[0] === undefined ? null : assertSha256Hex(latest.rows[0].entry_hash, "previous audit hash");
+
+  const entry = validateAuditEntry({
+    ...input,
+    tenantId: checkedTenantId,
+    previousHash,
+  });
+  const entryHash = computeAuditEntryHash(entry);
+
+  const inserted = await tx.query({
+    text: SQL_INSERT_AUDIT,
+    values: [
+      entry.auditId,
+      checkedTenantId,
+      entry.actorHash,
+      entry.action,
+      entry.result,
+      entry.itemCount,
+      entry.createdAt,
+      entry.previousHash,
+      entryHash,
+    ],
+  });
+  if (inserted.rowCount !== 1) {
+    throw new PersistenceValidationError("Audit append failed.");
+  }
+
+  return Object.freeze({ entryHash, previousHash });
 }

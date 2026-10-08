@@ -41,6 +41,7 @@ describe("persistence runtime configuration", () => {
     if (!config.enabled) throw new Error("expected enabled config");
 
     expect(config.tenantId).toBe(TENANT);
+    expect(config.expectedRuntimeRole).toBe("lus_runtime");
     expect(config.organizationIdHash).toBe(sha256Hex(ORG.toLowerCase()));
     expect(config.secrets.keyring.currentKeyId).toBe("k1");
     expect(config.secrets.getDatabaseUrl()).toBe(env.PERSISTENCE_DATABASE_URL);
@@ -81,6 +82,21 @@ describe("persistence runtime configuration", () => {
     if (!config.enabled) throw new Error("expected enabled config");
     expect(config.secrets.keyring.getKey("__proto__")).toHaveLength(32);
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it("allows an explicit validated runtime role name", () => {
+    const config = loadPersistenceRuntimeConfig(
+      enabledEnv({ PERSISTENCE_RUNTIME_ROLE: "lus_runtime_prod" }),
+      ORG,
+    );
+    if (!config.enabled) throw new Error("expected enabled config");
+    expect(config.expectedRuntimeRole).toBe("lus_runtime_prod");
+    expect(() =>
+      loadPersistenceRuntimeConfig(
+        enabledEnv({ PERSISTENCE_RUNTIME_ROLE: "bad role" }),
+        ORG,
+      ),
+    ).toThrow(/PERSISTENCE_RUNTIME_ROLE/);
   });
 
   it("returns defensive copies of secret key/salt material", () => {

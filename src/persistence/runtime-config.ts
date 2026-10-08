@@ -17,6 +17,7 @@ export interface EnabledPersistenceRuntimeConfig {
   readonly enabled: true;
   readonly tenantId: TenantId;
   readonly organizationIdHash: string;
+  readonly expectedRuntimeRole: string;
   readonly secrets: PersistenceRuntimeSecrets;
 }
 
@@ -126,6 +127,11 @@ export function loadPersistenceRuntimeConfig(
     throw new PersistenceValidationError("Invalid PERSISTENCE_DATABASE_URL.");
   }
   const tenantId = parseTenantId(required(env, "LUS_TENANT_ID"));
+  const expectedRuntimeRole =
+    env.PERSISTENCE_RUNTIME_ROLE?.trim() || "lus_runtime";
+  if (!/^[A-Za-z0-9_-]{1,63}$/.test(expectedRuntimeRole)) {
+    throw new PersistenceValidationError("Invalid PERSISTENCE_RUNTIME_ROLE.");
+  }
   if (!organizationId?.trim()) {
     throw new PersistenceValidationError(
       "LEXWARE_ORGANIZATION_ID is required when persistence is enabled.",
@@ -160,6 +166,7 @@ export function loadPersistenceRuntimeConfig(
   const config = {
     enabled: true as const,
     tenantId,
+    expectedRuntimeRole,
     secrets,
   } as EnabledPersistenceRuntimeConfig;
 

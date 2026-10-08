@@ -60,6 +60,25 @@ export interface PendingWebhookEvent {
 
 const SQL_LIST_SCHEMA_MIGRATIONS =
   "SELECT version::int AS version, name, checksum FROM schema_migrations ORDER BY version ASC";
+const SQL_RUNTIME_PRIVILEGES =
+  "SELECT " +
+  "current_user AS role_name, " +
+  "r.rolsuper AS is_superuser, " +
+  "r.rolbypassrls AS bypass_rls, " +
+  "r.rolcreatedb AS can_create_database, " +
+  "r.rolcreaterole AS can_create_role, " +
+  "has_database_privilege(current_user, current_database(), 'CREATE') AS can_create_in_database, " +
+  "has_schema_privilege(current_user, 'public', 'CREATE') AS can_create_in_public_schema, " +
+  "has_table_privilege(current_user, 'public.schema_migrations', 'SELECT') AS migrations_select, " +
+  "has_table_privilege(current_user, 'public.schema_migrations', 'INSERT,UPDATE,DELETE,TRUNCATE') AS migrations_mutate, " +
+  "has_table_privilege(current_user, 'public.tenants', 'SELECT') AS tenants_select, " +
+  "has_table_privilege(current_user, 'public.tenants', 'INSERT,UPDATE,DELETE,TRUNCATE') AS tenants_mutate, " +
+  "has_table_privilege(current_user, 'public.webhook_events', 'SELECT,INSERT,UPDATE') AS webhook_dml, " +
+  "has_table_privilege(current_user, 'public.webhook_events', 'DELETE,TRUNCATE') AS webhook_delete, " +
+  "has_table_privilege(current_user, 'public.audit_events', 'SELECT,INSERT') AS audit_append, " +
+  "has_table_privilege(current_user, 'public.audit_events', 'UPDATE,DELETE,TRUNCATE') AS audit_mutate, " +
+  "(SELECT count(*)::int FROM pg_auth_members m JOIN pg_roles me ON me.oid = m.member WHERE me.rolname = current_user) AS role_memberships " +
+  "FROM pg_roles r WHERE r.rolname = current_user";
 const SQL_SET_TENANT = "SELECT set_config('app.tenant_id', $1, true) AS tenant_id";
 const SQL_GET_TENANT =
   "SELECT tenant_id, organization_id_hash, status FROM tenants WHERE tenant_id = $1";
@@ -128,6 +147,78 @@ function validateWebhookEvent(event: WebhookEventInsert): void {
   assertRequestBudgetStatus(event.requestBudgetStatus);
   assertQualityStatus(event.qualityStatus);
   validateEncryptedValue(event.resource);
+}
+
+export interface RuntimePrivilegeSnapshot {
+  readonly roleName: string;
+  readonly isSuperuser: boolean;
+  readonly bypassRls: boolean;
+  readonly canCreateDatabase: boolean;
+  readonly canCreateRole: boolean;
+  readonly canCreateInDatabase: boolean;
+  readonly canCreateInPublicSchema: boolean;
+  readonly migrationsSelect: boolean;
+  readonly migrationsMutate: boolean;
+  readonly tenantsSelect: boolean;
+  readonly tenantsMutate: boolean;
+  readonly webhookDml: boolean;
+  readonly webhookDelete: boolean;
+  readonly auditAppend: boolean;
+  readonly auditMutate: boolean;
+  readonly roleMemberships: number;
+}
+
+export async function inspectRuntimePrivileges(
+  tx: SqlExecutor,
+): Promise<RuntimePrivilegeSnapshot> {
+  const result = await tx.query<{
+    role_name: string;
+    is_superuser: boolean;
+    bypass_rls: boolean;
+    can_create_database: boolean;
+    can_create_role: boolean;
+    can_create_in_database: boolean;
+    can_create_in_public_schema: boolean;
+    migrations_select: boolean;
+    migrations_mutate: boolean;
+    tenants_select: boolean;
+    tenants_mutate: boolean;
+    webhook_dml: boolean;
+    webhook_delete: boolean;
+    audit_append: boolean;
+    audit_mutate: boolean;
+    role_memberships: number;
+  }>({ text: SQL_RUNTIME_PRIVILEGES, values: [] });
+
+  const row = result.rows[0];
+  if (result.rowCount !== 1 || row === undefined) {
+    throw new PersistenceValidationError("Runtime database role could not be inspected.");
+  }
+  if (!/^[A-Za-z0-9_-]{1,63}$/.test(row.role_name)) {
+    throw new PersistenceValidationError("Runtime database role name is invalid.");
+  }
+  if (!Number.isSafeInteger(row.role_memberships) || row.role_memberships < 0) {
+    throw new PersistenceValidationError("Runtime database role memberships are invalid.");
+  }
+
+  return Object.freeze({
+    roleName: row.role_name,
+    isSuperuser: row.is_superuser,
+    bypassRls: row.bypass_rls,
+    canCreateDatabase: row.can_create_database,
+    canCreateRole: row.can_create_role,
+    canCreateInDatabase: row.can_create_in_database,
+    canCreateInPublicSchema: row.can_create_in_public_schema,
+    migrationsSelect: row.migrations_select,
+    migrationsMutate: row.migrations_mutate,
+    tenantsSelect: row.tenants_select,
+    tenantsMutate: row.tenants_mutate,
+    webhookDml: row.webhook_dml,
+    webhookDelete: row.webhook_delete,
+    auditAppend: row.audit_append,
+    auditMutate: row.audit_mutate,
+    roleMemberships: row.role_memberships,
+  });
 }
 
 export interface AppliedSchemaMigration {

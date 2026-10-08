@@ -115,6 +115,7 @@ LEXWARE_API_KEY=... MCP_AUTH_TOKEN=... npm start
 | `PERSISTENCE_ENABLED` | `false` | Phase-2 persistence master switch; disabled unless explicitly enabled |
 | `PERSISTENCE_DATABASE_URL` | — | **SECRET**, required when persistence is enabled; runtime-role PostgreSQL URL |
 | `LUS_TENANT_ID` | — | Required when persistence is enabled; explicit internal UUIDv4 tenant id, no implicit/default tenant |
+| `PERSISTENCE_RUNTIME_ROLE` | `lus_runtime` | Exact PostgreSQL role required at runtime; startup rejects owner/superuser/DDL/BYPASSRLS or broader table privileges |
 | `PERSISTENCE_CURRENT_KEY_ID` | — | Required when persistence is enabled; key id used for new AES-256-GCM writes |
 | `PERSISTENCE_KEYRING` | — | **SECRET**, required when persistence is enabled; JSON map of key id → canonical base64 32-byte AES key |
 | `PERSISTENCE_AUDIT_ACTOR_SALT` | — | **SECRET**, required when persistence is enabled; canonical base64 32-byte HMAC salt |

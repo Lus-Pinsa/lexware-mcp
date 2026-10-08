@@ -114,19 +114,24 @@ describe("registerTools (tiered registration)", () => {
     expect(names).toEqual([...READ_TOOLS].sort());
   });
 
-  it("default registers read + draft tools (no finalize)", () => {
+  it("default registers exactly the read tools (fail closed)", () => {
     const names = registeredNames(loadConfig(env()));
+    expect(names).toEqual([...READ_TOOLS].sort());
+  });
+
+  it("explicit write opt-in registers read + draft tools (no finalize)", () => {
+    const names = registeredNames(loadConfig(env({ LEXWARE_READ_ONLY: "false" })));
     expect(names).toEqual([...READ_TOOLS, ...DRAFT_TOOLS].sort());
     expect(names).not.toContain("create-finalized-invoice");
   });
 
   it("finalize tier adds the finalize tool", () => {
-    const names = registeredNames(loadConfig(env({ LEXWARE_ENABLE_FINALIZE: "true" })));
+    const names = registeredNames(loadConfig(env({ LEXWARE_READ_ONLY: "false", LEXWARE_ENABLE_FINALIZE: "true" })));
     expect(names).toEqual([...READ_TOOLS, ...DRAFT_TOOLS, ...FINALIZE_TOOLS].sort());
   });
 
   it("never registers a disabled tier's tools", () => {
-    const names = registeredNames(loadConfig(env({ LEXWARE_ENABLE_DRAFTS: "false" })));
+    const names = registeredNames(loadConfig(env({ LEXWARE_READ_ONLY: "false", LEXWARE_ENABLE_DRAFTS: "false" })));
     expect(names).toEqual([...READ_TOOLS].sort());
   });
 
@@ -134,7 +139,7 @@ describe("registerTools (tiered registration)", () => {
     // Guards against a config that exposes ONLY the irreversible create-finalized-*
     // tools (no safe draft path).
     const names = registeredNames(
-      loadConfig(env({ LEXWARE_ENABLE_DRAFTS: "false", LEXWARE_ENABLE_FINALIZE: "true" })),
+      loadConfig(env({ LEXWARE_READ_ONLY: "false", LEXWARE_ENABLE_DRAFTS: "false", LEXWARE_ENABLE_FINALIZE: "true" })),
     );
     expect(names).toEqual([...READ_TOOLS, ...DRAFT_TOOLS, ...FINALIZE_TOOLS].sort());
   });

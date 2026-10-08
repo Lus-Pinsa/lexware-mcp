@@ -100,7 +100,7 @@ describe("persistence structural policy", () => {
     const copyScript = read("scripts/copy-persistence-migrations.mjs");
     expect(copyScript).toContain('"src", "persistence", "migrations"');
     expect(copyScript).toContain('"dist", "persistence", "migrations"');
-    expect(copyScript).toMatch(/\\d\{3\}_[a-z0-9-]+\\\.sql/);
+    expect(copyScript).toContain("/^\\d{3}_[a-z0-9-]+\\.sql$/");
   });
 
   it("adds no dependency on Lexware write surfaces", () => {

@@ -57,7 +57,7 @@ describe("persistence structural policy", () => {
       if (!entry.isFile() || !entry.name.endsWith(".ts")) continue;
       const source = readFileSync(join(root, entry.name), "utf8");
       const directQuery = /\.query(?:<[\s\S]*?>)?\s*\(/.test(source);
-      const allowed = entry.name === "repository.ts" || entry.name === "migration-runner.ts";
+      const allowed = ["repository.ts", "operator-repository.ts", "migration-runner.ts"].includes(entry.name);
       if (directQuery) expect(allowed, entry.name).toBe(true);
     }
   });

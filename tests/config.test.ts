@@ -186,6 +186,7 @@ describe("loadConfig", () => {
   it("finalize force-enables drafts and records a warning when drafts was explicitly off", () => {
     const c = loadConfig({
       ...base(),
+      LEXWARE_READ_ONLY: "false",
       LEXWARE_ENABLE_DRAFTS: "false",
       LEXWARE_ENABLE_FINALIZE: "true",
     } as NodeJS.ProcessEnv);
@@ -194,7 +195,11 @@ describe("loadConfig", () => {
   });
 
   it("records no override warning when drafts is left at its default", () => {
-    const c = loadConfig({ ...base(), LEXWARE_ENABLE_FINALIZE: "true" } as NodeJS.ProcessEnv);
+    const c = loadConfig({
+      ...base(),
+      LEXWARE_READ_ONLY: "false",
+      LEXWARE_ENABLE_FINALIZE: "true",
+    } as NodeJS.ProcessEnv);
     expect(c.warnings).toEqual([]);
   });
 

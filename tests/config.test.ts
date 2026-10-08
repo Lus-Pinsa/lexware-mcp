@@ -11,7 +11,7 @@ describe("loadConfig", () => {
     expect(c.lexwareApiBaseUrl).toBe("https://api.lexware.io");
     expect(c.lexwareAppBaseUrl).toBe("https://app.lexware.de");
     expect(c.port).toBe(8080);
-    expect(c.capabilities).toEqual({ read: true, drafts: true, finalize: false });
+    expect(c.capabilities).toEqual({ read: true, drafts: false, finalize: false });
   });
 
   it("requires LEXWARE_API_KEY", () => {
@@ -149,6 +149,20 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ LEXWARE_API_KEY: "k", MCP_AUTH_TOKEN: "short" } as NodeJS.ProcessEnv)).toThrow(/too weak/);
   });
 
+  it("defaults to read-only when LEXWARE_READ_ONLY is missing or empty", () => {
+    expect(loadConfig(base()).capabilities).toEqual({ read: true, drafts: false, finalize: false });
+    expect(loadConfig({ ...base(), LEXWARE_READ_ONLY: "" } as NodeJS.ProcessEnv).capabilities).toEqual({
+      read: true,
+      drafts: false,
+      finalize: false,
+    });
+  });
+
+  it("writes require the explicit LEXWARE_READ_ONLY=false opt-in", () => {
+    const c = loadConfig({ ...base(), LEXWARE_READ_ONLY: "false" } as NodeJS.ProcessEnv);
+    expect(c.capabilities).toEqual({ read: true, drafts: true, finalize: false });
+  });
+
   it("READ_ONLY hard-overrides the enable flags", () => {
     const c = loadConfig({
       ...base(),
@@ -160,12 +174,12 @@ describe("loadConfig", () => {
   });
 
   it("enables finalize when requested", () => {
-    const c = loadConfig({ ...base(), LEXWARE_ENABLE_FINALIZE: "true" } as NodeJS.ProcessEnv);
+    const c = loadConfig({ ...base(), LEXWARE_READ_ONLY: "false", LEXWARE_ENABLE_FINALIZE: "true" } as NodeJS.ProcessEnv);
     expect(c.capabilities.finalize).toBe(true);
   });
 
   it("can disable drafts", () => {
-    const c = loadConfig({ ...base(), LEXWARE_ENABLE_DRAFTS: "false" } as NodeJS.ProcessEnv);
+    const c = loadConfig({ ...base(), LEXWARE_READ_ONLY: "false", LEXWARE_ENABLE_DRAFTS: "false" } as NodeJS.ProcessEnv);
     expect(c.capabilities.drafts).toBe(false);
   });
 
@@ -213,7 +227,7 @@ describe("loadConfig", () => {
     const c = loadConfig(base());
     const s = describeCapabilities(c);
     expect(s).toContain("read");
-    expect(s).toContain("drafts");
+    expect(s).not.toContain("drafts");
     expect(s).toContain("token-protected");
     expect(s).not.toContain(TOKEN);
     expect(s).not.toContain("key");

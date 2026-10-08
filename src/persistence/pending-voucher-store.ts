@@ -24,6 +24,7 @@ import {
 import {
   type TenantId,
   PersistenceValidationError,
+  assertSha256Hex,
 } from "./types.js";
 
 const RESOURCE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
@@ -116,10 +117,10 @@ export function createDurablePendingVoucherEventStore(options: {
     async enqueue(input) {
       const resourceId = validateResourceId(input.resourceId);
       const eventDate = validateEventDate(input.eventDate);
-      const payloadChecksum = sha256Hex(Buffer.from(input.payloadChecksum, "hex"));
-      if (payloadChecksum !== input.payloadChecksum) {
-        throw new PersistenceValidationError("Invalid webhook payload checksum.");
-      }
+      const payloadChecksum = assertSha256Hex(
+        input.payloadChecksum,
+        "webhook payload checksum",
+      );
       const keyHash = eventKeyHash(resourceId, eventDate);
       const resource = encryptField(options.keyring, resourceId, {
         tenantId: options.tenantId,
@@ -137,7 +138,7 @@ export function createDurablePendingVoucherEventStore(options: {
           resource,
           eventDate,
           receivedAt,
-          payloadChecksum: input.payloadChecksum,
+          payloadChecksum,
           source: "lexware_webhook",
           requestBudgetStatus: "NOT_APPLICABLE",
           qualityStatus: "STRUCTURED",

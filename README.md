@@ -112,6 +112,13 @@ LEXWARE_API_KEY=... MCP_AUTH_TOKEN=... npm start
 | `LEXWARE_ORGANIZATION_ID` | — | Your Lexware organization id. When set, signed webhooks of any **other** organization are ignored (any Lexware customer can subscribe to a public callback URL). Strongly recommended with the webhook |
 | `PORT` | `8080` | Listen port (your platform may inject this) |
 | `LEXWARE_DEBUG_LOGGING` | `false` | Verbose logs (never secrets/bodies) |
+| `PERSISTENCE_ENABLED` | `false` | Phase-2 persistence master switch; disabled unless explicitly enabled |
+| `PERSISTENCE_DATABASE_URL` | — | **SECRET**, required when persistence is enabled; runtime-role PostgreSQL URL |
+| `LUS_TENANT_ID` | — | Required when persistence is enabled; explicit internal UUIDv4 tenant id, no implicit/default tenant |
+| `PERSISTENCE_CURRENT_KEY_ID` | — | Required when persistence is enabled; key id used for new AES-256-GCM writes |
+| `PERSISTENCE_KEYRING` | — | **SECRET**, required when persistence is enabled; JSON map of key id → canonical base64 32-byte AES key |
+| `PERSISTENCE_AUDIT_ACTOR_SALT` | — | **SECRET**, required when persistence is enabled; canonical base64 32-byte HMAC salt |
+
 
 ¹ The server needs **either** `OAUTH_ISSUER` (OAuth) **or** `MCP_AUTH_TOKEN` (static). It
 **refuses to start** with neither, unless `MCP_ALLOW_UNAUTHENTICATED=true`.
@@ -165,7 +172,7 @@ domain) is in [docs/cloud-run.md](docs/cloud-run.md).
   `reconcile-recent-vouchers` is the fallback against Lexware as source of truth).
 - `ai-company/` + `.claude/` — the LU'S multi-agent foundation (Cloud CEO, boards, governance, safety
   gates); see [ai-company/README.md](ai-company/README.md).
-- `src/server.ts` — wires it together on the Skybridge Express server.
+- `src/persistence/` — tenant-first PostgreSQL foundation (RLS-aware repositories, AES-256-GCM field encryption, checksummed migrations, and fail-closed runtime/tenant configuration). Persistence remains disabled by default and Lexware remains the source of truth.\n- `src/server.ts` — wires it together on the Skybridge Express server.
 
 ## Development
 

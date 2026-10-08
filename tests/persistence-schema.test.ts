@@ -73,8 +73,21 @@ describe("persistence structural policy", () => {
     expect(source).toContain("$1");
   });
 
+  it("keeps the PostgreSQL client dependency inside the driver adapter", () => {
+    const root = join(process.cwd(), "src/persistence");
+    for (const entry of readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith(".ts")) continue;
+      const source = readFileSync(join(root, entry.name), "utf8");
+      const importsPostgres = /from ["']postgres["']/.test(source);
+      expect({ file: entry.name, importsPostgres }).toEqual({
+        file: entry.name,
+        importsPostgres: entry.name === "postgres-driver.ts",
+      });
+    }
+  });
+
   it("adds no dependency on Lexware write surfaces", () => {
-    for (const file of ["types.ts", "crypto.ts", "audit.ts", "repository.ts", "redaction.ts", "schema.ts"]) {
+    for (const file of ["types.ts", "crypto.ts", "audit.ts", "repository.ts", "postgres-driver.ts", "redaction.ts", "schema.ts"]) {
       const source = read("src/persistence/" + file);
       expect(source).not.toMatch(/\.\.\/lexware\/(?!errors)|\.\.\/tools\/|pending-voucher-events/);
     }

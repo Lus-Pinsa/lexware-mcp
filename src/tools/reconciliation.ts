@@ -10,7 +10,7 @@ import type {
 import {
   createMemoryPendingVoucherEventStore,
   type PendingVoucherEventStore,
-} from "../persistence/pending-voucher-store.js";
+} from "../pending-voucher-store.js";
 
 import {
   jsonNum,

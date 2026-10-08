@@ -51,7 +51,7 @@ function harness(opts: { organizationId?: string; publicKey?: string | undefined
 }
 
 describe("Lexware webhook receiver (complete request handling)", () => {
-  it("accepts a signed event of the bound organization and queues it (204)", () => {
+  it("accepts a signed event of the bound organization and queues it (204)", async () => {
     const h = harness();
     const raw = payload();
     expect(await h.send(raw, sign(raw))).toBe(204);
@@ -64,14 +64,14 @@ describe("Lexware webhook receiver (complete request handling)", () => {
     expect(h.logs).toEqual(["[lexware-webhook] NEW VOUCHER pending=1 added=true"]);
   });
 
-  it("fails closed without a configured public key (503, nothing queued)", () => {
+  it("fails closed without a configured public key (503, nothing queued)", async () => {
     const h = harness({ publicKey: undefined });
     const raw = payload();
     expect(await h.send(raw, sign(raw))).toBe(503);
     expect(h.enqueue).not.toHaveBeenCalled();
   });
 
-  it("refuses a missing, wrong-key, wrong-algorithm, garbage or tampered signature (401, nothing queued)", () => {
+  it("refuses a missing, wrong-key, wrong-algorithm, garbage or tampered signature (401, nothing queued)", async () => {
     const h = harness();
     const raw = payload();
     expect(await h.send(raw, undefined)).toBe(401);
@@ -83,14 +83,14 @@ describe("Lexware webhook receiver (complete request handling)", () => {
     expect(h.enqueue).not.toHaveBeenCalled();
   });
 
-  it("refuses a body that is not the raw Buffer (400), before any parsing", () => {
+  it("refuses a body that is not the raw Buffer (400), before any parsing", async () => {
     const h = harness();
     expect(await h.send({ organizationId: ORG }, "sig")).toBe(400);
     expect(await h.send("text", "sig")).toBe(400);
     expect(h.enqueue).not.toHaveBeenCalled();
   });
 
-  it("rejects malformed signed bodies with 400 and a fixed reason code (input never logged)", () => {
+  it("rejects malformed signed bodies with 400 and a fixed reason code (input never logged)", async () => {
     const h = harness();
     for (const raw of [Buffer.from("null"), Buffer.from("{bad"), payload({ resourceId: "x\n[lexware-webhook] NEW VOUCHER forged" })]) {
       expect(await h.send(raw, sign(raw))).toBe(400);
@@ -103,7 +103,7 @@ describe("Lexware webhook receiver (complete request handling)", () => {
     ]);
   });
 
-  it("passes the configured organization through: a foreign organization is acknowledged (204) but not queued or logged", () => {
+  it("passes the configured organization through: a foreign organization is acknowledged (204) but not queued or logged", async () => {
     const h = harness();
     const raw = payload({ organizationId: FOREIGN });
     expect(await h.send(raw, sign(raw))).toBe(204);
@@ -112,14 +112,14 @@ describe("Lexware webhook receiver (complete request handling)", () => {
     expect(h.logs.join("\n")).not.toContain(FOREIGN);
   });
 
-  it("queues any organization only when no binding is configured", () => {
+  it("queues any organization only when no binding is configured", async () => {
     const h = harness({ organizationId: undefined });
     const raw = payload({ organizationId: FOREIGN });
     expect(await h.send(raw, sign(raw))).toBe(204);
     expect(h.enqueue).toHaveBeenCalledTimes(1);
   });
 
-  it("acknowledges unsupported event types without queueing (204)", () => {
+  it("acknowledges unsupported event types without queueing (204)", async () => {
     const h = harness();
     const raw = payload({ eventType: "contact.changed" });
     expect(await h.send(raw, sign(raw))).toBe(204);
@@ -127,7 +127,7 @@ describe("Lexware webhook receiver (complete request handling)", () => {
     expect(h.logs).toEqual(["[lexware-webhook] ignored reason=unsupported_event event=contact.changed"]);
   });
 
-  it("never logs Lexware resource ids or event dates (FINANCIAL per data classification)", () => {
+  it("never logs Lexware resource ids or event dates (FINANCIAL per data classification)", async () => {
     const h = harness();
     for (const raw of [payload(), payload({ eventType: "contact.changed" }), payload({ organizationId: FOREIGN })]) {
       await h.send(raw, sign(raw));

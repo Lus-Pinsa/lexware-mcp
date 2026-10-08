@@ -83,19 +83,7 @@ CREATE POLICY tenant_isolation_audit_events ON audit_events
   USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
   WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
 
-CREATE OR REPLACE FUNCTION deny_audit_mutation()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-  RAISE EXCEPTION 'audit_events is append-only';
-END;
-$$;
-
-CREATE TRIGGER audit_events_no_update
-  BEFORE UPDATE ON audit_events
-  FOR EACH ROW EXECUTE FUNCTION deny_audit_mutation();
-
-CREATE TRIGGER audit_events_no_delete
-  BEFORE DELETE ON audit_events
-  FOR EACH ROW EXECUTE FUNCTION deny_audit_mutation();
+-- Runtime credentials are granted INSERT/SELECT only in deployment provisioning (P-30/P-31).
+-- Keep PUBLIC from receiving mutation rights by accident; the migration/maintenance role
+-- retains the ability to perform approved retention and tenant deletion.
+REVOKE UPDATE, DELETE, TRUNCATE ON audit_events FROM PUBLIC;

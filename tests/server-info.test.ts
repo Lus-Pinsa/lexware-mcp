@@ -64,7 +64,7 @@ describe("get-server-info", () => {
   });
 
   it("lists exactly the registered write-capable tools in the drafts configuration", async () => {
-    const tools = capture(cfg({ LEXWARE_ENABLE_DRAFTS: "true" }), { ...SECRETS });
+    const tools = capture(cfg({ LEXWARE_READ_ONLY: "false", LEXWARE_ENABLE_DRAFTS: "true" }), { ...SECRETS, LEXWARE_READ_ONLY: "false" });
     const info = (await tools.get("get-server-info")!.handler({})).structuredContent as unknown as ReturnType<typeof buildServerInfo>;
     const expectedWrites = [...tools.values()].filter((t) => t.annotations?.readOnlyHint !== true).map((t) => t.name).sort();
     expect(info.capabilities).toEqual({ tiers: ["read", "drafts"], effectiveReadOnly: false });
@@ -74,7 +74,7 @@ describe("get-server-info", () => {
   });
 
   it("never contains secret values (API key, token, webhook key)", async () => {
-    for (const extra of [{ LEXWARE_READ_ONLY: "true" }, { LEXWARE_ENABLE_FINALIZE: "true" }] as Array<Record<string, string>>) {
+    for (const extra of [{ LEXWARE_READ_ONLY: "true" }, { LEXWARE_READ_ONLY: "false", LEXWARE_ENABLE_FINALIZE: "true" }] as Array<Record<string, string>>) {
       const tools = capture(cfg(extra), { ...SECRETS });
       const out = await tools.get("get-server-info")!.handler({});
       const serialized = JSON.stringify(out);

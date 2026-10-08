@@ -86,7 +86,7 @@ function parseKeyring(
     throw new PersistenceValidationError("Persistence keyring must contain 1 to 8 keys.");
   }
 
-  const decoded: Record<string, Uint8Array> = {};
+  const decoded = Object.create(null) as Record<string, Uint8Array>;
   for (const [keyId, encoded] of entries) {
     if (typeof encoded !== "string") {
       throw new PersistenceValidationError("Invalid persistence keyring value.");
@@ -110,6 +110,19 @@ export function loadPersistenceRuntimeConfig(
   if (!enabled) return Object.freeze({ enabled: false });
 
   const databaseUrl = required(env, "PERSISTENCE_DATABASE_URL");
+  try {
+    const url = new URL(databaseUrl);
+    if (
+      (url.protocol !== "postgres:" && url.protocol !== "postgresql:") ||
+      !url.hostname ||
+      !url.pathname ||
+      url.pathname === "/"
+    ) {
+      throw new Error("invalid");
+    }
+  } catch {
+    throw new PersistenceValidationError("Invalid PERSISTENCE_DATABASE_URL.");
+  }
   const tenantId = parseTenantId(required(env, "LUS_TENANT_ID"));
   if (!organizationId?.trim()) {
     throw new PersistenceValidationError(
@@ -122,8 +135,8 @@ export function loadPersistenceRuntimeConfig(
   const auditActorSalt = decodeCanonicalBase64(
     required(env, "PERSISTENCE_AUDIT_ACTOR_SALT"),
     "persistence audit actor salt",
-    16,
-    64,
+    32,
+    32,
   );
 
   const secrets = Object.freeze({
@@ -136,10 +149,24 @@ export function loadPersistenceRuntimeConfig(
     },
   });
 
-  return Object.freeze({
-    enabled: true,
+  const config = {
+    enabled: true as const,
     tenantId,
-    organizationIdHash: sha256Hex(organizationId.trim()),
     secrets,
+  } as EnabledPersistenceRuntimeConfig;
+
+  const organizationIdHash = sha256Hex(organizationId.trim().toLowerCase());
+  Object.defineProperties(config, {
+    organizationIdHash: { value: organizationIdHash, enumerable: false },
+    toJSON: {
+      value: () => ({
+        enabled: true,
+        tenantConfigured: true,
+        secretsIncluded: false,
+      }),
+      enumerable: false,
+    },
   });
+
+  return Object.freeze(config);
 }

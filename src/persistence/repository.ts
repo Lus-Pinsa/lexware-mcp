@@ -58,6 +58,8 @@ export interface PendingWebhookEvent {
   readonly qualityStatus: QualityStatus;
 }
 
+const SQL_LIST_SCHEMA_MIGRATIONS =
+  "SELECT version::int AS version, name, checksum FROM schema_migrations ORDER BY version ASC";
 const SQL_SET_TENANT = "SELECT set_config('app.tenant_id', $1, true) AS tenant_id";
 const SQL_GET_TENANT =
   "SELECT tenant_id, organization_id_hash, status FROM tenants WHERE tenant_id = $1";
@@ -126,6 +128,38 @@ function validateWebhookEvent(event: WebhookEventInsert): void {
   assertRequestBudgetStatus(event.requestBudgetStatus);
   assertQualityStatus(event.qualityStatus);
   validateEncryptedValue(event.resource);
+}
+
+export interface AppliedSchemaMigration {
+  readonly version: number;
+  readonly name: string;
+  readonly checksum: string;
+}
+
+export async function listAppliedSchemaMigrations(
+  tx: SqlExecutor,
+): Promise<readonly AppliedSchemaMigration[]> {
+  const result = await tx.query<{
+    version: number;
+    name: string;
+    checksum: string;
+  }>({ text: SQL_LIST_SCHEMA_MIGRATIONS, values: [] });
+
+  return Object.freeze(
+    result.rows.map((row) => {
+      if (!Number.isSafeInteger(row.version) || row.version < 1) {
+        throw new PersistenceValidationError("Invalid applied schema migration version.");
+      }
+      if (!/^[a-z0-9_]{1,64}$/.test(row.name)) {
+        throw new PersistenceValidationError("Invalid applied schema migration name.");
+      }
+      return Object.freeze({
+        version: row.version,
+        name: row.name,
+        checksum: assertSha256Hex(row.checksum, "applied schema migration checksum"),
+      });
+    }),
+  );
 }
 
 export async function withTenantTransaction<T>(

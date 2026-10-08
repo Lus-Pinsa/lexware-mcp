@@ -106,7 +106,7 @@ describe("Postgres persistence driver", () => {
       "",
       "https://db.example.test/lus",
       "postgres:///",
-      "postgres://u:p@db.example.test/",
+      "postgres://db.example.test/",
     ]) {
       expect(() => createPostgresDatabase({ connectionString }, fake.factory as never)).toThrow(
         /database URL|PostgreSQL/,

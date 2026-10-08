@@ -4,7 +4,7 @@ import type { LexwareClient } from "../lexware/client.js";
 import {
   createMemoryPendingVoucherEventStore,
   type PendingVoucherEventStore,
-} from "../persistence/pending-voucher-store.js";
+} from "../pending-voucher-store.js";
 
 import {
   registerArticleDeleteTools,

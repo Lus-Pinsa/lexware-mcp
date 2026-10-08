@@ -1,11 +1,9 @@
+import { MAX_PENDING_VOUCHER_EVENTS } from "../pending-voucher-events.js";
 import {
-  acknowledgePendingVoucherEvent,
-  addPendingVoucherEvent,
-  droppedPendingVoucherEvents,
-  listPendingVoucherEvents,
-  MAX_PENDING_VOUCHER_EVENTS,
-  type PendingVoucherEvent,
-} from "../pending-voucher-events.js";
+  type PendingVoucherEventStore,
+  validatePendingVoucherEventDate,
+  validatePendingVoucherResourceId,
+} from "../pending-voucher-store.js";
 import {
   decryptField,
   encryptField,
@@ -23,32 +21,8 @@ import {
 } from "./repository.js";
 import {
   type TenantId,
-  PersistenceValidationError,
   assertSha256Hex,
 } from "./types.js";
-
-const RESOURCE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
-const EVENT_DATE_PATTERN =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:?\d{2})$/;
-
-export interface PendingVoucherEventStore {
-  readonly mode: "memory" | "postgres";
-  enqueue(input: {
-    readonly resourceId: string;
-    readonly eventDate: string;
-    readonly payloadChecksum: string;
-  }): Promise<{
-    readonly added: boolean;
-    readonly count: number;
-    readonly dropped: number;
-  }>;
-  list(): Promise<readonly PendingVoucherEvent[]>;
-  acknowledge(resourceId: string): Promise<{
-    readonly removed: number;
-    readonly remaining: number;
-  }>;
-  droppedTotal(): number;
-}
 
 export class PendingVoucherCapacityError extends Error {
   constructor() {
@@ -57,54 +31,8 @@ export class PendingVoucherCapacityError extends Error {
   }
 }
 
-function validateResourceId(value: string): string {
-  if (!RESOURCE_ID_PATTERN.test(value)) {
-    throw new PersistenceValidationError("Invalid pending voucher resource id.");
-  }
-  return value;
-}
-
-function validateEventDate(value: string): string {
-  if (!EVENT_DATE_PATTERN.test(value) || Number.isNaN(Date.parse(value))) {
-    throw new PersistenceValidationError("Invalid pending voucher event date.");
-  }
-  return value;
-}
-
 function eventKeyHash(resourceId: string, eventDate: string): string {
-  return sha256Hex("voucher.created\\0" + resourceId + "\\0" + eventDate);
-}
-
-export function createMemoryPendingVoucherEventStore(): PendingVoucherEventStore {
-  return Object.freeze({
-    mode: "memory" as const,
-    async enqueue(input: {
-      readonly resourceId: string;
-      readonly eventDate: string;
-      readonly payloadChecksum: string;
-    }) {
-      validateResourceId(input.resourceId);
-      validateEventDate(input.eventDate);
-      const result = addPendingVoucherEvent({
-        resourceId: input.resourceId,
-        eventDate: input.eventDate,
-      });
-      return Object.freeze({
-        added: result.added,
-        count: result.count,
-        dropped: result.dropped,
-      });
-    },
-    async list() {
-      return Object.freeze(listPendingVoucherEvents());
-    },
-    async acknowledge(resourceId: string) {
-      return Object.freeze(acknowledgePendingVoucherEvent(validateResourceId(resourceId)));
-    },
-    droppedTotal() {
-      return droppedPendingVoucherEvents();
-    },
-  });
+  return sha256Hex(["voucher.created", resourceId, eventDate].join("|"));
 }
 
 export function createDurablePendingVoucherEventStore(options: {
@@ -123,8 +51,8 @@ export function createDurablePendingVoucherEventStore(options: {
       readonly eventDate: string;
       readonly payloadChecksum: string;
     }) {
-      const resourceId = validateResourceId(input.resourceId);
-      const eventDate = validateEventDate(input.eventDate);
+      const resourceId = validatePendingVoucherResourceId(input.resourceId);
+      const eventDate = validatePendingVoucherEventDate(input.eventDate);
       const payloadChecksum = assertSha256Hex(
         input.payloadChecksum,
         "webhook payload checksum",
@@ -168,7 +96,7 @@ export function createDurablePendingVoucherEventStore(options: {
         );
         return Object.freeze(
           rows.map((row) => {
-            const resourceId = validateResourceId(
+            const resourceId = validatePendingVoucherResourceId(
               decryptField(options.keyring, row.resource, {
                 tenantId: options.tenantId,
                 table: "webhook_events",
@@ -188,7 +116,7 @@ export function createDurablePendingVoucherEventStore(options: {
     },
 
     async acknowledge(resourceIdInput: string) {
-      const resourceId = validateResourceId(resourceIdInput);
+      const resourceId = validatePendingVoucherResourceId(resourceIdInput);
       const acknowledgedAt = now().toISOString();
 
       return withTenantTransaction(options.tenantId, options.db, async (tx) => {
@@ -200,7 +128,7 @@ export function createDurablePendingVoucherEventStore(options: {
         );
         let removed = 0;
         for (const row of rows) {
-          const storedResourceId = validateResourceId(
+          const storedResourceId = validatePendingVoucherResourceId(
             decryptField(options.keyring, row.resource, {
               tenantId: options.tenantId,
               table: "webhook_events",

@@ -101,6 +101,12 @@ describe("persistence migration runner", () => {
       expect(() => assertSafeMigrationSql(sql)).toThrow(/Destructive migration/);
     }
     expect(assertSafeMigrationSql("CREATE TABLE safe_table (id bigint);")).toContain("safe_table");
+    expect(assertSafeMigrationSql("REVOKE UPDATE, DELETE, TRUNCATE ON audit_events FROM PUBLIC;")).toContain(
+      "REVOKE",
+    );
+    expect(assertSafeMigrationSql("-- DROP TABLE ignored_comment\nCREATE TABLE safe_table (id bigint);")).toContain(
+      "safe_table",
+    );
   });
 
   it("reports a fresh database as having exactly migration 1 pending", async () => {

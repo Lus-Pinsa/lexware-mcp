@@ -24,14 +24,23 @@ const SQL_LIST_MIGRATIONS =
 const SQL_INSERT_MIGRATION =
   "INSERT INTO schema_migrations (version, name, checksum) VALUES ($1,$2,$3)";
 
-const DESTRUCTIVE_SQL =
-  /\b(?:DROP\s+(?:TABLE|SCHEMA|COLUMN)|TRUNCATE\b|ALTER\s+TABLE[\s\S]{0,200}\bDROP\b)\b/i;
+const DESTRUCTIVE_STATEMENT =
+  /(?:^|;)\s*(?:DROP\s+(?:TABLE|SCHEMA)\b|TRUNCATE\s+(?:TABLE\s+)?[A-Za-z_"])/i;
+const DESTRUCTIVE_ALTER =
+  /\bALTER\s+TABLE\b[^;]{0,500}\bDROP\s+(?:COLUMN|CONSTRAINT)\b/i;
+
+function stripSqlComments(sql: string): string {
+  return sql
+    .replace(/--[^\r\n]*/g, " ")
+    .replace(/\/\*[\s\S]*?\*\//g, " ");
+}
 
 export function assertSafeMigrationSql(sql: string): string {
   if (sql.length < 1 || sql.length > 1024 * 1024) {
     throw new PersistenceValidationError("Invalid migration file size.");
   }
-  if (DESTRUCTIVE_SQL.test(sql)) {
+  const scanned = stripSqlComments(sql);
+  if (DESTRUCTIVE_STATEMENT.test(scanned) || DESTRUCTIVE_ALTER.test(scanned)) {
     throw new PersistenceValidationError("Destructive migration requires a separate approved path.");
   }
   return sql;

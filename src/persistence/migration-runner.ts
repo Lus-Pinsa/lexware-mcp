@@ -68,7 +68,7 @@ export function loadKnownMigrations(): readonly MigrationDefinition[] {
   ]);
 }
 
-function validateApplied(
+export function validateAppliedMigrations(
   applied: readonly MigrationRecord[],
   known: readonly MigrationDefinition[],
 ): void {
@@ -116,6 +116,16 @@ async function ensureMigrationLedger(db: MigrationDatabase): Promise<void> {
   });
 }
 
+export function assertMigrationStateCurrent(
+  applied: readonly MigrationRecord[],
+): void {
+  const known = loadKnownMigrations();
+  validateAppliedMigrations(applied, known);
+  if (applied.length !== known.length) {
+    throw new PersistenceVersionError("Persistence database has pending migrations.");
+  }
+}
+
 export async function inspectMigrationState(
   db: MigrationDatabase,
 ): Promise<{
@@ -126,7 +136,7 @@ export async function inspectMigrationState(
   await ensureMigrationLedger(db);
   const applied = await db.transaction((tx) => listApplied(tx));
 
-  validateApplied(applied, known);
+  validateAppliedMigrations(applied, known);
   const appliedVersions = new Set(applied.map((row) => row.version));
   const pending = known.filter((item) => !appliedVersions.has(item.version));
   return Object.freeze({ applied, pending: Object.freeze(pending) });
@@ -143,7 +153,7 @@ export async function applyPendingMigrations(
     // share this transaction, so a crash/failure rolls the whole batch back.
     await tx.executeStatic(LOCK_MIGRATION_TABLE_SQL);
     const applied = await listApplied(tx);
-    validateApplied(applied, known);
+    validateAppliedMigrations(applied, known);
 
     const appliedVersions = new Set(applied.map((row) => row.version));
     const pending = known.filter((item) => !appliedVersions.has(item.version));

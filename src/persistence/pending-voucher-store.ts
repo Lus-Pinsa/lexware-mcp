@@ -1,5 +1,5 @@
-import { MAX_PENDING_VOUCHER_EVENTS } from "../pending-voucher-events.js";
 import {
+  MAX_PENDING_VOUCHER_EVENTS,
   type PendingVoucherEventStore,
   validatePendingVoucherEventDate,
   validatePendingVoucherResourceId,

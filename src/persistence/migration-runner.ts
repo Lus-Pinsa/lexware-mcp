@@ -31,14 +31,18 @@ function migrationPath(file: string): string {
   return fileURLToPath(new URL("./migrations/" + file, import.meta.url));
 }
 
-function loadMigration(version: number, name: string, file: string): MigrationDefinition {
-  const sql = readFileSync(migrationPath(file), "utf8");
+export function assertSafeMigrationSql(sql: string): string {
   if (sql.length < 1 || sql.length > 1024 * 1024) {
     throw new PersistenceValidationError("Invalid migration file size.");
   }
   if (DESTRUCTIVE_SQL.test(sql)) {
     throw new PersistenceValidationError("Destructive migration requires a separate approved path.");
   }
+  return sql;
+}
+
+function loadMigration(version: number, name: string, file: string): MigrationDefinition {
+  const sql = assertSafeMigrationSql(readFileSync(migrationPath(file), "utf8"));
   const checksum = createHash("sha256").update(sql, "utf8").digest("hex");
   return Object.freeze({
     version: assertMigrationVersion(version),

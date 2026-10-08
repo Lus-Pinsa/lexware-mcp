@@ -259,7 +259,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 
   const auth = resolveAuth(env);
 
-  const readOnly = parseBool(env.LEXWARE_READ_ONLY, false);
+  // Fail closed: write-capable tiers require an explicit LEXWARE_READ_ONLY=false opt-in.
+  const readOnly = parseBool(env.LEXWARE_READ_ONLY, true);
   // READ_ONLY is a hard override: it wins over the individual enable flags.
   const enableFinalize = readOnly ? false : parseBool(env.LEXWARE_ENABLE_FINALIZE, false);
   // Finalize implies drafts: the finalize tier issues legally-binding versions of

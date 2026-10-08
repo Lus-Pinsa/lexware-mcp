@@ -45,6 +45,10 @@ describe("persistence runtime config", () => {
     expect(config.databaseUrl).toBe(env.PERSISTENCE_DATABASE_URL);
     expect(config.keyring.currentKeyId).toBe("k1");
     expect(config.auditActorSalt).toHaveLength(32);
+    const firstSalt = config.auditActorSalt;
+    const originalFirstByte = firstSalt[0];
+    firstSalt[0] = originalFirstByte ^ 0xff;
+    expect(config.auditActorSalt[0]).toBe(originalFirstByte);
 
     const serialized = JSON.stringify(config);
     expect(serialized).toContain('"enabled":true');

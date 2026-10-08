@@ -20,10 +20,8 @@ import {
 import { registerTools } from "./tools/index.js";
 import { hardenApp, isLexwareWebhookPath, isMcpPath, preAuthDebugLine } from "./http-hardening.js";
 import { createLexwareWebhookHandler } from "./webhook-receiver.js";
-import {
-  createDurablePendingVoucherEventStore,
-  createMemoryPendingVoucherEventStore,
-} from "./persistence/pending-voucher-store.js";
+import { createMemoryPendingVoucherEventStore } from "./pending-voucher-store.js";
+import { createDurablePendingVoucherEventStore } from "./persistence/pending-voucher-store.js";
 import {
   createPostgresDatabase,
   type ManagedPersistenceDatabase,

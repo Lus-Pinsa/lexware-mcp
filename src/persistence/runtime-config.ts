@@ -67,7 +67,7 @@ function parseKeyring(raw: string, currentKeyId: string): EncryptionKeyring {
     throw new PersistenceConfigError("PERSISTENCE_KEYRING_JSON must contain 1 to 8 keys.");
   }
 
-  const keys: Record<string, Uint8Array> = {};
+  const keys = Object.create(null) as Record<string, Uint8Array>;
   for (const [keyId, value] of entries) {
     if (typeof value !== "string") {
       throw new PersistenceConfigError("PERSISTENCE_KEYRING_JSON values must be base64 strings.");

@@ -62,7 +62,10 @@ function loadMigration(version: number, name: string, file: string): MigrationDe
 }
 
 export function loadKnownMigrations(): readonly MigrationDefinition[] {
-  return Object.freeze([loadMigration(1, "foundation", "001_foundation.sql")]);
+  return Object.freeze([
+    loadMigration(1, "foundation", "001_foundation.sql"),
+    loadMigration(2, "webhook_event_date", "002_webhook_event_date.sql"),
+  ]);
 }
 
 function validateApplied(

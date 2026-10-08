@@ -85,11 +85,13 @@ function migrationDb(
 describe("persistence migration runner", () => {
   it("loads the checked-in migration with a deterministic SHA-256 checksum", () => {
     const known = loadKnownMigrations();
-    expect(known).toHaveLength(1);
-    expect(known[0].version).toBe(1);
+    expect(known).toHaveLength(2);
+    expect(known.map((item) => item.version)).toEqual([1, 2]);
     expect(known[0].name).toBe("foundation");
-    expect(known[0].checksum).toMatch(/^[0-9a-f]{64}$/);
+    expect(known[1].name).toBe("webhook_event_date");
+    for (const migration of known) expect(migration.checksum).toMatch(/^[0-9a-f]{64}$/);
     expect(known[0].sql).toContain("CREATE TABLE IF NOT EXISTS tenants");
+    expect(known[1].sql).toContain("ADD COLUMN IF NOT EXISTS event_date");
   });
 
   it("rejects destructive SQL before it can reach a database", () => {
@@ -109,11 +111,11 @@ describe("persistence migration runner", () => {
     );
   });
 
-  it("reports a fresh database as having exactly migration 1 pending", async () => {
+  it("reports a fresh database as having the known migrations pending in order", async () => {
     const { db, state } = migrationDb();
     const result = await inspectMigrationState(db);
     expect(result.applied).toEqual([]);
-    expect(result.pending.map((item) => item.version)).toEqual([1]);
+    expect(result.pending.map((item) => item.version)).toEqual([1, 2]);
     expect(state.staticScripts[0]).toContain("CREATE TABLE IF NOT EXISTS schema_migrations");
   });
 
@@ -121,23 +123,25 @@ describe("persistence migration runner", () => {
     const { db, state } = migrationDb();
     const result = await applyPendingMigrations(db);
 
-    expect(result.appliedVersions).toEqual([1]);
-    expect(state.applied).toHaveLength(1);
+    expect(result.appliedVersions).toEqual([1, 2]);
+    expect(state.applied).toHaveLength(2);
     expect(state.applied[0]).toMatchObject({ version: 1, name: "foundation" });
+    expect(state.applied[1]).toMatchObject({ version: 2, name: "webhook_event_date" });
     expect(state.applied[0].checksum).toMatch(/^[0-9a-f]{64}$/);
     expect(state.staticScripts.some((script) => script === "LOCK TABLE schema_migrations IN EXCLUSIVE MODE")).toBe(true);
     expect(state.staticScripts.some((script) => script.includes("CREATE TABLE IF NOT EXISTS tenants"))).toBe(true);
-    expect(state.inserts).toHaveLength(1);
+    expect(state.inserts).toHaveLength(2);
 
     const after = await inspectMigrationState(db);
     expect(after.pending).toEqual([]);
-    expect(after.applied).toHaveLength(1);
+    expect(after.applied).toHaveLength(2);
   });
 
   it("does not reapply an already recorded migration with the correct checksum", async () => {
     const known = loadKnownMigrations();
     const { db, state } = migrationDb([
       { version: 1, name: "foundation", checksum: known[0].checksum },
+      { version: 2, name: "webhook_event_date", checksum: known[1].checksum },
     ]);
     const result = await applyPendingMigrations(db);
     expect(result.appliedVersions).toEqual([]);
@@ -169,7 +173,8 @@ describe("persistence migration runner", () => {
       inspectMigrationState(
         migrationDb([
           { version: 1, name: "foundation", checksum: known[0].checksum },
-          { version: 2, name: "future", checksum: "b".repeat(64) },
+          { version: 2, name: "webhook_event_date", checksum: known[1].checksum },
+          { version: 3, name: "future", checksum: "b".repeat(64) },
         ]).db,
       ),
     ).rejects.toThrow(/newer or unknown/);

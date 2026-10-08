@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   acknowledgeWebhookEvent,
+  appendAuditEvent,
   getTenantBinding,
   insertWebhookEvent,
   listPendingWebhookEvents,
@@ -9,6 +10,7 @@ import {
   type SqlExecutor,
   withTenantTransaction,
 } from "../src/persistence/repository.js";
+import { computeAuditEntryHash } from "../src/persistence/audit.js";
 import { createEncryptionKeyring, encryptField, sha256Hex } from "../src/persistence/crypto.js";
 import { parseTenantId } from "../src/persistence/types.js";
 
@@ -175,6 +177,56 @@ describe("tenant-scoped persistence repository", () => {
       }),
     ).rejects.toThrow(/ciphertext size/);
     expect(tx.query).not.toHaveBeenCalled();
+  });
+
+  it("serializes audit chaining through the tenant row and inserts only an append", async () => {
+    const previousHash = sha256Hex("previous-audit");
+    const query = vi
+      .fn()
+      .mockResolvedValueOnce({ rows: [{ tenant_id: TENANT }], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [{ entry_hash: previousHash }], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+    const tx = { query } as unknown as SqlExecutor;
+
+    const input = {
+      auditId: "00000000-0000-4000-8000-0000000000c1",
+      actorHash: sha256Hex("synthetic-actor"),
+      action: "webhook.accept",
+      result: "SUCCESS",
+      itemCount: 1,
+      createdAt: "2026-10-08T19:00:00Z",
+    };
+
+    const result = await appendAuditEvent(TENANT, tx, input);
+    expect(result.previousHash).toBe(previousHash);
+    expect(result.entryHash).toBe(
+      computeAuditEntryHash({ ...input, tenantId: TENANT, previousHash }),
+    );
+
+    expect(query).toHaveBeenCalledTimes(3);
+    expect(query.mock.calls[0][0].text).toContain("FOR UPDATE");
+    expect(query.mock.calls[0][0].values).toEqual([TENANT]);
+    expect(query.mock.calls[2][0].text).toContain("INSERT INTO audit_events");
+    expect(query.mock.calls[2][0].text).not.toMatch(/UPDATE audit_events|DELETE FROM audit_events/);
+    expect(query.mock.calls[2][0].values[1]).toBe(TENANT);
+    expect(query.mock.calls[2][0].values[7]).toBe(previousHash);
+    expect(query.mock.calls[2][0].values[8]).toBe(result.entryHash);
+  });
+
+  it("fails closed when the tenant cannot be locked for an audit append", async () => {
+    const query = vi.fn().mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    const tx = { query } as unknown as SqlExecutor;
+    await expect(
+      appendAuditEvent(TENANT, tx, {
+        auditId: "00000000-0000-4000-8000-0000000000c1",
+        actorHash: sha256Hex("synthetic-actor"),
+        action: "webhook.accept",
+        result: "SUCCESS",
+        itemCount: 1,
+        createdAt: "2026-10-08T19:00:00Z",
+      }),
+    ).rejects.toThrow(/Tenant unavailable/);
+    expect(query).toHaveBeenCalledTimes(1);
   });
 
   it("rejects an unbounded pending-event request", async () => {

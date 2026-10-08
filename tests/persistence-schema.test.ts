@@ -74,7 +74,7 @@ describe("persistence structural policy", () => {
   });
 
   it("adds no dependency on Lexware write surfaces", () => {
-    for (const file of ["types.ts", "crypto.ts", "repository.ts", "redaction.ts", "schema.ts"]) {
+    for (const file of ["types.ts", "crypto.ts", "audit.ts", "repository.ts", "redaction.ts", "schema.ts"]) {
       const source = read("src/persistence/" + file);
       expect(source).not.toMatch(/\.\.\/lexware\/(?!errors)|\.\.\/tools\/|pending-voucher-events/);
     }

@@ -140,7 +140,7 @@ export function loadPersistenceRuntimeConfig(
     organizationIdHash: { value: organizationIdHash, enumerable: false },
     databaseUrl: { value: databaseUrl, enumerable: false },
     keyring: { value: keyring, enumerable: false },
-    auditActorSalt: { value: auditActorSalt, enumerable: false },
+    auditActorSalt: { get: () => new Uint8Array(auditActorSalt), enumerable: false },
     toJSON: {
       value: () => ({ enabled: true, tenantConfigured: true, secretsIncluded: false }),
       enumerable: false,

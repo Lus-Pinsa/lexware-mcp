@@ -111,6 +111,7 @@ describe("tenant-scoped persistence repository", () => {
     const hash = sha256Hex("event-key");
     const listTx = executor([
       {
+        tenant_id: TENANT,
         event_key_hash: hash,
         event_type: "voucher.created",
         resource_ciphertext: new Uint8Array([1, 2]),
@@ -136,6 +137,44 @@ describe("tenant-scoped persistence repository", () => {
 
     expect(listTx.query.mock.calls[0][0].values).not.toContain(OTHER);
     expect(ackTx.query.mock.calls[0][0].values).not.toContain(OTHER);
+  });
+
+  it("rejects a cross-tenant row even if a broken driver/DB returned it", async () => {
+    const hash = sha256Hex("event-key");
+    const tx = executor([
+      {
+        tenant_id: OTHER,
+        event_key_hash: hash,
+        event_type: "voucher.created",
+        resource_ciphertext: new Uint8Array([1]),
+        resource_nonce: new Uint8Array(12),
+        resource_auth_tag: new Uint8Array(16),
+        key_id: "k1",
+        received_at: "2026-10-08T17:00:00Z",
+        payload_checksum: sha256Hex("payload"),
+        source: "lexware_webhook",
+        request_budget_status: "NOT_APPLICABLE",
+        quality_status: "STRUCTURED",
+      },
+    ]);
+    await expect(listPendingWebhookEvents(TENANT, tx)).rejects.toThrow(/Cross-tenant/);
+  });
+
+  it("rejects malformed encrypted input before touching the database", async () => {
+    const tx = executor([], 1);
+    await expect(
+      insertWebhookEvent(TENANT, tx, {
+        eventKeyHash: sha256Hex("event-key"),
+        eventType: "voucher.created",
+        resource: { ciphertext: new Uint8Array(), nonce: new Uint8Array(12), authTag: new Uint8Array(16), keyId: "k1" },
+        receivedAt: "2026-10-08T17:00:00Z",
+        payloadChecksum: sha256Hex("payload"),
+        source: "lexware_webhook",
+        requestBudgetStatus: "NOT_APPLICABLE",
+        qualityStatus: "STRUCTURED",
+      }),
+    ).rejects.toThrow(/ciphertext size/);
+    expect(tx.query).not.toHaveBeenCalled();
   });
 
   it("rejects an unbounded pending-event request", async () => {

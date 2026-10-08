@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   applyPendingMigrations,
+  assertMigrationStateCurrent,
   assertSafeMigrationSql,
   inspectMigrationState,
   loadKnownMigrations,
@@ -135,6 +136,21 @@ describe("persistence migration runner", () => {
     const after = await inspectMigrationState(db);
     expect(after.pending).toEqual([]);
     expect(after.applied).toHaveLength(2);
+  });
+
+  it("accepts only the exact current migration ledger for runtime startup", () => {
+    const known = loadKnownMigrations();
+    expect(() =>
+      assertMigrationStateCurrent(
+        known.map(({ version, name, checksum }) => ({ version, name, checksum })),
+      ),
+    ).not.toThrow();
+
+    expect(() =>
+      assertMigrationStateCurrent([
+        { version: 1, name: "foundation", checksum: known[0].checksum },
+      ]),
+    ).toThrow(/pending migrations/);
   });
 
   it("does not reapply an already recorded migration with the correct checksum", async () => {

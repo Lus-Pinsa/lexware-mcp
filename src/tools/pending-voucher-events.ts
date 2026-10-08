@@ -4,7 +4,7 @@ import { z } from "zod";
 import {
   createMemoryPendingVoucherEventStore,
   type PendingVoucherEventStore,
-} from "../persistence/pending-voucher-store.js";
+} from "../pending-voucher-store.js";
 
 import { RO, text, WRITE } from "./shared.js";
 

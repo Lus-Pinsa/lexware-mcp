@@ -72,6 +72,8 @@ const SQL_LIST_PENDING =
 const SQL_ACK_EVENT =
   "UPDATE webhook_events SET acknowledged_at = $3 " +
   "WHERE tenant_id = $1 AND event_key_hash = $2 AND acknowledged_at IS NULL";
+const SQL_COUNT_PENDING =
+  "SELECT count(*)::int AS count FROM webhook_events WHERE tenant_id = $1 AND acknowledged_at IS NULL";
 const SQL_LOCK_TENANT =
   "SELECT tenant_id FROM tenants WHERE tenant_id = $1 FOR UPDATE";
 const SQL_GET_LATEST_AUDIT =
@@ -136,6 +138,21 @@ export async function withTenantTransaction<T>(
     await tx.query({ text: SQL_SET_TENANT, values: [checkedTenantId] });
     return work(tx);
   });
+}
+
+export async function lockTenantForUpdate(
+  tenantId: TenantId,
+  tx: SqlExecutor,
+): Promise<void> {
+  const checkedTenantId = parseTenantId(tenantId);
+  const locked = await tx.query<{ tenant_id: string }>({
+    text: SQL_LOCK_TENANT,
+    values: [checkedTenantId],
+  });
+  const row = locked.rows[0];
+  if (locked.rowCount !== 1 || row === undefined || parseTenantId(row.tenant_id) !== checkedTenantId) {
+    throw new PersistenceValidationError("Tenant unavailable for locked persistence operation.");
+  }
 }
 
 export async function getTenantBinding(
@@ -251,6 +268,22 @@ export async function listPendingWebhookEvents(
   );
 }
 
+export async function countPendingWebhookEvents(
+  tenantId: TenantId,
+  tx: SqlExecutor,
+): Promise<number> {
+  const checkedTenantId = parseTenantId(tenantId);
+  const result = await tx.query<{ count: number }>({
+    text: SQL_COUNT_PENDING,
+    values: [checkedTenantId],
+  });
+  const count = result.rows[0]?.count;
+  if (!Number.isSafeInteger(count) || (count as number) < 0) {
+    throw new PersistenceValidationError("Invalid pending webhook count.");
+  }
+  return count as number;
+}
+
 export async function acknowledgeWebhookEvent(
   tenantId: TenantId,
   tx: SqlExecutor,
@@ -274,15 +307,7 @@ export async function appendAuditEvent(
   input: Omit<AuditEntryInput, "tenantId" | "previousHash">,
 ): Promise<{ readonly entryHash: string; readonly previousHash: string | null }> {
   const checkedTenantId = parseTenantId(tenantId);
-
-  const locked = await tx.query<{ tenant_id: string }>({
-    text: SQL_LOCK_TENANT,
-    values: [checkedTenantId],
-  });
-  const lockedTenant = locked.rows[0]?.tenant_id;
-  if (locked.rowCount !== 1 || lockedTenant === undefined || parseTenantId(lockedTenant) !== checkedTenantId) {
-    throw new PersistenceValidationError("Tenant unavailable for audit append.");
-  }
+  await lockTenantForUpdate(checkedTenantId, tx);
 
   const latest = await tx.query<{ entry_hash: string }>({
     text: SQL_GET_LATEST_AUDIT,

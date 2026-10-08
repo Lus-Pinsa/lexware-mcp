@@ -28,6 +28,8 @@ import {
 } from "./persistence/postgres-driver.js";
 import { loadPersistenceRuntimeConfig } from "./persistence/runtime-config.js";
 import { verifyConfiguredTenantBinding } from "./persistence/tenant-binding.js";
+import { assertMigrationStateCurrent } from "./persistence/migration-runner.js";
+import { listAppliedSchemaMigrations } from "./persistence/repository.js";
 /**
  * Base64 file uploads
  * (upload-file / upload-voucher-file)
@@ -162,6 +164,14 @@ if (persistenceConfig.enabled) {
     });
 
   // Persistence is fail-closed. When explicitly enabled there is no RAM fallback.
+  const appliedMigrations =
+    await persistenceDb.transaction(
+      (tx) => listAppliedSchemaMigrations(tx),
+    );
+  assertMigrationStateCurrent(
+    appliedMigrations,
+  );
+
   await verifyConfiguredTenantBinding(
     persistenceConfig,
     persistenceDb,

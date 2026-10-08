@@ -51,19 +51,14 @@ describe("persistence foundation schema", () => {
 });
 
 describe("persistence structural policy", () => {
-  it("keeps DB query calls inside the repository layer only", () => {
+  it("allows direct DB query calls only in repositories and the privileged migration runner", () => {
     const root = join(process.cwd(), "src/persistence");
     for (const entry of readdirSync(root, { withFileTypes: true })) {
       if (!entry.isFile() || !entry.name.endsWith(".ts")) continue;
       const source = readFileSync(join(root, entry.name), "utf8");
-      const directQuery = /\.query\s*\(/.test(source);
+      const directQuery = /\.query(?:<[\s\S]*?>)?\s*\(/.test(source);
       const allowed = entry.name === "repository.ts" || entry.name === "migration-runner.ts";
-      expect({ file: entry.name, directQuery, allowed }).toEqual({
-        file: entry.name,
-        directQuery,
-        allowed: directQuery ? true : allowed,
-      });
-      if (directQuery) expect(allowed).toBe(true);
+      if (directQuery) expect(allowed, entry.name).toBe(true);
     }
   });
 

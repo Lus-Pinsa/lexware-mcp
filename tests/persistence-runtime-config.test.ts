@@ -121,6 +121,9 @@ describe("persistence runtime configuration", () => {
     expect(() =>
       loadPersistenceRuntimeConfig({ PERSISTENCE_ENABLED: "maybe" }, ORG),
     ).toThrow(/boolean/);
+    expect(() =>
+      loadPersistenceRuntimeConfig(enabledEnv(), "bad org"),
+    ).toThrow(/LEXWARE_ORGANIZATION_ID/);
   });
 });
 

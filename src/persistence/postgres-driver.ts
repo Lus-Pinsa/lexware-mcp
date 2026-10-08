@@ -1,5 +1,9 @@
 import postgres from "postgres";
 import type {
+  MigrationDatabase,
+  StaticMigrationExecutor,
+} from "./migration-types.js";
+import type {
   PersistenceDatabase,
   QueryResult,
   SqlExecutor,
@@ -36,6 +40,10 @@ export interface PostgresDriverSettings {
 }
 
 export interface ManagedPersistenceDatabase extends PersistenceDatabase {
+  close(): Promise<void>;
+}
+
+export interface ManagedMigrationDatabase extends MigrationDatabase {
   close(): Promise<void>;
 }
 
@@ -120,10 +128,27 @@ function createExecutor(tx: DriverTransaction): SqlExecutor {
   });
 }
 
-export function createPostgresDatabase(
+function createMigrationExecutor(tx: DriverTransaction): StaticMigrationExecutor {
+  const queryExecutor = createExecutor(tx);
+  return Object.freeze({
+    query: queryExecutor.query,
+    async executeStatic(script: string): Promise<void> {
+      if (script.length < 1 || script.length > 1024 * 1024) {
+        throw new PersistenceValidationError("Invalid static migration script size.");
+      }
+      try {
+        await tx.unsafe(script, [], { prepare: false });
+      } catch {
+        throw new PersistenceDatabaseError("QUERY_FAILED");
+      }
+    },
+  });
+}
+
+function createDriver(
   settings: PostgresDriverSettings,
-  factory: DriverFactory = postgres as unknown as DriverFactory,
-): ManagedPersistenceDatabase {
+  factory: DriverFactory,
+): DriverClient {
   const connectionString = normalizedConnectionString(settings.connectionString);
   const max = boundedInteger(settings.maxConnections, 4, 1, 16, "database maxConnections");
   const connectTimeout = boundedInteger(
@@ -145,7 +170,7 @@ export function createPostgresDatabase(
     throw new PersistenceValidationError("Invalid database applicationName.");
   }
 
-  const client = factory(connectionString, {
+  return factory(connectionString, {
     ssl: "verify-full",
     max,
     connect_timeout: connectTimeout,
@@ -156,6 +181,21 @@ export function createPostgresDatabase(
     debug: false,
     connection: { application_name: applicationName },
   });
+}
+
+async function closeDriver(client: DriverClient): Promise<void> {
+  try {
+    await client.end({ timeout: 5 });
+  } catch {
+    throw new PersistenceDatabaseError("CLOSE_FAILED");
+  }
+}
+
+export function createPostgresDatabase(
+  settings: PostgresDriverSettings,
+  factory: DriverFactory = postgres as unknown as DriverFactory,
+): ManagedPersistenceDatabase {
+  const client = createDriver(settings, factory);
 
   return Object.freeze({
     async transaction<T>(work: (tx: SqlExecutor) => Promise<T>): Promise<T> {
@@ -168,11 +208,31 @@ export function createPostgresDatabase(
     },
 
     async close(): Promise<void> {
+      return closeDriver(client);
+    },
+  });
+}
+
+export function createPostgresMigrationDatabase(
+  settings: PostgresDriverSettings,
+  factory: DriverFactory = postgres as unknown as DriverFactory,
+): ManagedMigrationDatabase {
+  const client = createDriver(settings, factory);
+
+  return Object.freeze({
+    async transaction<T>(work: (tx: StaticMigrationExecutor) => Promise<T>): Promise<T> {
       try {
-        await client.end({ timeout: 5 });
-      } catch {
-        throw new PersistenceDatabaseError("CLOSE_FAILED");
+        return await client.begin(async (tx) => work(createMigrationExecutor(tx)));
+      } catch (error) {
+        if (error instanceof PersistenceDatabaseError || error instanceof PersistenceValidationError) {
+          throw error;
+        }
+        throw new PersistenceDatabaseError("TRANSACTION_FAILED");
       }
+    },
+
+    async close(): Promise<void> {
+      return closeDriver(client);
     },
   });
 }

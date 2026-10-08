@@ -51,16 +51,14 @@ describe("persistence foundation schema", () => {
 });
 
 describe("persistence structural policy", () => {
-  it("keeps DB query calls inside the repository layer only", () => {
+  it("allows direct DB query calls only in repositories and the privileged migration runner", () => {
     const root = join(process.cwd(), "src/persistence");
     for (const entry of readdirSync(root, { withFileTypes: true })) {
       if (!entry.isFile() || !entry.name.endsWith(".ts")) continue;
       const source = readFileSync(join(root, entry.name), "utf8");
-      if (entry.name === "repository.ts") continue;
-      expect({ file: entry.name, directQuery: /\.query\s*\(/.test(source) }).toEqual({
-        file: entry.name,
-        directQuery: false,
-      });
+      const directQuery = /\.query(?:<[\s\S]*?>)?\s*\(/.test(source);
+      const allowed = entry.name === "repository.ts" || entry.name === "migration-runner.ts";
+      if (directQuery) expect(allowed, entry.name).toBe(true);
     }
   });
 
@@ -86,10 +84,31 @@ describe("persistence structural policy", () => {
     }
   });
 
+  it("restricts unparameterized static SQL execution to migration infrastructure", () => {
+    const root = join(process.cwd(), "src/persistence");
+    const allowed = new Set(["migration-types.ts", "migration-runner.ts", "postgres-driver.ts"]);
+    for (const entry of readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith(".ts")) continue;
+      const source = readFileSync(join(root, entry.name), "utf8");
+      if (source.includes("executeStatic")) expect(allowed.has(entry.name), entry.name).toBe(true);
+    }
+  });
+
+  it("packages SQL migrations into dist as part of the normal build", () => {
+    const packageJson = JSON.parse(read("package.json")) as { scripts: { build: string } };
+    expect(packageJson.scripts.build).toContain("scripts/copy-persistence-migrations.mjs");
+    const copyScript = read("scripts/copy-persistence-migrations.mjs");
+    expect(copyScript).toContain('"src", "persistence", "migrations"');
+    expect(copyScript).toContain('"dist", "persistence", "migrations"');
+    expect(copyScript).toContain("/^\\d{3}_[a-z0-9-]+\\.sql$/");
+  });
+
   it("adds no dependency on Lexware write surfaces", () => {
-    for (const file of ["types.ts", "crypto.ts", "audit.ts", "repository.ts", "postgres-driver.ts", "redaction.ts", "schema.ts"]) {
-      const source = read("src/persistence/" + file);
-      expect(source).not.toMatch(/\.\.\/lexware\/(?!errors)|\.\.\/tools\/|pending-voucher-events/);
+    const root = join(process.cwd(), "src/persistence");
+    for (const entry of readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith(".ts")) continue;
+      const source = readFileSync(join(root, entry.name), "utf8");
+      expect(source, entry.name).not.toMatch(/\.\.\/lexware\/(?!errors)|\.\.\/tools\/|pending-voucher-events/);
     }
   });
 });

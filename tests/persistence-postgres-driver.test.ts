@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createPostgresDatabase,
+  createPostgresMigrationDatabase,
   PersistenceDatabaseError,
 } from "../src/persistence/postgres-driver.js";
 import { parseTenantId } from "../src/persistence/types.js";
@@ -75,13 +76,37 @@ describe("Postgres persistence driver", () => {
     expect(result.rowCount).toBe(1);
   });
 
+  it("allows static multi-statement SQL only through the migration adapter with prepare=false", async () => {
+    const fake = fakeFactory();
+    const db = createPostgresMigrationDatabase(
+      { connectionString: "postgres://db.internal.example.test/lus" },
+      fake.factory as never,
+    );
+
+    await db.transaction(async (tx) => {
+      await tx.executeStatic("CREATE TABLE synthetic_one (id bigint); CREATE TABLE synthetic_two (id bigint);");
+      await tx.query({ text: "SELECT $1::int AS value", values: [1] });
+    });
+
+    expect(fake.unsafe.mock.calls[0]).toEqual([
+      "CREATE TABLE synthetic_one (id bigint); CREATE TABLE synthetic_two (id bigint);",
+      [],
+      { prepare: false },
+    ]);
+    expect(fake.unsafe.mock.calls[1]).toEqual([
+      "SELECT $1::int AS value",
+      [1],
+      { prepare: true },
+    ]);
+  });
+
   it("fails closed on malformed URLs and unsafe configuration bounds", () => {
     const fake = fakeFactory();
     for (const connectionString of [
       "",
       "https://db.example.test/lus",
       "postgres:///",
-      "postgres://u:p@db.example.test/",
+      "postgres://db.example.test/",
     ]) {
       expect(() => createPostgresDatabase({ connectionString }, fake.factory as never)).toThrow(
         /database URL|PostgreSQL/,

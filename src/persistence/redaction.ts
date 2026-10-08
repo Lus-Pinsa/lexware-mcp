@@ -6,6 +6,8 @@ export type PersistenceErrorClass =
   | "VERSION_MISMATCH"
   | "INTEGRITY_FAILED"
   | "QUERY_FAILED"
+  | "TRANSACTION_FAILED"
+  | "CLOSE_FAILED"
   | "CRYPTO_FAILED"
   | "UNKNOWN";
 
@@ -25,6 +27,13 @@ export function redactPersistenceError(error: unknown): PersistenceErrorClass {
       return "CRYPTO_FAILED";
     case "PersistenceVersionError":
       return "VERSION_MISMATCH";
+    case "PersistenceDatabaseError": {
+      const kind = (error as Error & { kind?: unknown }).kind;
+      if (kind === "QUERY_FAILED" || kind === "TRANSACTION_FAILED" || kind === "CLOSE_FAILED") {
+        return kind;
+      }
+      return "UNKNOWN";
+    }
     default:
       return "UNKNOWN";
   }

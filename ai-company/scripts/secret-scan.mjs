@@ -21,9 +21,17 @@ export const RULES = [
   { id: "slack-token", re: /\bxox[abprs]-[A-Za-z0-9-]{10,}\b/ },
   { id: "render-api-key", re: /\brnd_[A-Za-z0-9]{20,}\b/ },
   { id: "jwt", re: /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/ },
+  { id: "render-deploy-hook", re: /\bapi\.render\.com\/deploy\/srv-[A-Za-z0-9]+\?key=[A-Za-z0-9_-]{8,}/ },
+  { id: "google-api-key", re: /\bAIza[0-9A-Za-z_-]{35}\b/ },
+  { id: "stripe-live-key", re: /\b(?:sk|rk)_live_[0-9A-Za-z]{20,}\b/ },
+  { id: "npm-token", re: /\bnpm_[A-Za-z0-9]{36}\b/ },
+  // Credentials embedded in a URL authority, i.e. user and secret before the host (DB, proxy, git remotes).
+  // Bounded scheme and a cheap pre-filter keep this linear (an unbounded scheme backtracks quadratically).
+  { id: "url-credentials", re: /\b[a-z][a-z0-9+.-]{0,31}:\/\/[^\s:@/'"]{1,256}:[^\s@/'"]{6,256}@[^\s/'"]+/i, pre: "://" },
+  { id: "bearer-literal", re: /\bBearer\s+[A-Za-z0-9._~+/-]{32,}=*/ },
   {
     id: "filled-secret-env",
-    re: /^\s*(?:export\s+)?(?:LEXWARE_API_KEY|MCP_AUTH_TOKEN|RENDER_API_KEY|ANTHROPIC_API_KEY|OAUTH_CLIENT_SECRET)\s*=\s*['"]?[A-Za-z0-9_\-./+=]{12,}/,
+    re: /^\s*(?:export\s+)?(?:LEXWARE_API_KEY|MCP_AUTH_TOKEN|RENDER_API_KEY|ANTHROPIC_API_KEY|OAUTH_CLIENT_SECRET|DATABASE_URL|DB_PASSWORD|ENCRYPTION_KEY|BACKUP_ENCRYPTION_KEY|WHATSAPP_TOKEN|GITHUB_TOKEN)\s*=\s*['"]?[A-Za-z0-9_\-./+=:@]{12,}/,
   },
   { id: "iban", re: /\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){3,7}(?: ?[A-Z0-9]{1,3})?\b/, validate: isValidIban },
   { id: "german-vat-id", re: /\bDE ?\d{9}\b/ },
@@ -48,6 +56,7 @@ export function scanText(file, text) {
   text.split("\n").forEach((line, i) => {
     if (line.includes("secret-scan:allow")) return;
     for (const rule of RULES) {
+      if (rule.pre && !line.includes(rule.pre)) continue;
       const m = rule.re.exec(line);
       if (m && (!rule.validate || rule.validate(m[0]))) findings.push({ file, line: i + 1, rule: rule.id });
     }

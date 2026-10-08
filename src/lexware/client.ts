@@ -68,6 +68,12 @@ export function assertSafeRequestPath(path: string): void {
 }
 
 const RETRYABLE_STATUS = new Set([500, 502, 503, 504]);
+/** Redirect statuses. Followed only for GET, only within the configured Lexware origin, at most MAX_REDIRECTS times. */
+const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
+const MAX_REDIRECTS = 3;
+
+/** A redirect was refused (other origin, non-GET, or too many hops). Not retried. */
+class RedirectRefusedError extends LexwareApiError {}
 /** Clamp any retry wait so a hostile/buggy `Retry-After` can't hang a request. */
 const MIN_RETRY_WAIT_MS = 250;
 const MAX_RETRY_WAIT_MS = 30_000;
@@ -243,13 +249,17 @@ export class LexwareClient {
 
       let res: Response;
       try {
-        res = await this.fetchFn(url, {
+        res = await this.fetchWithinOrigin(url, {
           method,
           headers: opts.headers,
           body: opts.body,
           signal: AbortSignal.timeout(this.requestTimeoutMs),
         });
       } catch (err) {
+        if (err instanceof RedirectRefusedError) {
+          this.log(method, path, "redirect-refused");
+          throw err;
+        }
         // Transport failure (DNS, reset) or our own request timeout (AbortSignal).
         // The request may or may not have reached Lexware, so only retry idempotent calls.
         if (opts.idempotent && attempt < this.maxRetries) {
@@ -292,10 +302,52 @@ export class LexwareClient {
         } catch {
           body = undefined;
         }
-        throw new LexwareApiError(res.status, describeErrorBody(res.status, res.statusText, body), body);
+        // An upstream that echoes request headers must not leak the API key into a tool error.
+        const message = this.redactApiKey(describeErrorBody(res.status, res.statusText, body));
+        throw new LexwareApiError(res.status, message, this.redactApiKeyInBody(body));
       }
 
       return res;
+    }
+  }
+
+  /**
+   * fetch, following redirects only within the configured Lexware origin and only for GET. A redirect to any other
+   * host is refused instead of followed: the server must never contact a host it was not configured for.
+   */
+  private async fetchWithinOrigin(url: string, init: RequestInit): Promise<Response> {
+    const origin = new URL(this.baseUrl).origin;
+    let current = url;
+    for (let hop = 0; ; hop++) {
+      const res = await this.fetchFn(current, { ...init, redirect: "manual" });
+      if (!REDIRECT_STATUS.has(res.status)) return res;
+      const location = res.headers.get("location");
+      await this.drain(res);
+      let next: URL | null = null;
+      try {
+        next = location ? new URL(location, current) : null;
+      } catch {
+        next = null;
+      }
+      if (next === null || next.origin !== origin || init.method !== "GET" || hop >= MAX_REDIRECTS) {
+        const why = next !== null && next.origin !== origin ? "to another origin" : init.method !== "GET" ? "for a non-GET request" : "";
+        throw new RedirectRefusedError(res.status, `Refused Lexware redirect ${why} (HTTP ${res.status}).`.replace("  ", " "));
+      }
+      current = next.toString();
+    }
+  }
+
+  private redactApiKey(text: string): string {
+    return this.apiKey.length > 0 ? text.split(this.apiKey).join("[REDACTED]") : text;
+  }
+
+  private redactApiKeyInBody(body: unknown): unknown {
+    if (body === undefined || this.apiKey.length === 0) return body;
+    try {
+      const json = JSON.stringify(body);
+      return json !== undefined && json.includes(this.apiKey) ? JSON.parse(this.redactApiKey(json)) : body;
+    } catch {
+      return undefined;
     }
   }
 

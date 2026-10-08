@@ -46,8 +46,9 @@ The server supports two ways to protect `/mcp`, chosen by environment:
   [WorkOS AuthKit](https://workos.com/docs/authkit/mcp), Stytch, Auth0, Clerk; or self-hosted
   Keycloak/Zitadel) as the authorization server. This makes the server work as a **custom
   connector** in the Claude app, on **claude.ai web**, and in **ChatGPT**, with a real
-  sign-in. Optionally restrict access with `OAUTH_ALLOWED_EMAIL_DOMAINS` (enforced
-  server-side via the token's email / the provider's userinfo endpoint).
+  sign-in. Access is restricted with `OAUTH_ALLOWED_EMAIL_DOMAINS` (enforced server-side via the
+  token's email / the provider's userinfo endpoint); OAuth mode refuses to start without it unless
+  `OAUTH_ALLOW_ANY_USER=true` is set explicitly.
 - **Static bearer token** (`MCP_AUTH_TOKEN`) — the simpler fallback. Works with **Claude
   Code** and **Claude Desktop** (which let you set a request header), but **not** the custom
   connector UI / claude.ai web / ChatGPT (those require OAuth).
@@ -60,7 +61,7 @@ neither set, the server refuses to start unless `MCP_ALLOW_UNAUTHENTICATED=true`
 1. In your provider, create an app, enable Dynamic Client Registration (or pre-register
    Claude's redirect `https://claude.ai/api/mcp/auth_callback`), and set this server's URL as
    the **Resource Indicator** / audience.
-2. Deploy with `OAUTH_ISSUER`, `OAUTH_RESOURCE` (= the public URL), and optionally
+2. Deploy with `OAUTH_ISSUER`, `OAUTH_RESOURCE` (= the public URL), and
    `OAUTH_ALLOWED_EMAIL_DOMAINS`.
 3. In the Claude app → **Connectors → Add custom connector**, enter the server URL
    (`https://…/mcp`). Claude discovers the authorization server via
@@ -95,7 +96,8 @@ LEXWARE_API_KEY=... MCP_AUTH_TOKEN=... npm start
 | `LEXWARE_API_KEY` | — (**required**) | Your Lexware API key ([create one](https://app.lexware.de/addons/public-api)) |
 | `OAUTH_ISSUER` | — | OAuth authorization-server issuer URL. Setting it enables OAuth mode¹ |
 | `OAUTH_RESOURCE` / `SERVER_URL` | — | This server's public URL (token audience / Resource Indicator). Required in OAuth mode |
-| `OAUTH_ALLOWED_EMAIL_DOMAINS` | — | Comma-separated allow-list of email domains (e.g. `example.com`) |
+| `OAUTH_ALLOWED_EMAIL_DOMAINS` | — (**required** in OAuth mode) | Comma-separated allow-list of email domains (e.g. `example.com`) |
+| `OAUTH_ALLOW_ANY_USER` | `false` | Explicit opt-out of the allowlist: accept every user your IdP authenticates (incl. self-signup) |
 | `OAUTH_VERIFY_AUDIENCE` | `true` | Verify the token `aud` matches `OAUTH_RESOURCE`. **Keep `true`.** Setting `false` accepts *any* valid token from the issuer — including one minted for a different app on the same issuer (a confused-deputy risk). Only disable for a dedicated, single-audience issuer that has no Resource Indicator |
 | `OAUTH_JWKS_URL` / `OAUTH_USERINFO_URL` | derived from issuer | Override the JWKS / OIDC userinfo endpoints (defaults use the WorkOS-AuthKit layout) |
 | `OAUTH_AUTHORIZATION_ENDPOINT` / `OAUTH_TOKEN_ENDPOINT` / `OAUTH_REGISTRATION_ENDPOINT` | derived from issuer | Override the endpoints advertised in the authorization-server metadata. Defaults use the WorkOS layout (`{issuer}/oauth2/*`); set these for other IdPs (e.g. Auth0: `/authorize`, `/oauth/token`) |
@@ -107,6 +109,7 @@ LEXWARE_API_KEY=... MCP_AUTH_TOKEN=... npm start
 | `LEXWARE_API_BASE_URL` | `https://api.lexware.io` | API base URL |
 | `LEXWARE_APP_BASE_URL` | `https://app.lexware.de` | Web-app base for document deeplinks |
 | `LEXWARE_WEBHOOK_PUBLIC_KEY` | — | PEM public key used to verify `X-Lxo-Signature` on `POST /webhooks/lexware` (`\n` escapes allowed). Without it the webhook answers `503` (fail closed) |
+| `LEXWARE_ORGANIZATION_ID` | — | Your Lexware organization id. When set, signed webhooks of any **other** organization are ignored (any Lexware customer can subscribe to a public callback URL). Strongly recommended with the webhook |
 | `PORT` | `8080` | Listen port (your platform may inject this) |
 | `LEXWARE_DEBUG_LOGGING` | `false` | Verbose logs (never secrets/bodies) |
 

@@ -25,6 +25,7 @@ import {
 
 import {
   LOCAL_RO,
+  MAX_DOWNLOAD_BYTES,
   RO,
   WRITE,
   binaryResult,
@@ -142,6 +143,9 @@ const DEEPLINK_RESOURCES = [
   "vouchers",
   "contacts",
 ] as const;
+
+/** One plain path segment of a Lexware id (UUIDs in practice). */
+const SAFE_ID_SEGMENT = /^[A-Za-z0-9_-]{1,128}$/;
 
 /**
  * Map voucherlist voucherType to REST resource path.
@@ -731,6 +735,8 @@ export function registerDocumentReadTools(
         } =
           await client.getBinary(
             `/v1/${doc.path}/${encodeURIComponent(id)}/file`,
+            undefined,
+            { maxBytes: MAX_DOWNLOAD_BYTES },
           );
 
         return binaryResult({
@@ -919,10 +925,10 @@ export function registerDocumentReadTools(
       id,
       voucherType,
     }) => {
-      const path =
-        VOUCHERTYPE_TO_PATH[
-          voucherType
-        ];
+      // Own keys only: an inherited member ("constructor", "__proto__", …) must never become a path.
+      const path = Object.hasOwn(VOUCHERTYPE_TO_PATH, voucherType)
+        ? VOUCHERTYPE_TO_PATH[voucherType]
+        : undefined;
 
       if (!path) {
         throw new Error(
@@ -987,6 +993,8 @@ export function registerDocumentReadTools(
       } =
         await client.getBinary(
           `/v1/${resourceType}/${encodeURIComponent(id)}/file`,
+          undefined,
+          { maxBytes: MAX_DOWNLOAD_BYTES },
         );
 
       return binaryResult({
@@ -1068,7 +1076,8 @@ export function registerDocumentReadTools(
           fileIndex as number
         ];
 
-      if (!fileId) {
+      // The id comes from upstream data: require one plain path segment (never "", ".", ".." or a non-string).
+      if (typeof fileId !== "string" || !SAFE_ID_SEGMENT.test(fileId)) {
         throw new Error(
           `Voucher ${id} has no attached file at index ${fileIndex}.`,
         );
@@ -1080,6 +1089,8 @@ export function registerDocumentReadTools(
       } =
         await client.getBinary(
           `/v1/files/${encodeURIComponent(fileId)}`,
+          undefined,
+          { maxBytes: MAX_DOWNLOAD_BYTES },
         );
 
       return binaryResult({
@@ -1148,6 +1159,10 @@ export function registerDocumentReadTools(
       id,
       action,
     }) => {
+      // "." and ".." survive encodeURIComponent and a browser would normalize them out of the permalink path.
+      if (id === "." || id === "..") {
+        throw new Error(`Invalid document id "${id}".`);
+      }
       const url =
         `${appBaseUrl}/permalink/${resourceType}/${action}/${encodeURIComponent(id)}`;
 

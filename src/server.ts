@@ -1,4 +1,3 @@
-import { createVerify } from "node:crypto";
 import express, { type Request, type Response } from "express";
 import {
   mcpAuthMetadataRouter,
@@ -19,7 +18,9 @@ import {
   createAccessTokenVerifier,
 } from "./oauth.js";
 import { registerTools } from "./tools/index.js";
-import { addPendingVoucherEvent } from "./pending-voucher-events.js";
+import { addPendingVoucherEvent, droppedPendingVoucherEvents } from "./pending-voucher-events.js";
+import { hardenApp, isLexwareWebhookPath, isMcpPath, preAuthDebugLine } from "./http-hardening.js";
+import { createLexwareWebhookHandler } from "./webhook-receiver.js";
 /**
  * Base64 file uploads
  * (upload-file / upload-voucher-file)
@@ -27,12 +28,6 @@ import { addPendingVoucherEvent } from "./pending-voucher-events.js";
  */
 const JSON_BODY_LIMIT = "12mb";
 
-const isMcpPath = (p: string): boolean =>
-  p === "/mcp" || p.startsWith("/mcp/");
-
-const isLexwareWebhookPath = (p: string): boolean =>
-  p === "/webhooks/lexware" ||
-  p.startsWith("/webhooks/lexware/");
 
 /**
  * Reconfigure body parsing so large uploads work WITHOUT widening
@@ -149,6 +144,9 @@ const server = new McpServer(
 const bodyParsingConfigured =
   deferMcpBodyParsing(server.express);
 
+// Do not advertise the framework in every response.
+hardenApp(server.express);
+
 /* ============================================================
    HEALTH CHECK
    ============================================================ */
@@ -165,50 +163,6 @@ server.express.get(
 /* ============================================================
    LEXWARE WEBHOOK
    ============================================================ */
-
-type LexwareWebhookPayload = {
-  organizationId: string;
-  eventType: string;
-  resourceId: string;
-  eventDate: string;
-};
-
-/**
- * Lexware signs webhook payloads.
- *
- * Public key comes from:
- * LEXWARE_WEBHOOK_PUBLIC_KEY
- */
-function verifyLexwareWebhookSignature(
-  rawBody: Buffer,
-  signatureBase64: string,
-  publicKey: string,
-): boolean {
-  try {
-    const verifier =
-      createVerify("RSA-SHA512");
-
-    verifier.update(rawBody);
-    verifier.end();
-
-    return verifier.verify(
-      publicKey,
-      Buffer.from(
-        signatureBase64,
-        "base64",
-      ),
-    );
-  } catch (err) {
-    console.error(
-      "[lexware-webhook] signature verification error",
-      err instanceof Error
-        ? err.message
-        : "unknown error",
-    );
-
-    return false;
-  }
-}
 
 function getLexwareWebhookPublicKey():
   | string
@@ -258,127 +212,13 @@ server.express.post(
     limit: "64kb",
   }),
 
-  (req: Request, res: Response) => {
-    const publicKey =
-      getLexwareWebhookPublicKey();
-
-    if (!publicKey) {
-      console.error(
-        "[lexware-webhook] LEXWARE_WEBHOOK_PUBLIC_KEY missing",
-      );
-
-      res.sendStatus(503);
-      return;
-    }
-
-    const signature =
-      req.get("x-lxo-signature");
-
-    if (!signature) {
-      console.error(
-        "[lexware-webhook] missing X-Lxo-Signature",
-      );
-
-      res.sendStatus(401);
-      return;
-    }
-
-    if (!Buffer.isBuffer(req.body)) {
-      console.error(
-        "[lexware-webhook] body is not raw Buffer",
-      );
-
-      res.sendStatus(400);
-      return;
-    }
-
-    const rawBody =
-      req.body as Buffer;
-
-    const valid =
-      verifyLexwareWebhookSignature(
-        rawBody,
-        signature,
-        publicKey,
-      );
-
-    if (!valid) {
-      console.error(
-        "[lexware-webhook] invalid signature",
-      );
-
-      res.sendStatus(401);
-      return;
-    }
-
-    let payload: LexwareWebhookPayload;
-
-    try {
-      payload =
-        JSON.parse(
-          rawBody.toString("utf8"),
-        ) as LexwareWebhookPayload;
-    } catch {
-      console.error(
-        "[lexware-webhook] invalid JSON",
-      );
-
-      res.sendStatus(400);
-      return;
-    }
-
-    if (
-      !payload.organizationId ||
-      !payload.eventType ||
-      !payload.resourceId ||
-      !payload.eventDate
-    ) {
-      console.error(
-        "[lexware-webhook] incomplete payload",
-      );
-
-      res.sendStatus(400);
-      return;
-    }
-
-    /**
-     * Phase 1:
-     * Only voucher.created is processed.
-     *
-     * Other Lexware events are acknowledged
-     * but ignored.
-     */
-    if (
-      payload.eventType !==
-      "voucher.created"
-    ) {
-      console.error(
-        `[lexware-webhook] ignored event=${payload.eventType} resourceId=${payload.resourceId}`,
-      );
-
-      res.sendStatus(204);
-      return;
-    }
-
-    const pending = addPendingVoucherEvent({
-  resourceId: payload.resourceId,
-  eventDate: payload.eventDate,
-});
-
-console.error(
-  `[lexware-webhook] NEW VOUCHER resourceId=${payload.resourceId} eventDate=${payload.eventDate} pending=${pending.count} added=${pending.added}`,
-);
-
-    /**
-     * IMPORTANT:
-     * For now we only RECEIVE the event.
-     *
-     * Next step:
-     * resourceId → pending queue → MCP tool → Claude
-     */
-
-    res.sendStatus(204);
-  },
+  createLexwareWebhookHandler({
+    getPublicKey: getLexwareWebhookPublicKey,
+    organizationId: config.webhookOrganizationId,
+    enqueue: addPendingVoucherEvent,
+    droppedTotal: droppedPendingVoucherEvents,
+    log: (line) => console.error(line),
+  }),
 );
 
 /* ============================================================
@@ -388,22 +228,13 @@ console.error(
 server.use(
   (req, _res, next) => {
     if (
-      req.path === "/mcp" ||
-      req.path.startsWith("/mcp/") ||
-      req.path.startsWith(
+      isMcpPath(req.path) ||
+      req.path.toLowerCase().startsWith(
         "/.well-known/",
       )
     ) {
       console.error(
-        `[debug] ${req.method} ${req.path} auth=${
-          req.headers.authorization
-            ? "yes"
-            : "no"
-        } accept=${
-          req.headers.accept ?? ""
-        } ua=${
-          req.headers["user-agent"] ?? ""
-        }`,
+        preAuthDebugLine(req.method, req.path, Boolean(req.headers.authorization)),
       );
     }
 
@@ -526,7 +357,16 @@ if (
     .allowedEmailDomains.length === 0
 ) {
   console.error(
-    "[lexware-mcp] WARNING: OAuth mode with no OAUTH_ALLOWED_EMAIL_DOMAINS.",
+    "[lexware-mcp] WARNING: OAuth mode accepts ANY user of the IdP (OAUTH_ALLOW_ANY_USER=true).",
+  );
+}
+
+if (
+  getLexwareWebhookPublicKey() &&
+  config.webhookOrganizationId === undefined
+) {
+  console.error(
+    "[lexware-mcp] WARNING: LEXWARE_ORGANIZATION_ID is not set — signed webhooks of ANY Lexware organization are accepted.",
   );
 }
 

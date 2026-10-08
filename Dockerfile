@@ -5,8 +5,11 @@
 # Detects npm, yarn, or pnpm from the lockfile in your project.
 # (For bun or deno, adapt the install/build/prune commands below.)
 
+# Base image: Node 24 LTS, the line CI tests on (`.github/workflows/ci.yml`), pinned by digest so a rebuilt
+# tag cannot change what runs in production. Dependabot (docker) proposes digest updates.
+
 # Build stage: install deps, compile the app, then prune dev deps.
-FROM node:26-slim AS build
+FROM node:24-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS build
 WORKDIR /app
 
 COPY package.json yarn.lock* package-lock.json* pnpm-lock.yaml* .npmrc* ./
@@ -34,9 +37,12 @@ RUN if [ -f package-lock.json ]; then \
     fi
 
 # Runtime stage: copy built artifacts and prod deps, run as non-root.
-FROM node:26-slim AS runtime
+FROM node:24-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
+# No telemetry egress from a server that handles accounting data (skybridge reports usage by default).
+ENV SKYBRIDGE_TELEMETRY_DISABLED=1
+ENV DO_NOT_TRACK=1
 # Default listen port. Cloud Run overrides PORT at runtime; the server reads it.
 ENV PORT=8080
 

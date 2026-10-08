@@ -132,3 +132,11 @@ Vor Runde 2: bis 879 MB je Bombe, 1553 MB bei zwei gleichzeitigen Bomben. Normal
   absichtlich rot.
 - Git kann die Trennung der Agenten nicht beweisen (alle Commits mit derselben Autorenkennung); die Trennung ist im
   Session-Verlauf dokumentiert.
+
+## Nachtrag (Security Architecture Gate, 2026-10-07): Korrektur
+
+Die Aussagen „Tests nutzen ausschließlich synthetische Fixtures“ (Zeile 4) und „alle Messungen mit synthetischen PDFs
+und Fixtures“ (Zeile 51) stimmten für PR 1 in der gemergten Form **nicht**. Fixtures und einzelne Tests enthielten
+Beträge und sekundengenaue Zeitstempel, die aus echten Lexware-Belegen abgeleitet waren, ohne Namen und IDs. Sie wurden
+in PR 2 (`69f2608`, gemergt als `8f938aa`) durch erfundene Werte ersetzt. Exposure, Risiko (LOW) und Cleanup-Optionen:
+`ai-company/security/history-exposure.md`.

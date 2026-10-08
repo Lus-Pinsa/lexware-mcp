@@ -54,7 +54,8 @@ export interface ServerInfo {
     /** Number of configured OAuth email-domain allowlist entries (values are not disclosed); null outside OAuth. */
     readonly oauthEmailDomainAllowlistEntries: number | null;
   };
-  readonly webhook: { readonly publicKeyConfigured: boolean };
+  /** `organizationBindingConfigured`: webhooks of other Lexware organizations are ignored (id not disclosed). */
+  readonly webhook: { readonly publicKeyConfigured: boolean; readonly organizationBindingConfigured: boolean };
   readonly runtime: { readonly nodeVersion: string; readonly startedAt: string; readonly uptimeSeconds: number };
   readonly secretsIncluded: false;
 }
@@ -81,7 +82,10 @@ export function buildServerInfo(
       mode: config.auth.mode,
       oauthEmailDomainAllowlistEntries: config.auth.mode === "oauth" ? config.auth.allowedEmailDomains.length : null,
     },
-    webhook: { publicKeyConfigured: Boolean(runtime.env.LEXWARE_WEBHOOK_PUBLIC_KEY?.trim()) },
+    webhook: {
+      publicKeyConfigured: Boolean(runtime.env.LEXWARE_WEBHOOK_PUBLIC_KEY?.trim()),
+      organizationBindingConfigured: config.webhookOrganizationId !== undefined,
+    },
     runtime: {
       nodeVersion: process.version,
       startedAt: runtime.startedAt.toISOString(),

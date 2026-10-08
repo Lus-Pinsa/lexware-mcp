@@ -58,6 +58,7 @@ describe("loadConfig", () => {
       LEXWARE_API_KEY: "k",
       OAUTH_ISSUER: "https://tenant.auth0.com/",
       SERVER_URL: "https://mcp.example.com",
+      OAUTH_ALLOWED_EMAIL_DOMAINS: "example.com",
       OAUTH_AUTHORIZATION_ENDPOINT: "https://tenant.auth0.com/authorize",
       OAUTH_TOKEN_ENDPOINT: "https://tenant.auth0.com/oauth/token",
     } as NodeJS.ProcessEnv);
@@ -74,6 +75,7 @@ describe("loadConfig", () => {
       LEXWARE_API_KEY: "k",
       OAUTH_ISSUER: "https://tenant.auth0.com/",
       SERVER_URL: "https://mcp.example.com",
+      OAUTH_ALLOWED_EMAIL_DOMAINS: "example.com",
     } as NodeJS.ProcessEnv);
     expect(c.auth).toMatchObject({
       mode: "oauth",
@@ -90,8 +92,57 @@ describe("loadConfig", () => {
   });
 
   it("OAuth takes precedence over a static token", () => {
-    const c = loadConfig({ ...base(), OAUTH_ISSUER: "https://auth.example.com", SERVER_URL: "https://x.example.com" } as NodeJS.ProcessEnv);
+    const c = loadConfig({
+      ...base(),
+      OAUTH_ISSUER: "https://auth.example.com",
+      SERVER_URL: "https://x.example.com",
+      OAUTH_ALLOWED_EMAIL_DOMAINS: "example.com",
+    } as NodeJS.ProcessEnv);
     expect(c.auth.mode).toBe("oauth");
+  });
+
+  it("OAuth mode fails closed without an email-domain allowlist unless any-user is explicit", () => {
+    const oauth = { LEXWARE_API_KEY: "k", OAUTH_ISSUER: "https://auth.example.com", SERVER_URL: "https://x.example.com" };
+    expect(() => loadConfig(oauth as NodeJS.ProcessEnv)).toThrow(/OAUTH_ALLOWED_EMAIL_DOMAINS/);
+    expect(() => loadConfig({ ...oauth, OAUTH_ALLOWED_EMAIL_DOMAINS: " , " } as NodeJS.ProcessEnv)).toThrow(ConfigError);
+    expect(() => loadConfig({ ...oauth, OAUTH_ALLOW_ANY_USER: "false" } as NodeJS.ProcessEnv)).toThrow(ConfigError);
+    expect(() => loadConfig({ ...oauth, OAUTH_ALLOW_ANY_USER: "maybe" } as NodeJS.ProcessEnv)).toThrow(ConfigError);
+    const open = loadConfig({ ...oauth, OAUTH_ALLOW_ANY_USER: "true" } as NodeJS.ProcessEnv);
+    expect(open.auth).toMatchObject({ mode: "oauth", allowedEmailDomains: [] });
+  });
+
+  it("validates OAUTH_ALLOW_ANY_USER even when an allowlist is set", () => {
+    expect(() =>
+      loadConfig({
+        LEXWARE_API_KEY: "k",
+        OAUTH_ISSUER: "https://auth.example.com",
+        SERVER_URL: "https://x.example.com",
+        OAUTH_ALLOWED_EMAIL_DOMAINS: "example.com",
+        OAUTH_ALLOW_ANY_USER: "maybe",
+      } as NodeJS.ProcessEnv),
+    ).toThrow(ConfigError);
+  });
+
+  it("warns below exactly 32 token characters, not at 32", () => {
+    expect(loadConfig({ LEXWARE_API_KEY: "k", MCP_AUTH_TOKEN: "c".repeat(31) } as NodeJS.ProcessEnv).warnings).toHaveLength(1);
+    expect(loadConfig({ LEXWARE_API_KEY: "k", MCP_AUTH_TOKEN: "c".repeat(32) } as NodeJS.ProcessEnv).warnings).toEqual([]);
+  });
+
+  it("warns (but starts) when the static token is shorter than 32 characters", () => {
+    const short = loadConfig({ LEXWARE_API_KEY: "k", MCP_AUTH_TOKEN: "b".repeat(20) } as NodeJS.ProcessEnv);
+    expect(short.warnings.join(" ")).toMatch(/shorter than 32/);
+    expect(short.warnings.join(" ")).not.toContain("b".repeat(20));
+    expect(loadConfig(base()).warnings).toEqual([]);
+  });
+
+  it("parses LEXWARE_ORGANIZATION_ID for webhook binding and rejects malformed values", () => {
+    expect(loadConfig(base()).webhookOrganizationId).toBeUndefined();
+    expect(loadConfig({ ...base(), LEXWARE_ORGANIZATION_ID: " " } as NodeJS.ProcessEnv).webhookOrganizationId).toBeUndefined();
+    const id = "00000000-0000-4000-8000-0000000000aa";
+    expect(loadConfig({ ...base(), LEXWARE_ORGANIZATION_ID: ` ${id} ` } as NodeJS.ProcessEnv).webhookOrganizationId).toBe(id);
+    for (const bad of ["a b", "x\ny", "id;rm", "a".repeat(65), "../x"]) {
+      expect(() => loadConfig({ ...base(), LEXWARE_ORGANIZATION_ID: bad } as NodeJS.ProcessEnv)).toThrow(/LEXWARE_ORGANIZATION_ID/);
+    }
   });
 
   it("rejects a weak token", () => {

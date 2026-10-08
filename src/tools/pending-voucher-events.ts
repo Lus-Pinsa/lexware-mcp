@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import {
   acknowledgePendingVoucherEvent,
+  droppedPendingVoucherEvents,
   listPendingVoucherEvents,
 } from "../pending-voucher-events.js";
 
@@ -23,15 +24,22 @@ export function registerPendingVoucherEventReadTools(
     },
     async () => {
       const events = listPendingVoucherEvents();
+      // The queue is bounded: if events were dropped, "pending" is incomplete and must say so.
+      const droppedSinceStart = droppedPendingVoucherEvents();
+      const overflowNote =
+        droppedSinceStart > 0
+          ? `WARNING: ${droppedSinceStart} older event(s) were dropped because the queue was full — this list is incomplete; run reconcile-recent-vouchers.`
+          : null;
 
       if (events.length === 0) {
         return {
           structuredContent: {
             count: 0,
             events: [],
+            droppedSinceStart,
           },
           content: text(
-            "No pending Lexware voucher events.",
+            overflowNote ? `No pending Lexware voucher events.\n${overflowNote}` : "No pending Lexware voucher events.",
           ),
         };
       }
@@ -45,10 +53,12 @@ export function registerPendingVoucherEventReadTools(
         structuredContent: {
           count: events.length,
           events,
+          droppedSinceStart,
         },
         content: text(
           [
             `Pending Lexware voucher events: ${events.length}`,
+            ...(overflowNote ? [overflowNote] : []),
             ...lines,
           ].join("\n"),
         ),

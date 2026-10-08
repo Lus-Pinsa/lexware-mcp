@@ -19,6 +19,15 @@ const pendingVoucherEvents = new Map<
   PendingVoucherEvent
 >();
 
+/**
+ * Upper bound of the in-memory queue. In READ_ONLY mode nothing acknowledges events, so without a bound a
+ * stream of (validly signed) events would grow memory until restart. When full, the oldest event is dropped:
+ * Lexware stays the source of truth and `reconcile-recent-vouchers` re-finds anything missed.
+ */
+export const MAX_PENDING_VOUCHER_EVENTS = 1000;
+
+let droppedOverflow = 0;
+
 function eventKey(event: {
   eventType: string;
   resourceId: string;
@@ -44,6 +53,8 @@ export function addPendingVoucherEvent(input: {
   added: boolean;
   event: PendingVoucherEvent;
   count: number;
+  /** Oldest events dropped to make room for this one (0 or 1). */
+  dropped: number;
 } {
   const event: PendingVoucherEvent = {
     eventType: "voucher.created",
@@ -57,7 +68,16 @@ export function addPendingVoucherEvent(input: {
   const alreadyExists =
     pendingVoucherEvents.has(key);
 
+  let dropped = 0;
   if (!alreadyExists) {
+    // Map iteration order is insertion order, so the first key is the oldest event.
+    while (pendingVoucherEvents.size >= MAX_PENDING_VOUCHER_EVENTS) {
+      const oldest = pendingVoucherEvents.keys().next();
+      if (oldest.done) break;
+      pendingVoucherEvents.delete(oldest.value);
+      droppedOverflow++;
+      dropped++;
+    }
     pendingVoucherEvents.set(key, event);
   }
 
@@ -67,7 +87,13 @@ export function addPendingVoucherEvent(input: {
       pendingVoucherEvents.get(key) ??
       event,
     count: pendingVoucherEvents.size,
+    dropped,
   };
+}
+
+/** Number of events dropped because the queue was full (since process start). */
+export function droppedPendingVoucherEvents(): number {
+  return droppedOverflow;
 }
 
 /**

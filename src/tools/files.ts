@@ -11,6 +11,7 @@ import { createReadOnlyLexwareClient } from "../lexware/read-only-client.js";
 import { UNTRUSTED_PREAMBLE, wrapUntrustedBlock } from "../untrusted.js";
 
 import {
+  MAX_DOWNLOAD_BYTES,
   RO,
   WRITE,
   binaryResult,
@@ -77,6 +78,7 @@ export function registerFileReadTools(
         await client.getBinary(
           `/v1/files/${encodeURIComponent(id)}`,
           accept ?? "*/*",
+          { maxBytes: MAX_DOWNLOAD_BYTES },
         );
 
       return binaryResult({

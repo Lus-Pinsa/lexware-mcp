@@ -23,6 +23,11 @@ updates:
     schedule:
       interval: monthly
     open-pull-requests-limit: 1
+    # Production must run the Node line CI tests on (LTS 24). A Node major bump is a deliberate change of
+    # Dockerfile and CI together, not an automatic grouped update.
+    ignore:
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
     groups:
       docker:
         patterns:

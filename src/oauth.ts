@@ -100,6 +100,18 @@ export interface VerifierDeps {
   fetchFn?: typeof fetch;
 }
 
+/** A header value for the log: short plain tokens only (pre-verification input is attacker-controlled). */
+function logSafeToken(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  return typeof value === "string" && /^[A-Za-z0-9._:-]{1,64}$/.test(value) ? value : "(invalid)";
+}
+
+/** An error message for the log: single line, printable ASCII only, bounded. */
+function logSafeMessage(err: unknown): string {
+  const raw = err instanceof Error ? err.message : "unknown error";
+  return raw.replace(/[^\x20-\x7E]/g, " ").slice(0, 200);
+}
+
 /**
  * Build a `verifyAccessToken` for `requireBearerAuth`. It verifies the JWT
  * signature/issuer/audience via JWKS, then — if `allowedEmailDomains` is set —
@@ -125,10 +137,11 @@ export function createAccessTokenVerifier(oauth: OAuthSettings, deps: VerifierDe
     try {
       const header = jose.decodeProtectedHeader(token);
 
+      // Logged BEFORE verification, so the values are attacker-controlled: only short plain tokens are printed.
       console.error("[lexware-mcp] OAuth token header:", {
-        alg: header.alg,
-        kid: header.kid,
-        typ: header.typ,
+        alg: logSafeToken(header.alg),
+        kid: logSafeToken(header.kid),
+        typ: logSafeToken(header.typ),
       });
 
       ({ payload } = await jose.jwtVerify(token, jwks, {
@@ -145,7 +158,7 @@ export function createAccessTokenVerifier(oauth: OAuthSettings, deps: VerifierDe
         scope: payload.scope,
       });
     } catch (err) {
-      console.error("[lexware-mcp] OAuth jwtVerify failed:", err instanceof Error ? err.message : err);
+      console.error("[lexware-mcp] OAuth jwtVerify failed:", logSafeMessage(err));
       throw new InvalidTokenError("Invalid or expired access token");
     }
 

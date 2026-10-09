@@ -20,6 +20,8 @@ const good = (): RuntimePrivilegeSnapshot => ({
   webhookDelete: false,
   auditAppend: true,
   auditMutate: false,
+  auditAnchorSelect: true,
+  auditAnchorMutate: false,
   roleMemberships: 0,
 });
 
@@ -40,6 +42,8 @@ describe("runtime database privilege gate", () => {
     ["tenant mutation", { tenantsMutate: true }],
     ["webhook delete", { webhookDelete: true }],
     ["audit mutation", { auditMutate: true }],
+    ["missing audit anchor read", { auditAnchorSelect: false }],
+    ["audit anchor mutation", { auditAnchorMutate: true }],
     ["role membership", { roleMemberships: 1 }],
     ["missing migration read", { migrationsSelect: false }],
     ["missing tenant read", { tenantsSelect: false }],

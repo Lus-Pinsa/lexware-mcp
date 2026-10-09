@@ -9,6 +9,7 @@ export interface TenantDirectory {
   resolveOrganizationHash(organizationHash: string): Promise<{ tenantId: TenantId } | null>;
 }
 
+/** Runtime repository: ordinary request handling, no destructive maintenance. */
 export interface PersistenceRepository {
   insertWebhookEvent(
     tenantId: TenantId,
@@ -27,6 +28,13 @@ export interface PersistenceRepository {
     tenantId: TenantId,
     event: Omit<AuditEventInput, "tenantId">,
   ): Promise<void>;
+}
+
+/**
+ * Maintenance repository: retention / tenant deletion only.
+ * It must be wired to a separate maintenance credential, never the runtime role.
+ */
+export interface PersistenceMaintenanceRepository {
   deleteExpiredWebhookEvents(tenantId: TenantId, before: string): Promise<number>;
   deleteExpiredAuditEvents(tenantId: TenantId, before: string): Promise<number>;
   deleteTenantData(tenantId: TenantId): Promise<void>;

@@ -4,6 +4,7 @@ import { asTenantId } from "../src/persistence/types.js";
 
 const migration = readFileSync(new URL("../src/persistence/migrations/001_initial.sql", import.meta.url), "utf8");
 const repository = readFileSync(new URL("../src/persistence/repository.ts", import.meta.url), "utf8");
+const hashing = readFileSync(new URL("../src/persistence/hash.ts", import.meta.url), "utf8");
 
 describe("persistence security contract", () => {
   it("requires tenant_id on every tenant-owned table and enables forced RLS", () => {
@@ -22,16 +23,30 @@ describe("persistence security contract", () => {
 
   it("repository methods require explicit tenant context for tenant-owned access", () => {
     for (const method of [
-      "insertWebhookEvent(tenantId: TenantId",
-      "acknowledgeWebhookEvent(tenantId: TenantId",
-      "listPendingWebhookEvents(tenantId: TenantId",
-      "appendAuditEvent(tenantId: TenantId",
+      "insertWebhookEvent(",
+      "acknowledgeWebhookEvent(",
+      "listPendingWebhookEvents(",
+      "appendAuditEvent(",
       "deleteExpiredWebhookEvents(tenantId: TenantId",
       "deleteExpiredAuditEvents(tenantId: TenantId",
       "deleteTenantData(tenantId: TenantId",
     ]) {
-      expect(repository).toContain(method);
+      const index = repository.indexOf(method);
+      expect(index).toBeGreaterThanOrEqual(0);
+      expect(repository.slice(index, index + 220)).toContain("tenantId: TenantId");
     }
+  });
+
+  it("separates the one global organization-to-tenant directory lookup", () => {
+    expect(repository).toContain("export interface TenantDirectory");
+    expect(repository).toContain("resolveOrganizationHash(organizationHash: string)");
+    expect(repository).not.toContain("getTenantByOrganizationHash");
+  });
+
+  it("uses domain-separated hashes and a secret-keyed audit actor hash", () => {
+    expect(hashing).toContain('update("\\0")');
+    expect(hashing).toContain('createHmac("sha256"');
+    expect(hashing).toContain('"audit-actor\\0"');
   });
 
   it("accepts only UUID-shaped explicit tenant ids", () => {

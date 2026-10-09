@@ -1,5 +1,10 @@
 import { type AuditEntryInput, computeAuditEntryHash, validateAuditEntry } from "./audit.js";
 import { validateEncryptedValue } from "./crypto.js";
+import {
+  type TenantStoragePolicy,
+  type TenantStorageUsage,
+  assertTenantStorageWithinPolicy,
+} from "./capacity.js";
 import { assertTenantCapabilityTier, type TenantCapabilityTier } from "./tenant-capabilities.js";
 import {
   type EncryptedValue,
@@ -99,6 +104,16 @@ const SQL_ACK_EVENT =
   "WHERE tenant_id = $1 AND event_key_hash = $2 AND acknowledged_at IS NULL";
 const SQL_COUNT_PENDING =
   "SELECT count(*)::int AS count FROM webhook_events WHERE tenant_id = $1 AND acknowledged_at IS NULL";
+const SQL_TENANT_STORAGE =
+  "SELECT " +
+  "t.max_webhook_events, t.max_audit_events, t.max_persistence_bytes, " +
+  "(SELECT count(*)::int FROM webhook_events w WHERE w.tenant_id = $1) AS webhook_events, " +
+  "(SELECT count(*)::int FROM audit_events a WHERE a.tenant_id = $1) AS audit_events, " +
+  "(COALESCE((SELECT sum(pg_column_size(w))::bigint FROM webhook_events w WHERE w.tenant_id = $1),0) + " +
+  " COALESCE((SELECT sum(pg_column_size(a))::bigint FROM audit_events a WHERE a.tenant_id = $1),0) + " +
+  " COALESCE((SELECT sum(pg_column_size(h))::bigint FROM audit_retention_anchors h WHERE h.tenant_id = $1),0)) " +
+  "AS persistence_bytes " +
+  "FROM tenants t WHERE t.tenant_id = $1";
 const SQL_LOCK_TENANT =
   "SELECT tenant_id FROM tenants WHERE tenant_id = $1 FOR UPDATE";
 const SQL_GET_LATEST_AUDIT =
@@ -423,6 +438,54 @@ export async function countPendingWebhookEvents(
   return count as number;
 }
 
+export interface TenantStorageSnapshot {
+  readonly policy: TenantStoragePolicy;
+  readonly usage: TenantStorageUsage;
+}
+
+function safeDbInteger(value: number | string, label: string): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new PersistenceValidationError("Invalid " + label + ".");
+  }
+  return parsed;
+}
+
+export async function inspectTenantStorageCapacity(
+  tenantId: TenantId,
+  tx: SqlExecutor,
+): Promise<TenantStorageSnapshot> {
+  const checkedTenantId = parseTenantId(tenantId);
+  const result = await tx.query<{
+    max_webhook_events: number;
+    max_audit_events: number;
+    max_persistence_bytes: number | string;
+    webhook_events: number;
+    audit_events: number;
+    persistence_bytes: number | string;
+  }>({ text: SQL_TENANT_STORAGE, values: [checkedTenantId] });
+
+  const row = result.rows[0];
+  if (result.rowCount !== 1 || row === undefined) {
+    throw new PersistenceValidationError("Tenant storage policy unavailable.");
+  }
+
+  const snapshot = Object.freeze({
+    policy: Object.freeze({
+      maxWebhookEvents: safeDbInteger(row.max_webhook_events, "max webhook event limit"),
+      maxAuditEvents: safeDbInteger(row.max_audit_events, "max audit event limit"),
+      maxPersistenceBytes: safeDbInteger(row.max_persistence_bytes, "max persistence byte limit"),
+    }),
+    usage: Object.freeze({
+      webhookEvents: safeDbInteger(row.webhook_events, "webhook event count"),
+      auditEvents: safeDbInteger(row.audit_events, "audit event count"),
+      persistenceBytes: safeDbInteger(row.persistence_bytes, "persistence byte count"),
+    }),
+  });
+  assertTenantStorageWithinPolicy(snapshot.policy, snapshot.usage);
+  return snapshot;
+}
+
 export async function acknowledgeWebhookEvent(
   tenantId: TenantId,
   tx: SqlExecutor,
@@ -490,6 +553,10 @@ export async function appendAuditEvent(
   if (inserted.rowCount !== 1) {
     throw new PersistenceValidationError("Audit append failed.");
   }
+
+  // Capacity is checked after the append while the tenant row remains locked.
+  // Any excess throws inside the surrounding transaction and rolls the append back.
+  await inspectTenantStorageCapacity(checkedTenantId, tx);
 
   return Object.freeze({ entryHash, previousHash });
 }

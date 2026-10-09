@@ -67,6 +67,7 @@ export function loadKnownMigrations(): readonly MigrationDefinition[] {
     loadMigration(2, "webhook_event_date", "002_webhook_event_date.sql"),
     loadMigration(3, "audit_retention_anchor", "003_audit_retention_anchor.sql"),
     loadMigration(4, "tenant_capability_tier", "004_tenant_capability_tier.sql"),
+    loadMigration(5, "tenant_storage_limits", "005_tenant_storage_limits.sql"),
   ]);
 }
 

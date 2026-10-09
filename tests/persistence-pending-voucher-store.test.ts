@@ -86,6 +86,20 @@ function fakeDb(options: { forcedCount?: number } = {}) {
           });
           return { rows: [] as readonly Row[], rowCount: 1 };
         }
+        if (statement.text.startsWith("SELECT t.max_webhook_events")) {
+          const webhookEvents = rows.size;
+          return {
+            rows: [{
+              max_webhook_events: 10000,
+              max_audit_events: 100000,
+              max_persistence_bytes: 67108864,
+              webhook_events: webhookEvents,
+              audit_events: 0,
+              persistence_bytes: webhookEvents * 512,
+            }] as unknown as readonly Row[],
+            rowCount: 1,
+          };
+        }
         if (statement.text.startsWith("SELECT count(*)::int")) {
           const count =
             options.forcedCount ??

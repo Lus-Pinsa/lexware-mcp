@@ -56,6 +56,14 @@ describe("persistence foundation schema", () => {
     expect(capabilitySql).toContain("'read_only', 'drafts', 'finalize'");
   });
 
+  it("pins explicit per-tenant storage ceilings in schema", () => {
+    const limitSql = read("src/persistence/migrations/005_tenant_storage_limits.sql");
+    expect(limitSql).toContain("DEFAULT 10000");
+    expect(limitSql).toContain("DEFAULT 100000");
+    expect(limitSql).toContain("DEFAULT 67108864");
+    expect(limitSql).toContain("octet_length(resource_ciphertext) BETWEEN 1 AND 512");
+  });
+
   it("reserves audit mutation for the migration/maintenance role", () => {
     expect(sql).toContain("REVOKE UPDATE, DELETE, TRUNCATE ON audit_events FROM PUBLIC;");
     expect(sql).not.toContain("ON DELETE RESTRICT");
@@ -134,12 +142,12 @@ describe("persistence structural policy", () => {
 
 describe("schema version fail-closed helpers", () => {
   it("accepts only the exact known schema version", () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(4);
-    expect(assessSchemaVersion(4)).toBe("AVAILABLE");
+    expect(CURRENT_SCHEMA_VERSION).toBe(5);
+    expect(assessSchemaVersion(5)).toBe("AVAILABLE");
     expect(assessSchemaVersion(null)).toBe("UNAVAILABLE");
     expect(assessSchemaVersion(0)).toBe("INTEGRITY_FAILED");
     expect(assessSchemaVersion(1)).toBe("VERSION_MISMATCH");
-    expect(assessSchemaVersion(5)).toBe("VERSION_MISMATCH");
+    expect(assessSchemaVersion(6)).toBe("VERSION_MISMATCH");
     expect(() => requireKnownSchemaVersion(1)).toThrow(/VERSION_MISMATCH/);
   });
 });

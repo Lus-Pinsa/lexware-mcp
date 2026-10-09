@@ -24,6 +24,13 @@ export interface RestoreEvidenceRows {
   readonly auditAnchorHash: string | null;
 }
 
+function assertRestoreTenantStatus(value: string): "active" | "disabled" {
+  if (value !== "active" && value !== "disabled") {
+    throw new PersistenceValidationError("Invalid restore tenant status.");
+  }
+  return value;
+}
+
 function assertTimestamp(value: string | Date, field: string): string {
   const text = value instanceof Date ? value.toISOString() : value;
   if (
@@ -55,13 +62,8 @@ export async function readRestoreEvidenceRows(
     throw new PersistenceValidationError("Invalid restore tenant cardinality.");
   }
   const tenantRow = tenant.rows[0];
-  if (
-    tenantRow !== undefined &&
-    tenantRow.status !== "active" &&
-    tenantRow.status !== "disabled"
-  ) {
-    throw new PersistenceValidationError("Invalid restore tenant status.");
-  }
+  const tenantStatus =
+    tenantRow === undefined ? null : assertRestoreTenantStatus(tenantRow.status);
 
   const webhook = await tx.query<{
     event_key_hash: string;
@@ -105,7 +107,7 @@ export async function readRestoreEvidenceRows(
               tenantRow.organization_id_hash,
               "restore organization hash",
             ),
-            status: tenantRow.status,
+            status: tenantStatus!,
           }),
     webhookRows: Object.freeze(
       webhook.rows.map((row) =>

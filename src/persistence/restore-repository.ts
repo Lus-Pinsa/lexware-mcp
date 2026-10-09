@@ -1,4 +1,5 @@
 import type { SqlExecutor } from "./repository.js";
+import { assertTenantCapabilityTier } from "./tenant-capabilities.js";
 import {
   type TenantId,
   PersistenceValidationError,
@@ -23,6 +24,13 @@ export interface RestoreEvidenceRows {
     readonly entryHash: string;
   }[];
   readonly auditAnchorHash: string | null;
+}
+
+function assertRestoreTenantStatus(value: string): "active" | "disabled" {
+  if (value !== "active" && value !== "disabled") {
+    throw new PersistenceValidationError("Invalid restore tenant status.");
+  }
+  return value;
 }
 
 function assertTimestamp(value: string | Date, field: string): string {
@@ -57,21 +65,10 @@ export async function readRestoreEvidenceRows(
     throw new PersistenceValidationError("Invalid restore tenant cardinality.");
   }
   const tenantRow = tenant.rows[0];
-  if (
-    tenantRow !== undefined &&
-    tenantRow.status !== "active" &&
-    tenantRow.status !== "disabled"
-  ) {
-    throw new PersistenceValidationError("Invalid restore tenant status.");
-  }
-  if (
-    tenantRow !== undefined &&
-    tenantRow.capability_tier !== "read_only" &&
-    tenantRow.capability_tier !== "drafts" &&
-    tenantRow.capability_tier !== "finalize"
-  ) {
-    throw new PersistenceValidationError("Invalid restore tenant capability tier.");
-  }
+  const tenantStatus =
+    tenantRow === undefined ? null : assertRestoreTenantStatus(tenantRow.status);
+  const tenantCapability =
+    tenantRow === undefined ? null : assertTenantCapabilityTier(tenantRow.capability_tier);
 
   const webhook = await tx.query<{
     event_key_hash: string;
@@ -115,8 +112,8 @@ export async function readRestoreEvidenceRows(
               tenantRow.organization_id_hash,
               "restore organization hash",
             ),
-            status: tenantRow.status,
-            capabilityTier: tenantRow.capability_tier,
+            status: tenantStatus!,
+            capabilityTier: tenantCapability!,
           }),
     webhookRows: Object.freeze(
       webhook.rows.map((row) =>

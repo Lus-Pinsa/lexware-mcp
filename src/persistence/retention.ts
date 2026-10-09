@@ -52,14 +52,7 @@ export async function runTenantRetention(options: {
   const cutoffs = retentionCutoffs(now);
   const auditId = (options.makeAuditId ?? randomUUID)();
 
-  return options.db.transaction(async (tx) => {
-    // Bind the maintenance transaction to exactly one tenant. The maintenance
-    // role may have DELETE rights, but RLS remains a second line of defense.
-    await tx.query({
-      text: "SELECT set_config('app.tenant_id', $1, true) AS tenant_id",
-      values: [tenantId],
-    });
-
+  return withTenantTransaction(tenantId, options.db, async (tx) => {
     const webhookDeleted = await deleteExpiredAcknowledgedWebhookEvents(
       tenantId,
       tx,

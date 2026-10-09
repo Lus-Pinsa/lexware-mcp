@@ -67,6 +67,7 @@ describe("persistence structural policy", () => {
         "operator-repository.ts",
         "maintenance-repository.ts",
         "integrity-repository.ts",
+        "restore-repository.ts",
         "migration-runner.ts",
       ].includes(entry.name);
       if (directQuery) expect(allowed, entry.name).toBe(true);

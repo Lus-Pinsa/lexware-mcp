@@ -194,7 +194,9 @@ describe("configured tenant binding", () => {
           tenant_id: TENANT,
           organization_id_hash: sha256Hex(ORG),
           status: "active",
+          capability_tier: "read_only",
         }),
+        { drafts: false, finalize: false },
       ),
     ).resolves.toBeUndefined();
   });
@@ -203,7 +205,13 @@ describe("configured tenant binding", () => {
     const config = loadPersistenceRuntimeConfig(enabledEnv(), ORG);
     if (!config.enabled) throw new Error("expected enabled config");
 
-    await expect(verifyConfiguredTenantBinding(config, databaseFor(null))).rejects.toThrow(/does not exist/);
+    await expect(
+      verifyConfiguredTenantBinding(
+        config,
+        databaseFor(null),
+        { drafts: false, finalize: false },
+      ),
+    ).rejects.toThrow(/does not exist/);
     await expect(
       verifyConfiguredTenantBinding(
         config,
@@ -211,7 +219,9 @@ describe("configured tenant binding", () => {
           tenant_id: TENANT,
           organization_id_hash: sha256Hex(ORG),
           status: "disabled",
+          capability_tier: "read_only",
         }),
+        { drafts: false, finalize: false },
       ),
     ).rejects.toThrow(/disabled/);
     await expect(
@@ -221,8 +231,30 @@ describe("configured tenant binding", () => {
           tenant_id: TENANT,
           organization_id_hash: sha256Hex("different-org"),
           status: "active",
+          capability_tier: "read_only",
         }),
+        { drafts: false, finalize: false },
       ),
     ).rejects.toThrow(/organization mismatch/);
+  });
+
+  it("fails closed when runtime write capabilities exceed this tenant's persisted policy", async () => {
+    const config = loadPersistenceRuntimeConfig(enabledEnv(), ORG);
+    if (!config.enabled) throw new Error("expected enabled config");
+
+    const readOnlyTenant = databaseFor({
+      tenant_id: TENANT,
+      organization_id_hash: sha256Hex(ORG),
+      status: "active",
+      capability_tier: "read_only",
+    });
+
+    await expect(
+      verifyConfiguredTenantBinding(
+        config,
+        readOnlyTenant,
+        { drafts: true, finalize: false },
+      ),
+    ).rejects.toThrow(/exceeds tenant policy/);
   });
 });

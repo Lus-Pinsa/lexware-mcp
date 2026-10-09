@@ -190,6 +190,7 @@ if (persistenceConfig.enabled) {
   await verifyConfiguredTenantBinding(
     persistenceConfig,
     persistenceDb,
+    config.capabilities,
   );
 
   pendingVoucherStore =

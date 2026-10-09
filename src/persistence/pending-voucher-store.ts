@@ -14,6 +14,7 @@ import {
   acknowledgeWebhookEvent,
   countPendingWebhookEvents,
   insertWebhookEvent,
+  inspectTenantStorageCapacity,
   listPendingWebhookEvents,
   lockTenantForUpdate,
   type PersistenceDatabase,
@@ -80,6 +81,7 @@ export function createDurablePendingVoucherEventStore(options: {
           qualityStatus: "STRUCTURED",
         });
         const count = await countPendingWebhookEvents(options.tenantId, tx);
+        await inspectTenantStorageCapacity(options.tenantId, tx);
         if (count > MAX_PENDING_VOUCHER_EVENTS) {
           throw new PendingVoucherCapacityError();
         }

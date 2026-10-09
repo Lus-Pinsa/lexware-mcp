@@ -2,9 +2,18 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { asTenantId } from "../src/persistence/types.js";
 
-const migration = readFileSync(new URL("../src/persistence/migrations/001_initial.sql", import.meta.url), "utf8");
-const repository = readFileSync(new URL("../src/persistence/repository.ts", import.meta.url), "utf8");
-const hashing = readFileSync(new URL("../src/persistence/hash.ts", import.meta.url), "utf8");
+const migration = readFileSync(
+  new URL("../src/persistence/migrations/001_initial.sql", import.meta.url),
+  "utf8",
+);
+const repository = readFileSync(
+  new URL("../src/persistence/repository.ts", import.meta.url),
+  "utf8",
+);
+const hashing = readFileSync(
+  new URL("../src/persistence/hash.ts", import.meta.url),
+  "utf8",
+);
 
 describe("persistence security contract", () => {
   it("requires tenant_id on every tenant-owned table and enables forced RLS", () => {
@@ -16,12 +25,19 @@ describe("persistence security contract", () => {
   });
 
   it("keeps prohibited high-risk fields out of the initial schema", () => {
-    for (const forbidden of ["pdf_blob", "pdf_text", "access_token", "refresh_token", "api_key", "iban"]) {
+    for (const forbidden of [
+      "pdf_blob",
+      "pdf_text",
+      "access_token",
+      "refresh_token",
+      "api_key",
+      "iban",
+    ]) {
       expect(migration.toLowerCase()).not.toContain(forbidden);
     }
   });
 
-  it("repository methods require explicit tenant context for tenant-owned access", () => {
+  it("runtime repository methods require explicit tenant context", () => {
     for (const method of [
       "insertWebhookEvent(",
       "acknowledgeWebhookEvent(",
@@ -30,29 +46,36 @@ describe("persistence security contract", () => {
     ]) {
       const index = repository.indexOf(method);
       expect(index).toBeGreaterThanOrEqual(0);
-      expect(repository.slice(index, index + 220)).toContain("tenantId: TenantId");
+      expect(repository.slice(index, index + 240)).toContain("tenantId: TenantId");
     }
   });
 
   it("keeps destructive maintenance off the runtime repository", () => {
     const runtimeStart = repository.indexOf("export interface PersistenceRepository");
-    const maintenanceStart = repository.indexOf("export interface PersistenceMaintenanceRepository");
+    const maintenanceStart = repository.indexOf(
+      "export interface PersistenceMaintenanceRepository",
+    );
+    expect(runtimeStart).toBeGreaterThanOrEqual(0);
+    expect(maintenanceStart).toBeGreaterThan(runtimeStart);
+
     const runtimeSection = repository.slice(runtimeStart, maintenanceStart);
+    const maintenanceSection = repository.slice(maintenanceStart);
     expect(runtimeSection).not.toContain("deleteExpired");
     expect(runtimeSection).not.toContain("deleteTenantData");
-    expect(repository.slice(maintenanceStart)).toContain("deleteExpiredWebhookEvents(tenantId: TenantId");
-    expect(repository.slice(maintenanceStart)).toContain("deleteExpiredAuditEvents(tenantId: TenantId");
-    expect(repository.slice(maintenanceStart)).toContain("deleteTenantData(tenantId: TenantId");
-    ]) {
-      const index = repository.indexOf(method);
-      expect(index).toBeGreaterThanOrEqual(0);
-      expect(repository.slice(index, index + 220)).toContain("tenantId: TenantId");
-    }
+    expect(maintenanceSection).toContain(
+      "deleteExpiredWebhookEvents(tenantId: TenantId",
+    );
+    expect(maintenanceSection).toContain(
+      "deleteExpiredAuditEvents(tenantId: TenantId",
+    );
+    expect(maintenanceSection).toContain("deleteTenantData(tenantId: TenantId");
   });
 
   it("separates the one global organization-to-tenant directory lookup", () => {
     expect(repository).toContain("export interface TenantDirectory");
-    expect(repository).toContain("resolveOrganizationHash(organizationHash: string)");
+    expect(repository).toContain(
+      "resolveOrganizationHash(organizationHash: string)",
+    );
     expect(repository).not.toContain("getTenantByOrganizationHash");
   });
 
@@ -63,7 +86,9 @@ describe("persistence security contract", () => {
   });
 
   it("accepts only UUID-shaped explicit tenant ids", () => {
-    expect(asTenantId("550e8400-e29b-41d4-a716-446655440000")).toBe("550e8400-e29b-41d4-a716-446655440000");
+    expect(asTenantId("550e8400-e29b-41d4-a716-446655440000")).toBe(
+      "550e8400-e29b-41d4-a716-446655440000",
+    );
     expect(() => asTenantId("1")).toThrow();
     expect(() => asTenantId("default")).toThrow();
     expect(() => asTenantId("")).toThrow();

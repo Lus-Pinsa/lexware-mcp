@@ -42,7 +42,7 @@ Legend:
 | T-09 | IMPLEMENTED | durable queue keys and queries are tenant-bound with per-tenant capacity |
 | T-11 | PARTIAL | cross-tenant rows/AAD/tenant IDs have adversarial tests; full multi-principal matrix follows auth membership implementation |
 | T-12 | IMPLEMENTED | PostgreSQL FORCE RLS with transaction-scoped app.tenant_id |
-| T-13 | PARTIAL | current deployment is one explicit tenant and defaults read-only; persisted per-tenant capability policy is required before a second tenant can exist |
+| T-13 | IMPLEMENTED | persisted per-tenant capability ceiling defaults read-only and startup fails if effective writes exceed that tenant's policy |
 
 ## Adversarial cases
 

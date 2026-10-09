@@ -114,8 +114,12 @@ const SQL_TENANT_STORAGE =
   " COALESCE((SELECT sum(pg_column_size(h))::bigint FROM audit_retention_anchors h WHERE h.tenant_id = $1),0)) " +
   "AS persistence_bytes " +
   "FROM tenants t WHERE t.tenant_id = $1";
+// Runtime needs SELECT but must not acquire UPDATE on the tenant table.
+// Transaction-scoped advisory locks serialize cooperating tenant writers.
+// Hash collisions only over-serialize unrelated tenants; they never mix rows.
 const SQL_LOCK_TENANT =
-  "SELECT tenant_id FROM tenants WHERE tenant_id = $1 FOR UPDATE";
+  "SELECT tenant_id, pg_advisory_xact_lock(1280659284, hashtext($1::text)) AS lock_token " +
+  "FROM tenants WHERE tenant_id = $1";
 const SQL_GET_LATEST_AUDIT =
   "SELECT entry_hash FROM audit_events WHERE tenant_id = $1 ORDER BY created_at DESC, audit_id DESC LIMIT 1";
 const SQL_GET_AUDIT_ANCHOR =

@@ -122,7 +122,7 @@ describe("persistence migration runner", () => {
     const { db, state } = migrationDb();
     const result = await inspectMigrationState(db);
     expect(result.applied).toEqual([]);
-    expect(result.pending.map((item) => item.version)).toEqual([1, 2, 3, 4]);
+    expect(result.pending.map((item) => item.version)).toEqual([1, 2, 3, 4, 5]);
     expect(state.staticScripts[0]).toContain("CREATE TABLE IF NOT EXISTS schema_migrations");
   });
 
@@ -130,7 +130,7 @@ describe("persistence migration runner", () => {
     const { db, state } = migrationDb();
     const result = await applyPendingMigrations(db);
 
-    expect(result.appliedVersions).toEqual([1, 2, 3, 4]);
+    expect(result.appliedVersions).toEqual([1, 2, 3, 4, 5]);
     expect(state.applied).toHaveLength(5);
     expect(state.applied[0]).toMatchObject({ version: 1, name: "foundation" });
     expect(state.applied[1]).toMatchObject({ version: 2, name: "webhook_event_date" });

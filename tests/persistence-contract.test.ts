@@ -27,9 +27,22 @@ describe("persistence security contract", () => {
       "acknowledgeWebhookEvent(",
       "listPendingWebhookEvents(",
       "appendAuditEvent(",
-      "deleteExpiredWebhookEvents(tenantId: TenantId",
-      "deleteExpiredAuditEvents(tenantId: TenantId",
-      "deleteTenantData(tenantId: TenantId",
+    ]) {
+      const index = repository.indexOf(method);
+      expect(index).toBeGreaterThanOrEqual(0);
+      expect(repository.slice(index, index + 220)).toContain("tenantId: TenantId");
+    }
+  });
+
+  it("keeps destructive maintenance off the runtime repository", () => {
+    const runtimeStart = repository.indexOf("export interface PersistenceRepository");
+    const maintenanceStart = repository.indexOf("export interface PersistenceMaintenanceRepository");
+    const runtimeSection = repository.slice(runtimeStart, maintenanceStart);
+    expect(runtimeSection).not.toContain("deleteExpired");
+    expect(runtimeSection).not.toContain("deleteTenantData");
+    expect(repository.slice(maintenanceStart)).toContain("deleteExpiredWebhookEvents(tenantId: TenantId");
+    expect(repository.slice(maintenanceStart)).toContain("deleteExpiredAuditEvents(tenantId: TenantId");
+    expect(repository.slice(maintenanceStart)).toContain("deleteTenantData(tenantId: TenantId");
     ]) {
       const index = repository.indexOf(method);
       expect(index).toBeGreaterThanOrEqual(0);

@@ -65,6 +65,7 @@ export function loadKnownMigrations(): readonly MigrationDefinition[] {
   return Object.freeze([
     loadMigration(1, "foundation", "001_foundation.sql"),
     loadMigration(2, "webhook_event_date", "002_webhook_event_date.sql"),
+    loadMigration(3, "audit_retention_anchor", "003_audit_retention_anchor.sql"),
   ]);
 }
 

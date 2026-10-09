@@ -10,6 +10,7 @@ export interface RestoreEvidenceRows {
   readonly tenantBinding: {
     readonly organizationIdHash: string;
     readonly status: "active" | "disabled";
+    readonly capabilityTier: "read_only" | "drafts" | "finalize";
   } | null;
   readonly webhookRows: readonly {
     readonly eventKeyHash: string;
@@ -45,9 +46,10 @@ export async function readRestoreEvidenceRows(
   const tenant = await tx.query<{
     organization_id_hash: string;
     status: string;
+    capability_tier: string;
   }>({
     text:
-      "SELECT organization_id_hash, status FROM tenants " +
+      "SELECT organization_id_hash, status, capability_tier FROM tenants " +
       "WHERE tenant_id = $1",
     values: [checkedTenantId],
   });
@@ -61,6 +63,14 @@ export async function readRestoreEvidenceRows(
     tenantRow.status !== "disabled"
   ) {
     throw new PersistenceValidationError("Invalid restore tenant status.");
+  }
+  if (
+    tenantRow !== undefined &&
+    tenantRow.capability_tier !== "read_only" &&
+    tenantRow.capability_tier !== "drafts" &&
+    tenantRow.capability_tier !== "finalize"
+  ) {
+    throw new PersistenceValidationError("Invalid restore tenant capability tier.");
   }
 
   const webhook = await tx.query<{
@@ -106,6 +116,7 @@ export async function readRestoreEvidenceRows(
               "restore organization hash",
             ),
             status: tenantRow.status,
+            capabilityTier: tenantRow.capability_tier,
           }),
     webhookRows: Object.freeze(
       webhook.rows.map((row) =>

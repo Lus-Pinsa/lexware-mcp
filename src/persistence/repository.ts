@@ -77,6 +77,8 @@ const SQL_RUNTIME_PRIVILEGES =
   "has_table_privilege(current_user, 'public.webhook_events', 'DELETE,TRUNCATE') AS webhook_delete, " +
   "has_table_privilege(current_user, 'public.audit_events', 'SELECT,INSERT') AS audit_append, " +
   "has_table_privilege(current_user, 'public.audit_events', 'UPDATE,DELETE,TRUNCATE') AS audit_mutate, " +
+  "has_table_privilege(current_user, 'public.audit_retention_anchors', 'SELECT') AS audit_anchor_select, " +
+  "has_table_privilege(current_user, 'public.audit_retention_anchors', 'INSERT,UPDATE,DELETE,TRUNCATE') AS audit_anchor_mutate, " +
   "(SELECT count(*)::int FROM pg_auth_members m JOIN pg_roles me ON me.oid = m.member WHERE me.rolname = current_user) AS role_memberships " +
   "FROM pg_roles r WHERE r.rolname = current_user";
 const SQL_SET_TENANT = "SELECT set_config('app.tenant_id', $1, true) AS tenant_id";
@@ -99,6 +101,8 @@ const SQL_LOCK_TENANT =
   "SELECT tenant_id FROM tenants WHERE tenant_id = $1 FOR UPDATE";
 const SQL_GET_LATEST_AUDIT =
   "SELECT entry_hash FROM audit_events WHERE tenant_id = $1 ORDER BY created_at DESC, audit_id DESC LIMIT 1";
+const SQL_GET_AUDIT_ANCHOR =
+  "SELECT previous_hash FROM audit_retention_anchors WHERE tenant_id = $1";
 const SQL_INSERT_AUDIT =
   "INSERT INTO audit_events " +
   "(audit_id, tenant_id, actor_hash, action, result, item_count, created_at, previous_hash, entry_hash) " +
@@ -165,6 +169,8 @@ export interface RuntimePrivilegeSnapshot {
   readonly webhookDelete: boolean;
   readonly auditAppend: boolean;
   readonly auditMutate: boolean;
+  readonly auditAnchorSelect: boolean;
+  readonly auditAnchorMutate: boolean;
   readonly roleMemberships: number;
 }
 
@@ -187,6 +193,8 @@ export async function inspectRuntimePrivileges(
     webhook_delete: boolean;
     audit_append: boolean;
     audit_mutate: boolean;
+    audit_anchor_select: boolean;
+    audit_anchor_mutate: boolean;
     role_memberships: number;
   }>({ text: SQL_RUNTIME_PRIVILEGES, values: [] });
 
@@ -217,6 +225,8 @@ export async function inspectRuntimePrivileges(
     webhookDelete: row.webhook_delete,
     auditAppend: row.audit_append,
     auditMutate: row.audit_mutate,
+    auditAnchorSelect: row.audit_anchor_select,
+    auditAnchorMutate: row.audit_anchor_mutate,
     roleMemberships: row.role_memberships,
   });
 }
@@ -438,8 +448,19 @@ export async function appendAuditEvent(
     text: SQL_GET_LATEST_AUDIT,
     values: [checkedTenantId],
   });
-  const previousHash =
-    latest.rows[0] === undefined ? null : assertSha256Hex(latest.rows[0].entry_hash, "previous audit hash");
+  let previousHash: string | null;
+  if (latest.rows[0] !== undefined) {
+    previousHash = assertSha256Hex(latest.rows[0].entry_hash, "previous audit hash");
+  } else {
+    const anchor = await tx.query<{ previous_hash: string }>({
+      text: SQL_GET_AUDIT_ANCHOR,
+      values: [checkedTenantId],
+    });
+    previousHash =
+      anchor.rows[0] === undefined
+        ? null
+        : assertSha256Hex(anchor.rows[0].previous_hash, "audit retention anchor");
+  }
 
   const entry = validateAuditEntry({
     ...input,

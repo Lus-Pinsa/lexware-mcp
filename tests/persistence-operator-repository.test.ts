@@ -53,6 +53,9 @@ function bootstrapDb(options: {
     if (statement.text.startsWith("SELECT entry_hash FROM audit_events")) {
       return { rows: [] as readonly Row[], rowCount: 0 };
     }
+    if (statement.text.startsWith("SELECT previous_hash FROM audit_retention_anchors")) {
+      return { rows: [] as readonly Row[], rowCount: 0 };
+    }
     if (statement.text.startsWith("INSERT INTO audit_events")) {
       return { rows: [] as readonly Row[], rowCount: 1 };
     }

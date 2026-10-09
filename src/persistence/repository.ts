@@ -80,9 +80,16 @@ const SQL_RUNTIME_PRIVILEGES =
   "has_table_privilege(current_user, 'public.schema_migrations', 'INSERT,UPDATE,DELETE,TRUNCATE') AS migrations_mutate, " +
   "has_table_privilege(current_user, 'public.tenants', 'SELECT') AS tenants_select, " +
   "has_table_privilege(current_user, 'public.tenants', 'INSERT,UPDATE,DELETE,TRUNCATE') AS tenants_mutate, " +
-  "has_table_privilege(current_user, 'public.webhook_events', 'SELECT,INSERT,UPDATE') AS webhook_dml, " +
+  "(" +
+  "has_table_privilege(current_user, 'public.webhook_events', 'SELECT') AND " +
+  "has_table_privilege(current_user, 'public.webhook_events', 'INSERT') AND " +
+  "has_table_privilege(current_user, 'public.webhook_events', 'UPDATE')" +
+  ") AS webhook_dml, " +
   "has_table_privilege(current_user, 'public.webhook_events', 'DELETE,TRUNCATE') AS webhook_delete, " +
-  "has_table_privilege(current_user, 'public.audit_events', 'SELECT,INSERT') AS audit_append, " +
+  "(" +
+  "has_table_privilege(current_user, 'public.audit_events', 'SELECT') AND " +
+  "has_table_privilege(current_user, 'public.audit_events', 'INSERT')" +
+  ") AS audit_append, " +
   "has_table_privilege(current_user, 'public.audit_events', 'UPDATE,DELETE,TRUNCATE') AS audit_mutate, " +
   "has_table_privilege(current_user, 'public.audit_retention_anchors', 'SELECT') AS audit_anchor_select, " +
   "has_table_privilege(current_user, 'public.audit_retention_anchors', 'INSERT,UPDATE,DELETE,TRUNCATE') AS audit_anchor_mutate, " +

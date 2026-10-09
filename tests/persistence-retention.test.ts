@@ -77,6 +77,19 @@ describe("persistence retention runner", () => {
       if (statement.text.startsWith("INSERT INTO audit_events")) {
         return { rows: [] as readonly Row[], rowCount: 1 };
       }
+      if (statement.text.startsWith("SELECT t.max_webhook_events")) {
+        return {
+          rows: [{
+            max_webhook_events: 10_000,
+            max_audit_events: 100_000,
+            max_persistence_bytes: 67_108_864,
+            webhook_events: 0,
+            audit_events: 1,
+            persistence_bytes: 512,
+          }] as unknown as readonly Row[],
+          rowCount: 1,
+        };
+      }
 
       throw new Error("unexpected query: " + statement.text);
     });

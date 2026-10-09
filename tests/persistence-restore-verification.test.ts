@@ -120,7 +120,7 @@ describe("restore verification manifest", () => {
   it("captures only counts, hashes and tenant-safe metadata", async () => {
     const manifest = await captureRestoreVerificationManifest(database(), TENANT);
     expect(manifest.version).toBe(1);
-    expect(manifest.schemaMigrationCount).toBe(4);
+    expect(manifest.schemaMigrationCount).toBe(loadKnownMigrations().length);
     expect(manifest.tenantRowCount).toBe(1);
     expect(manifest.webhookCount).toBe(1);
     expect(manifest.auditCount).toBe(1);

@@ -27,7 +27,7 @@ Legend:
 | P-51 | IMPLEMENTED | tenant+event hash primary key and ON CONFLICT idempotency |
 | P-52 | PARTIAL | migration checksum + retained audit-chain integrity fail closed; provider/native physical corruption evidence remains operational |
 | P-53/P-54 | PARTIAL | durable PostgreSQL queue replaces RAM when enabled; explicit kill/redeploy live drill remains open |
-| P-55 | PARTIAL | pending queue and encrypted-field bounds exist; whole-database/tenant byte budget still needs an operational ceiling |
+| P-55 | IMPLEMENTED | v1 snapshots are intentionally absent (max 0); persisted per-tenant webhook/audit row ceilings and 64 MiB tenant byte ceiling fail visibly inside tenant transactions |
 | P-60 | PARTIAL | managed PITR baseline + backup policy documented; live provider recovery settings/key-separation evidence must be retained operationally |
 | P-61 | IMPLEMENTED | backup-restore-runbook.md + incident-response recovery path |
 | P-62 | PENDING LIVE | source-vs-restored verifier checks migrations, tenant binding, row counts, SHA-256 evidence and audit chain; isolated restore drill still required |

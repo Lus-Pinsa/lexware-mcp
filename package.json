@@ -39,6 +39,7 @@
   "overrides": {
     "nodemon": {
       "chokidar": "^4.0.3"
-    }
+    },
+    "handlebars": "4.7.10"
   }
 }

@@ -30,6 +30,68 @@ CREATE TABLE webhook_events (
   PRIMARY KEY (tenant_id, event_key_hash)
 );
 
+CREATE TABLE audit_chain_heads (
+  tenant_id uuid PRIMARY KEY REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+  current_hash text CHECK (current_hash IS NULL OR current_hash ~ '^[a-f0-9]{64}  audit_id bigserial PRIMARY KEY,
+  tenant_id uuid NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+  occurred_at timestamptz NOT NULL DEFAULT now(),
+  actor_hash text NOT NULL CHECK (actor_hash ~ '^[a-f0-9]{64}$'),
+  action text NOT NULL CHECK (action IN ('SCHEMA_MIGRATION','RESTORE','RETENTION_DELETE','TENANT_CREATE','TENANT_DELETE','TENANT_MISMATCH','INTEGRITY_FAILURE')),
+  result text NOT NULL CHECK (result IN ('SUCCESS','DENIED','FAILED')),
+  count integer NOT NULL CHECK (count >= 0),
+  previous_hash text CHECK (previous_hash IS NULL OR previous_hash ~ '^[a-f0-9]{64}$'),
+  entry_hash text NOT NULL CHECK (entry_hash ~ '^[a-f0-9]{64}$')
+);
+
+ALTER TABLE webhook_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE webhook_events FORCE ROW LEVEL SECURITY;
+ALTER TABLE audit_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_events FORCE ROW LEVEL SECURITY;
+ALTER TABLE audit_chain_heads ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_chain_heads FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY webhook_events_tenant_isolation ON webhook_events
+  USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
+  WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
+
+CREATE POLICY audit_events_tenant_isolation ON audit_events
+  USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
+  WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
+
+CREATE POLICY audit_chain_heads_tenant_isolation ON audit_chain_heads
+  USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
+  WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
+
+COMMIT;
+),
+  retention_anchor_hash text CHECK (retention_anchor_hash IS NULL OR retention_anchor_hash ~ '^[a-f0-9]{64}  audit_id bigserial PRIMARY KEY,
+  tenant_id uuid NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+  occurred_at timestamptz NOT NULL DEFAULT now(),
+  actor_hash text NOT NULL CHECK (actor_hash ~ '^[a-f0-9]{64}$'),
+  action text NOT NULL CHECK (action IN ('SCHEMA_MIGRATION','RESTORE','RETENTION_DELETE','TENANT_CREATE','TENANT_DELETE','TENANT_MISMATCH','INTEGRITY_FAILURE')),
+  result text NOT NULL CHECK (result IN ('SUCCESS','DENIED','FAILED')),
+  count integer NOT NULL CHECK (count >= 0),
+  previous_hash text CHECK (previous_hash IS NULL OR previous_hash ~ '^[a-f0-9]{64}$'),
+  entry_hash text NOT NULL CHECK (entry_hash ~ '^[a-f0-9]{64}$')
+);
+
+ALTER TABLE webhook_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE webhook_events FORCE ROW LEVEL SECURITY;
+ALTER TABLE audit_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_events FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY webhook_events_tenant_isolation ON webhook_events
+  USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
+  WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
+
+CREATE POLICY audit_events_tenant_isolation ON audit_events
+  USING (tenant_id = current_setting('app.tenant_id', true)::uuid)
+  WITH CHECK (tenant_id = current_setting('app.tenant_id', true)::uuid);
+
+COMMIT;
+)
+);
+
 CREATE TABLE audit_events (
   audit_id bigserial PRIMARY KEY,
   tenant_id uuid NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,

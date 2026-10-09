@@ -19,11 +19,16 @@ describe("persistence foundation schema", () => {
     expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS tenants[\s\S]*tenant_id uuid PRIMARY KEY/);
     expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS webhook_events[\s\S]*tenant_id uuid NOT NULL/);
     expect(sql).toMatch(/CREATE TABLE IF NOT EXISTS audit_events[\s\S]*tenant_id uuid NOT NULL/);
+    const retentionSql = read("src/persistence/migrations/003_audit_retention_anchor.sql");
+    expect(retentionSql).toMatch(/CREATE TABLE IF NOT EXISTS audit_retention_anchors[\s\S]*tenant_id uuid PRIMARY KEY/);
     for (const table of ["tenants", "webhook_events", "audit_events"]) {
       expect(sql).toContain("ALTER TABLE " + table + " ENABLE ROW LEVEL SECURITY;");
       expect(sql).toContain("ALTER TABLE " + table + " FORCE ROW LEVEL SECURITY;");
       expect(sql).toContain("tenant_isolation_" + table);
     }
+    expect(retentionSql).toContain("ALTER TABLE audit_retention_anchors ENABLE ROW LEVEL SECURITY;");
+    expect(retentionSql).toContain("ALTER TABLE audit_retention_anchors FORCE ROW LEVEL SECURITY;");
+    expect(retentionSql).toContain("tenant_isolation_audit_retention_anchors");
     expect((sql.match(/current_setting\('app\.tenant_id', true\)/g) ?? []).length).toBeGreaterThanOrEqual(6);
   });
 
@@ -57,7 +62,13 @@ describe("persistence structural policy", () => {
       if (!entry.isFile() || !entry.name.endsWith(".ts")) continue;
       const source = readFileSync(join(root, entry.name), "utf8");
       const directQuery = /\.query(?:<[\s\S]*?>)?\s*\(/.test(source);
-      const allowed = ["repository.ts", "operator-repository.ts", "migration-runner.ts"].includes(entry.name);
+      const allowed = [
+        "repository.ts",
+        "operator-repository.ts",
+        "maintenance-repository.ts",
+        "integrity-repository.ts",
+        "migration-runner.ts",
+      ].includes(entry.name);
       if (directQuery) expect(allowed, entry.name).toBe(true);
     }
   });
@@ -115,12 +126,12 @@ describe("persistence structural policy", () => {
 
 describe("schema version fail-closed helpers", () => {
   it("accepts only the exact known schema version", () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(2);
-    expect(assessSchemaVersion(2)).toBe("AVAILABLE");
+    expect(CURRENT_SCHEMA_VERSION).toBe(3);
+    expect(assessSchemaVersion(3)).toBe("AVAILABLE");
     expect(assessSchemaVersion(null)).toBe("UNAVAILABLE");
     expect(assessSchemaVersion(0)).toBe("INTEGRITY_FAILED");
     expect(assessSchemaVersion(1)).toBe("VERSION_MISMATCH");
-    expect(assessSchemaVersion(3)).toBe("VERSION_MISMATCH");
+    expect(assessSchemaVersion(4)).toBe("VERSION_MISMATCH");
     expect(() => requireKnownSchemaVersion(1)).toThrow(/VERSION_MISMATCH/);
   });
 });

@@ -67,6 +67,8 @@ describe("tenant-scoped persistence repository", () => {
       webhook_delete: false,
       audit_append: true,
       audit_mutate: false,
+      audit_anchor_select: true,
+      audit_anchor_mutate: false,
       role_memberships: 0,
     };
     const tx = executor([row]);
@@ -86,6 +88,8 @@ describe("tenant-scoped persistence repository", () => {
       webhookDelete: false,
       auditAppend: true,
       auditMutate: false,
+      auditAnchorSelect: true,
+      auditAnchorMutate: false,
       roleMemberships: 0,
     });
     expect(tx.query.mock.calls[0][0].values).toEqual([]);
@@ -273,6 +277,32 @@ describe("tenant-scoped persistence repository", () => {
     expect(query.mock.calls[2][0].values[1]).toBe(TENANT);
     expect(query.mock.calls[2][0].values[7]).toBe(previousHash);
     expect(query.mock.calls[2][0].values[8]).toBe(result.entryHash);
+  });
+
+  it("continues the audit chain from the retention anchor when no retained rows remain", async () => {
+    const anchorHash = sha256Hex("retained-anchor");
+    const query = vi
+      .fn()
+      .mockResolvedValueOnce({ rows: [{ tenant_id: TENANT }], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce({ rows: [{ previous_hash: anchorHash }], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+    const tx = { query } as unknown as SqlExecutor;
+
+    const input = {
+      auditId: "00000000-0000-4000-8000-0000000000c2",
+      actorHash: sha256Hex("synthetic-actor"),
+      action: "retention.run",
+      result: "SUCCESS",
+      itemCount: 5,
+      createdAt: "2026-10-09T08:00:00Z",
+    };
+
+    const result = await appendAuditEvent(TENANT, tx, input);
+    expect(result.previousHash).toBe(anchorHash);
+    expect(query).toHaveBeenCalledTimes(4);
+    expect(query.mock.calls[2][0].text).toContain("audit_retention_anchors");
+    expect(query.mock.calls[3][0].values[7]).toBe(anchorHash);
   });
 
   it("fails closed when the tenant cannot be locked for an audit append", async () => {

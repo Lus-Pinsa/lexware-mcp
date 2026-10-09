@@ -111,9 +111,19 @@ describe("tenant-scoped persistence repository", () => {
 
   it("reads a tenant binding only by the explicit tenant id", async () => {
     const orgHash = sha256Hex("synthetic-org");
-    const tx = executor([{ tenant_id: TENANT, organization_id_hash: orgHash, status: "active" }]);
+    const tx = executor([{
+      tenant_id: TENANT,
+      organization_id_hash: orgHash,
+      status: "active",
+      capability_tier: "read_only",
+    }]);
     const result = await getTenantBinding(TENANT, tx);
-    expect(result).toEqual({ tenantId: TENANT, organizationIdHash: orgHash, status: "active" });
+    expect(result).toEqual({
+      tenantId: TENANT,
+      organizationIdHash: orgHash,
+      status: "active",
+      capabilityTier: "read_only",
+    });
     expect(tx.query.mock.calls[0][0].values).toEqual([TENANT]);
   });
 

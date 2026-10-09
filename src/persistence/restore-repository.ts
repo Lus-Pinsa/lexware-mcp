@@ -1,4 +1,5 @@
 import type { SqlExecutor } from "./repository.js";
+import { assertTenantCapabilityTier } from "./tenant-capabilities.js";
 import {
   type TenantId,
   PersistenceValidationError,
@@ -10,6 +11,7 @@ export interface RestoreEvidenceRows {
   readonly tenantBinding: {
     readonly organizationIdHash: string;
     readonly status: "active" | "disabled";
+    readonly capabilityTier: "read_only" | "drafts" | "finalize";
   } | null;
   readonly webhookRows: readonly {
     readonly eventKeyHash: string;
@@ -52,9 +54,10 @@ export async function readRestoreEvidenceRows(
   const tenant = await tx.query<{
     organization_id_hash: string;
     status: string;
+    capability_tier: string;
   }>({
     text:
-      "SELECT organization_id_hash, status FROM tenants " +
+      "SELECT organization_id_hash, status, capability_tier FROM tenants " +
       "WHERE tenant_id = $1",
     values: [checkedTenantId],
   });
@@ -64,6 +67,8 @@ export async function readRestoreEvidenceRows(
   const tenantRow = tenant.rows[0];
   const tenantStatus =
     tenantRow === undefined ? null : assertRestoreTenantStatus(tenantRow.status);
+  const tenantCapability =
+    tenantRow === undefined ? null : assertTenantCapabilityTier(tenantRow.capability_tier);
 
   const webhook = await tx.query<{
     event_key_hash: string;
@@ -108,6 +113,7 @@ export async function readRestoreEvidenceRows(
               "restore organization hash",
             ),
             status: tenantStatus!,
+            capabilityTier: tenantCapability!,
           }),
     webhookRows: Object.freeze(
       webhook.rows.map((row) =>

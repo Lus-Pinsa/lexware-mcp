@@ -72,6 +72,7 @@ export async function captureRestoreVerificationManifest(
         : [[
             evidence.tenantBinding.organizationIdHash,
             evidence.tenantBinding.status,
+            evidence.tenantBinding.capabilityTier,
           ]],
     );
 

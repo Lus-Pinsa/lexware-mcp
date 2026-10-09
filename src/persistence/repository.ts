@@ -1,5 +1,6 @@
 import { type AuditEntryInput, computeAuditEntryHash, validateAuditEntry } from "./audit.js";
 import { validateEncryptedValue } from "./crypto.js";
+import { assertTenantCapabilityTier, type TenantCapabilityTier } from "./tenant-capabilities.js";
 import {
   type EncryptedValue,
   type QualityStatus,
@@ -32,6 +33,7 @@ export interface TenantBinding {
   readonly tenantId: TenantId;
   readonly organizationIdHash: string;
   readonly status: "active" | "disabled";
+  readonly capabilityTier: TenantCapabilityTier;
 }
 
 export interface WebhookEventInsert {
@@ -83,7 +85,7 @@ const SQL_RUNTIME_PRIVILEGES =
   "FROM pg_roles r WHERE r.rolname = current_user";
 const SQL_SET_TENANT = "SELECT set_config('app.tenant_id', $1, true) AS tenant_id";
 const SQL_GET_TENANT =
-  "SELECT tenant_id, organization_id_hash, status FROM tenants WHERE tenant_id = $1";
+  "SELECT tenant_id, organization_id_hash, status, capability_tier FROM tenants WHERE tenant_id = $1";
 const SQL_INSERT_WEBHOOK =
   "INSERT INTO webhook_events " +
   "(tenant_id, event_key_hash, event_type, resource_ciphertext, resource_nonce, resource_auth_tag, key_id, event_date, received_at, payload_checksum, source, request_budget_status, quality_status) " +
@@ -299,6 +301,7 @@ export async function getTenantBinding(
     tenant_id: string;
     organization_id_hash: string;
     status: string;
+    capability_tier: string;
   }>({ text: SQL_GET_TENANT, values: [checkedTenantId] });
 
   const row = result.rows[0];
@@ -311,6 +314,7 @@ export async function getTenantBinding(
     tenantId: returnedTenantId,
     organizationIdHash: assertSha256Hex(row.organization_id_hash, "organization id hash"),
     status: assertTenantStatus(row.status),
+    capabilityTier: assertTenantCapabilityTier(row.capability_tier),
   });
 }
 

@@ -56,9 +56,13 @@ function database(options: {
     if (text.startsWith("SELECT set_config")) {
       return { rows: [] as readonly Row[], rowCount: 1 };
     }
-    if (text.startsWith("SELECT organization_id_hash, status FROM tenants")) {
+    if (text.startsWith("SELECT organization_id_hash, status, capability_tier FROM tenants")) {
       return {
-        rows: [{ organization_id_hash: ORG_HASH, status: "active" }] as unknown as readonly Row[],
+        rows: [{
+          organization_id_hash: ORG_HASH,
+          status: "active",
+          capability_tier: "read_only",
+        }] as unknown as readonly Row[],
         rowCount: 1,
       };
     }
@@ -116,7 +120,7 @@ describe("restore verification manifest", () => {
   it("captures only counts, hashes and tenant-safe metadata", async () => {
     const manifest = await captureRestoreVerificationManifest(database(), TENANT);
     expect(manifest.version).toBe(1);
-    expect(manifest.schemaMigrationCount).toBe(3);
+    expect(manifest.schemaMigrationCount).toBe(4);
     expect(manifest.tenantRowCount).toBe(1);
     expect(manifest.webhookCount).toBe(1);
     expect(manifest.auditCount).toBe(1);
@@ -173,7 +177,7 @@ describe("restore verification manifest", () => {
     const base: RestoreVerificationManifest = {
       version: 1,
       tenantId: TENANT,
-      schemaMigrationCount: 3,
+      schemaMigrationCount: 4,
       schemaMigrationDigest: "a".repeat(64),
       tenantRowCount: 1,
       tenantBindingDigest: "b".repeat(64),

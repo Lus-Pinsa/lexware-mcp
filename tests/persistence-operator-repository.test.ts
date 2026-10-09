@@ -33,7 +33,7 @@ function bootstrapDb(options: {
       return { rows: [] as readonly Row[], rowCount: options.insertCount };
     }
     if (
-      statement.text.startsWith("SELECT tenant_id, organization_id_hash, status FROM tenants") &&
+      statement.text.startsWith("SELECT tenant_id, organization_id_hash, status, capability_tier FROM tenants") &&
       !statement.text.includes("FOR UPDATE")
     ) {
       return {
@@ -42,6 +42,7 @@ function bootstrapDb(options: {
             tenant_id: TENANT,
             organization_id_hash: options.storedOrgHash ?? ORG_HASH,
             status: options.storedStatus ?? "active",
+            capability_tier: "read_only",
           },
         ] as unknown as readonly Row[],
         rowCount: 1,
@@ -137,6 +138,7 @@ describe("explicit persistence tenant bootstrap", () => {
         tenant_id: "00000000-0000-4000-8000-0000000000bb",
         organization_id_hash: ORG_HASH,
         status: "active",
+        capability_tier: "read_only",
       }],
       rowCount: 1,
     }));

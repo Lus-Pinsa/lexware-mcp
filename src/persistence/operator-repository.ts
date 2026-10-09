@@ -9,10 +9,11 @@ import {
 
 const SQL_SET_TENANT = "SELECT set_config('app.tenant_id', $1, true) AS tenant_id";
 const SQL_INSERT_TENANT =
-  "INSERT INTO tenants (tenant_id, organization_id_hash, status) VALUES ($1,$2,'active') " +
+  "INSERT INTO tenants (tenant_id, organization_id_hash, status, capability_tier) " +
+  "VALUES ($1,$2,'active','read_only') " +
   "ON CONFLICT (tenant_id) DO NOTHING";
 const SQL_GET_TENANT =
-  "SELECT tenant_id, organization_id_hash, status FROM tenants WHERE tenant_id = $1";
+  "SELECT tenant_id, organization_id_hash, status, capability_tier FROM tenants WHERE tenant_id = $1";
 
 export interface TenantBootstrapInput {
   readonly tenantId: TenantId;
@@ -46,6 +47,7 @@ export async function bootstrapTenant(
       tenant_id: string;
       organization_id_hash: string;
       status: string;
+      capability_tier: string;
     }>({ text: SQL_GET_TENANT, values: [tenantId] });
 
     const row = verified.rows[0];

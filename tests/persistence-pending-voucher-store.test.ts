@@ -47,7 +47,7 @@ function fakeDb(options: { forcedCount?: number } = {}) {
         if (statement.text.startsWith("SELECT set_config")) {
           return { rows: [{ tenant_id: TENANT }] as unknown as readonly Row[], rowCount: 1 };
         }
-        if (statement.text.includes("FROM tenants") && statement.text.includes("FOR UPDATE")) {
+        if (statement.text.includes("FROM tenants") && statement.text.includes("pg_advisory_xact_lock")) {
           return { rows: [{ tenant_id: TENANT }] as unknown as readonly Row[], rowCount: 1 };
         }
         if (statement.text.startsWith("INSERT INTO webhook_events")) {

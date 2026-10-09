@@ -26,7 +26,8 @@ describe("persistence maintenance repository", () => {
       ),
     ).resolves.toBe(4);
 
-    expect(query.mock.calls[0][0].text).toContain("FOR UPDATE");
+    expect(query.mock.calls[0][0].text).toContain("pg_advisory_xact_lock");
+    expect(query.mock.calls[0][0].text).not.toContain("FOR UPDATE");
     expect(query.mock.calls[1][0].text).toContain("acknowledged_at IS NOT NULL");
     expect(query.mock.calls[1][0].text).toContain("acknowledged_at < $2");
     expect(query.mock.calls[1][0].values).toEqual([

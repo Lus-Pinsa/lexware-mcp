@@ -291,7 +291,8 @@ describe("tenant-scoped persistence repository", () => {
     );
 
     expect(query).toHaveBeenCalledTimes(4);
-    expect(query.mock.calls[0][0].text).toContain("FOR UPDATE");
+    expect(query.mock.calls[0][0].text).toContain("pg_advisory_xact_lock");
+    expect(query.mock.calls[0][0].text).not.toContain("FOR UPDATE");
     expect(query.mock.calls[0][0].values).toEqual([TENANT]);
     expect(query.mock.calls[2][0].text).toContain("INSERT INTO audit_events");
     expect(query.mock.calls[2][0].text).not.toMatch(/UPDATE audit_events|DELETE FROM audit_events/);

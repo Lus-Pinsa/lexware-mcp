@@ -86,13 +86,15 @@ function migrationDb(
 describe("persistence migration runner", () => {
   it("loads the checked-in migration with a deterministic SHA-256 checksum", () => {
     const known = loadKnownMigrations();
-    expect(known).toHaveLength(2);
-    expect(known.map((item) => item.version)).toEqual([1, 2]);
+    expect(known).toHaveLength(3);
+    expect(known.map((item) => item.version)).toEqual([1, 2, 3]);
     expect(known[0].name).toBe("foundation");
     expect(known[1].name).toBe("webhook_event_date");
+    expect(known[2].name).toBe("audit_retention_anchor");
     for (const migration of known) expect(migration.checksum).toMatch(/^[0-9a-f]{64}$/);
     expect(known[0].sql).toContain("CREATE TABLE IF NOT EXISTS tenants");
     expect(known[1].sql).toContain("ADD COLUMN IF NOT EXISTS event_date");
+    expect(known[2].sql).toContain("CREATE TABLE IF NOT EXISTS audit_retention_anchors");
   });
 
   it("rejects destructive SQL before it can reach a database", () => {
@@ -116,7 +118,7 @@ describe("persistence migration runner", () => {
     const { db, state } = migrationDb();
     const result = await inspectMigrationState(db);
     expect(result.applied).toEqual([]);
-    expect(result.pending.map((item) => item.version)).toEqual([1, 2]);
+    expect(result.pending.map((item) => item.version)).toEqual([1, 2, 3]);
     expect(state.staticScripts[0]).toContain("CREATE TABLE IF NOT EXISTS schema_migrations");
   });
 
@@ -124,18 +126,19 @@ describe("persistence migration runner", () => {
     const { db, state } = migrationDb();
     const result = await applyPendingMigrations(db);
 
-    expect(result.appliedVersions).toEqual([1, 2]);
-    expect(state.applied).toHaveLength(2);
+    expect(result.appliedVersions).toEqual([1, 2, 3]);
+    expect(state.applied).toHaveLength(3);
     expect(state.applied[0]).toMatchObject({ version: 1, name: "foundation" });
     expect(state.applied[1]).toMatchObject({ version: 2, name: "webhook_event_date" });
+    expect(state.applied[2]).toMatchObject({ version: 3, name: "audit_retention_anchor" });
     expect(state.applied[0].checksum).toMatch(/^[0-9a-f]{64}$/);
     expect(state.staticScripts.some((script) => script === "LOCK TABLE schema_migrations IN EXCLUSIVE MODE")).toBe(true);
     expect(state.staticScripts.some((script) => script.includes("CREATE TABLE IF NOT EXISTS tenants"))).toBe(true);
-    expect(state.inserts).toHaveLength(2);
+    expect(state.inserts).toHaveLength(3);
 
     const after = await inspectMigrationState(db);
     expect(after.pending).toEqual([]);
-    expect(after.applied).toHaveLength(2);
+    expect(after.applied).toHaveLength(3);
   });
 
   it("accepts only the exact current migration ledger for runtime startup", () => {
@@ -158,6 +161,7 @@ describe("persistence migration runner", () => {
     const { db, state } = migrationDb([
       { version: 1, name: "foundation", checksum: known[0].checksum },
       { version: 2, name: "webhook_event_date", checksum: known[1].checksum },
+      { version: 3, name: "audit_retention_anchor", checksum: known[2].checksum },
     ]);
     const result = await applyPendingMigrations(db);
     expect(result.appliedVersions).toEqual([]);
@@ -190,7 +194,8 @@ describe("persistence migration runner", () => {
         migrationDb([
           { version: 1, name: "foundation", checksum: known[0].checksum },
           { version: 2, name: "webhook_event_date", checksum: known[1].checksum },
-          { version: 3, name: "future", checksum: "b".repeat(64) },
+          { version: 3, name: "audit_retention_anchor", checksum: known[2].checksum },
+          { version: 4, name: "future", checksum: "b".repeat(64) },
         ]).db,
       ),
     ).rejects.toThrow(/newer or unknown/);

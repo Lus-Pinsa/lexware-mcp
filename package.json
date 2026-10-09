@@ -15,7 +15,8 @@
     "typecheck:governance": "tsc -p ai-company/tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "secret-scan": "node ai-company/scripts/secret-scan.mjs"
+    "secret-scan": "node ai-company/scripts/secret-scan.mjs",
+    "persistence:verify-restore": "tsx scripts/verify-persistence-restore.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",

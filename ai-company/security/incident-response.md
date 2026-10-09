@@ -22,6 +22,9 @@ Stand: Security Architecture Gate, `main` = `8f938aa`.
 | Lexware-Weblogin des Owners | Lexware; Owner-Gerät | Alles in der Organisation, inklusive neuer API-Schlüssel und Webhook-Abonnements | — | Passwort ändern, 2FA, Sitzungen beenden, danach API-Schlüssel rotieren |
 | `LEXWARE_WEBHOOK_PUBLIC_KEY` | Render-Env | Öffentlicher Schlüssel, nicht geheim. Wird er manipuliert (über Render), werden gefälschte Webhooks angenommen. | — | Aus der Lexware-Dokumentation neu setzen |
 
+| Persistence DB credentials | Render/Postgres + Render-Env | Persistierte Queue-/Auditdaten gemäß der jeweiligen DB-Rolle lesen bzw. verändern. Die Runtime-Rolle wird beim Start auf Least Privilege geprüft. | Lexware direkt schreiben; App-Verschlüsselungsschlüssel aus der DB lesen | Betroffene DB-Credentials in Render rotieren, Runtime neu setzen, deployen und Privilege-Gate prüfen |
+| PERSISTENCE_KEYRING / Audit-Salt | Render-Env (Secret) | Verschlüsselte persistierte Ressourcen entschlüsseln bzw. Audit-Akteure reproduzierbar pseudonymisieren | PostgreSQL-Zugang oder Lexware-Zugang erhalten | Neue Key-ID/Key kontrolliert rotieren; alte Key-ID bis zur Neuverschlüsselung lesbar halten; Audit-Salt nur nach Incident-Plan rotieren |
+
 ## Ablauf pro Vorfall
 
 ### 1. Detect (Erkennen)
@@ -58,7 +61,7 @@ Das betroffene Credential gemäß Inventar widerrufen. Bei einer Render-Kompromi
 
 - Den Deploy von einem bekannten, geprüften Commit auf `main` neu auslösen und die Build-SHA mit `get-server-info` verifizieren.
 - Lexware-Daten auf unerwartete Änderungen prüfen: Belege, Kontakte, Webhook-Abonnements (`list-event-subscriptions`). **Grenze:** Finalisierte Dokumente und Buchungen lassen sich nicht zurücknehmen, nur mit Storno bzw. Korrekturbeleg und Steuerberatung behandeln.
-- Ab PR 3: Persistence-Daten aus einem verifizierten Backup wiederherstellen (Persistence-Vertrag P-60 bis P-62). Nicht vertrauenswürdige Snapshots werden verworfen.
+- Persistence-Daten nur nach dem Verfahren in ../persistence/backup-restore-runbook.md wiederherstellen. Ein Restore bleibt isoliert, bis Migrationen, Tabellenzähler, Prüfsummen und Audit-Hashkette verifiziert sind. Ein vorhandener Recovery Point allein gilt nicht als verifiziertes Backup.
 
 ### 6. Audit (Aufarbeiten)
 

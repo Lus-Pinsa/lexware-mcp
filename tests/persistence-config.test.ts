@@ -8,7 +8,7 @@ const enabled = () =>
   ({
     PERSISTENCE_ENABLED: "true",
     PERSISTENCE_DATABASE_URL:
-      "postgresql://runtime:secret@db.internal.example/lus?sslmode=verify-full",
+      "postgresql://runtime@db.internal.example/lus?sslmode=verify-full",
     PERSISTENCE_TENANT_ID: "550e8400-e29b-41d4-a716-446655440000",
     PERSISTENCE_ENCRYPTION_KEY_ID: "v1",
     PERSISTENCE_ENCRYPTION_KEY: key,
@@ -41,8 +41,8 @@ describe("persistence config", () => {
 
   it("requires PostgreSQL TLS certificate verification", () => {
     for (const url of [
-      "postgresql://runtime:secret@db.internal.example/lus",
-      "postgresql://runtime:secret@db.internal.example/lus?sslmode=require",
+      "postgresql://runtime@db.internal.example/lus",
+      "postgresql://runtime@db.internal.example/lus?sslmode=require",
       "http://db.internal.example/lus?sslmode=verify-full",
     ]) {
       expect(() =>
@@ -70,17 +70,16 @@ describe("persistence config", () => {
   });
 
   it("never includes secret values in validation errors", () => {
-    const secret = "postgresql://runtime:SUPERSECRET@db.internal.example/lus";
+    const secret = "not-valid-key-material";
     let message = "";
     try {
       loadPersistenceConfig({
         ...enabled(),
-        PERSISTENCE_DATABASE_URL: secret,
+        PERSISTENCE_ENCRYPTION_KEY: secret,
       });
     } catch (error) {
       message = error instanceof Error ? error.message : String(error);
     }
-    expect(message).not.toContain("SUPERSECRET");
     expect(message).not.toContain(secret);
   });
 });

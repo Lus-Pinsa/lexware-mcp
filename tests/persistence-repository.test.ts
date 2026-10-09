@@ -261,7 +261,18 @@ describe("tenant-scoped persistence repository", () => {
       .fn()
       .mockResolvedValueOnce({ rows: [{ tenant_id: TENANT }], rowCount: 1 })
       .mockResolvedValueOnce({ rows: [{ entry_hash: previousHash }], rowCount: 1 })
-      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+      .mockResolvedValueOnce({
+        rows: [{
+          max_webhook_events: 10_000,
+          max_audit_events: 100_000,
+          max_persistence_bytes: 67_108_864,
+          webhook_events: 0,
+          audit_events: 1,
+          persistence_bytes: 512,
+        }],
+        rowCount: 1,
+      });
     const tx = { query } as unknown as SqlExecutor;
 
     const input = {
@@ -279,7 +290,7 @@ describe("tenant-scoped persistence repository", () => {
       computeAuditEntryHash({ ...input, tenantId: TENANT, previousHash }),
     );
 
-    expect(query).toHaveBeenCalledTimes(3);
+    expect(query).toHaveBeenCalledTimes(4);
     expect(query.mock.calls[0][0].text).toContain("FOR UPDATE");
     expect(query.mock.calls[0][0].values).toEqual([TENANT]);
     expect(query.mock.calls[2][0].text).toContain("INSERT INTO audit_events");
@@ -296,7 +307,18 @@ describe("tenant-scoped persistence repository", () => {
       .mockResolvedValueOnce({ rows: [{ tenant_id: TENANT }], rowCount: 1 })
       .mockResolvedValueOnce({ rows: [], rowCount: 0 })
       .mockResolvedValueOnce({ rows: [{ previous_hash: anchorHash }], rowCount: 1 })
-      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 })
+      .mockResolvedValueOnce({
+        rows: [{
+          max_webhook_events: 10_000,
+          max_audit_events: 100_000,
+          max_persistence_bytes: 67_108_864,
+          webhook_events: 0,
+          audit_events: 1,
+          persistence_bytes: 512,
+        }],
+        rowCount: 1,
+      });
     const tx = { query } as unknown as SqlExecutor;
 
     const input = {
@@ -310,7 +332,7 @@ describe("tenant-scoped persistence repository", () => {
 
     const result = await appendAuditEvent(TENANT, tx, input);
     expect(result.previousHash).toBe(anchorHash);
-    expect(query).toHaveBeenCalledTimes(4);
+    expect(query).toHaveBeenCalledTimes(5);
     expect(query.mock.calls[2][0].text).toContain("audit_retention_anchors");
     expect(query.mock.calls[3][0].values[7]).toBe(anchorHash);
   });

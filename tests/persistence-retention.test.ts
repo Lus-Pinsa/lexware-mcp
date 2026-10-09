@@ -44,7 +44,7 @@ describe("persistence retention runner", () => {
       if (statement.text.startsWith("SELECT set_config")) {
         return { rows: [] as readonly Row[], rowCount: 1 };
       }
-      if (statement.text.includes("SELECT tenant_id FROM tenants") && statement.text.includes("FOR UPDATE")) {
+      if (statement.text.includes("FROM tenants") && statement.text.includes("pg_advisory_xact_lock")) {
         return {
           rows: [{ tenant_id: TENANT }] as unknown as readonly Row[],
           rowCount: 1,

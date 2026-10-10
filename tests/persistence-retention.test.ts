@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { sha256Hex } from "../src/persistence/crypto.js";
+import { computeAuditEntryHash } from "../src/persistence/audit.js";
 import {
   AUDIT_RETENTION_YEARS,
   WEBHOOK_RETENTION_DAYS,
@@ -14,7 +15,23 @@ import type {
 import { parseTenantId } from "../src/persistence/types.js";
 
 const TENANT = parseTenantId("00000000-0000-4000-8000-0000000000aa");
-const ANCHOR = sha256Hex("expired-audit-anchor");
+const EXPIRED_ENTRY = {
+  auditId: "00000000-0000-4000-8000-0000000000c1",
+  tenantId: TENANT,
+  actorHash: sha256Hex("synthetic-expired-audit-actor"),
+  action: "tenant.create",
+  result: "SUCCESS",
+  itemCount: 1,
+  createdAt: "2025-09-09T08:00:00.000Z",
+  previousHash: null,
+};
+const ANCHOR = computeAuditEntryHash(EXPIRED_ENTRY);
+const EXPIRED_ROW = {
+  audit_id: EXPIRED_ENTRY.auditId, tenant_id: TENANT,
+  actor_hash: EXPIRED_ENTRY.actorHash, action: EXPIRED_ENTRY.action,
+  result: EXPIRED_ENTRY.result, item_count: EXPIRED_ENTRY.itemCount,
+  created_at: EXPIRED_ENTRY.createdAt, previous_hash: null, entry_hash: ANCHOR,
+};
 
 describe("persistence retention runner", () => {
   it("uses the approved 30-day webhook and one-calendar-year audit windows", () => {
@@ -34,6 +51,7 @@ describe("persistence retention runner", () => {
 
   it("runs retention atomically for one tenant and appends a content-free count audit", async () => {
     const calls: Array<{ text: string; values: readonly unknown[] }> = [];
+    let anchorWritten = false;
 
     const query = vi.fn(async <Row = Record<string, unknown>>(statement: {
       readonly text: string;
@@ -60,19 +78,25 @@ describe("persistence retention runner", () => {
         };
       }
       if (statement.text.startsWith("INSERT INTO audit_retention_anchors")) {
+        anchorWritten = true;
         return { rows: [] as readonly Row[], rowCount: 1 };
       }
+      if (statement.text.startsWith("SELECT audit_id, tenant_id")) {
+        return { rows: [EXPIRED_ROW] as unknown as readonly Row[], rowCount: 1 };
+      }
+      if (statement.text.startsWith("SELECT previous_hash FROM audit_events")) {
+        return { rows: [] as readonly Row[], rowCount: 0 };
+      }
       if (statement.text.startsWith("DELETE FROM audit_events")) {
-        return { rows: [] as readonly Row[], rowCount: 3 };
+        return { rows: [] as readonly Row[], rowCount: 1 };
       }
       if (statement.text.startsWith("SELECT entry_hash FROM audit_events")) {
         return { rows: [] as readonly Row[], rowCount: 0 };
       }
       if (statement.text.startsWith("SELECT previous_hash FROM audit_retention_anchors")) {
-        return {
-          rows: [{ previous_hash: ANCHOR }] as unknown as readonly Row[],
-          rowCount: 1,
-        };
+        return anchorWritten
+          ? { rows: [{ previous_hash: ANCHOR }] as unknown as readonly Row[], rowCount: 1 }
+          : { rows: [] as readonly Row[], rowCount: 0 };
       }
       if (statement.text.startsWith("INSERT INTO audit_events")) {
         return { rows: [] as readonly Row[], rowCount: 1 };
@@ -106,7 +130,7 @@ describe("persistence retention runner", () => {
         now: () => new Date("2026-10-09T08:00:00.000Z"),
         makeAuditId: () => "00000000-0000-4000-8000-0000000000c3",
       }),
-    ).resolves.toEqual({ webhookDeleted: 2, auditDeleted: 3 });
+    ).resolves.toEqual({ webhookDeleted: 2, auditDeleted: 1 });
 
     expect(transaction).toHaveBeenCalledTimes(1);
     expect(calls[0]).toEqual({
@@ -118,7 +142,7 @@ describe("persistence retention runner", () => {
     expect(auditInsert).toBeDefined();
     expect(auditInsert?.values[3]).toBe("retention.run");
     expect(auditInsert?.values[4]).toBe("SUCCESS");
-    expect(auditInsert?.values[5]).toBe(5);
+    expect(auditInsert?.values[5]).toBe(3);
     expect(JSON.stringify(auditInsert?.values)).not.toContain("webhook");
   });
 

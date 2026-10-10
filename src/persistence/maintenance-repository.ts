@@ -1,3 +1,4 @@
+import { verifyAuditChainIntegrity } from "./integrity.js";
 import {
   lockTenantForUpdate,
   type SqlExecutor,
@@ -17,6 +18,11 @@ const SQL_LAST_EXPIRED_AUDIT =
   "SELECT entry_hash FROM audit_events " +
   "WHERE tenant_id = $1 AND created_at < $2 " +
   "ORDER BY created_at DESC, audit_id DESC LIMIT 1";
+
+const SQL_FIRST_RETAINED_AUDIT =
+  "SELECT previous_hash FROM audit_events " +
+  "WHERE tenant_id = $1 AND created_at >= $2 " +
+  "ORDER BY created_at ASC, audit_id ASC LIMIT 1";
 
 const SQL_UPSERT_AUDIT_ANCHOR =
   "INSERT INTO audit_retention_anchors (tenant_id, previous_hash, updated_at) " +
@@ -78,6 +84,27 @@ export async function deleteExpiredAuditEvents(
   const lastExpired = anchorCandidate.rows[0];
   if (lastExpired === undefined) return 0;
   const anchorHash = assertSha256Hex(lastExpired.entry_hash, "audit retention anchor");
+
+  // Pruning must not turn a corrupted or truncated chain into an apparently
+  // valid history. The caller holds the tenant lock in a pinned transaction.
+  const integrity = await verifyAuditChainIntegrity(checkedTenantId, tx);
+  if (integrity.count < 1) {
+    throw new PersistenceValidationError("Audit retention integrity verification found no source events.");
+  }
+
+  // A time-based deletion is safe only for a prefix of the hash chain.
+  // If any entry survives, its first previous_hash must match the anchor.
+  const boundary = await tx.query<{ previous_hash: string | null }>({
+    text: SQL_FIRST_RETAINED_AUDIT,
+    values: [checkedTenantId, cutoff],
+  });
+  if (boundary.rowCount > 1 || boundary.rows.length > 1) {
+    throw new PersistenceValidationError("Invalid audit retention boundary cardinality.");
+  }
+  const firstRetained = boundary.rows[0];
+  if (firstRetained !== undefined && firstRetained.previous_hash !== anchorHash) {
+    throw new PersistenceValidationError("Audit retention cutoff is not a chain prefix.");
+  }
 
   const anchor = await tx.query({
     text: SQL_UPSERT_AUDIT_ANCHOR,

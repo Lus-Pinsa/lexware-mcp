@@ -77,8 +77,16 @@ export async function listAuditChainEntries(
     entry_hash: string;
   }>({
     text: SQL_LIST_AUDIT_CHAIN,
-    values: [checkedTenantId, limit],
+    // Request one sentinel beyond the maximum: a truncated hash chain must
+    // never be mistaken for a fully verified chain before audit retention.
+    values: [checkedTenantId, limit + 1],
   });
+
+  if (result.rows.length > limit || result.rowCount > limit) {
+    throw new PersistenceValidationError(
+      "Audit chain exceeds the integrity verification limit.",
+    );
+  }
 
   return Object.freeze(
     result.rows.map((row) => {

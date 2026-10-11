@@ -209,7 +209,8 @@ describe("persistence migration runner", () => {
           { version: 3, name: "audit_retention_anchor", checksum: known[2].checksum },
           { version: 4, name: "tenant_capability_tier", checksum: known[3].checksum },
           { version: 5, name: "tenant_storage_limits", checksum: known[4].checksum },
-          { version: 6, name: "future", checksum: "b".repeat(64) },
+          { version: 6, name: "tenant_audit_integrity_ceiling", checksum: known[5].checksum },
+          { version: 7, name: "future", checksum: "b".repeat(64) },
         ]).db,
       ),
     ).rejects.toThrow(/newer or unknown/);

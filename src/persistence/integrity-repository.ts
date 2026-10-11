@@ -1,6 +1,7 @@
 import {
   type SqlExecutor,
 } from "./repository.js";
+import { MAX_AUDIT_EVENTS_WITH_FULL_INTEGRITY } from "./capacity.js";
 import {
   type TenantId,
   PersistenceValidationError,
@@ -59,10 +60,10 @@ export async function getAuditRetentionAnchor(
 export async function listAuditChainEntries(
   tenantId: TenantId,
   tx: SqlExecutor,
-  limit = 100_000,
+  limit = MAX_AUDIT_EVENTS_WITH_FULL_INTEGRITY,
 ): Promise<readonly StoredAuditEntry[]> {
   const checkedTenantId = parseTenantId(tenantId);
-  if (!Number.isInteger(limit) || limit < 1 || limit > 100_000) {
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_AUDIT_EVENTS_WITH_FULL_INTEGRITY) {
     throw new PersistenceValidationError("Audit integrity limit must be an integer from 1 to 100000.");
   }
   const result = await tx.query<{

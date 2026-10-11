@@ -4,6 +4,7 @@ import {
   DEFAULT_MAX_PERSISTENCE_BYTES,
   DEFAULT_MAX_WEBHOOK_EVENTS,
   MAX_PERSISTED_SNAPSHOTS,
+  MAX_AUDIT_EVENTS_WITH_FULL_INTEGRITY,
   assertTenantStorageWithinPolicy,
 } from "../src/persistence/capacity.js";
 
@@ -11,6 +12,7 @@ describe("tenant persistence capacity policy", () => {
   it("defines explicit v1 ceilings and persists no snapshots", () => {
     expect(DEFAULT_MAX_WEBHOOK_EVENTS).toBe(10_000);
     expect(DEFAULT_MAX_AUDIT_EVENTS).toBe(100_000);
+    expect(MAX_AUDIT_EVENTS_WITH_FULL_INTEGRITY).toBe(DEFAULT_MAX_AUDIT_EVENTS);
     expect(DEFAULT_MAX_PERSISTENCE_BYTES).toBe(64 * 1024 * 1024);
     expect(MAX_PERSISTED_SNAPSHOTS).toBe(0);
   });
@@ -30,6 +32,32 @@ describe("tenant persistence capacity policy", () => {
         },
       ),
     ).not.toThrow();
+  });
+
+  it("refuses a configured audit limit above full verification even with no rows", () => {
+    for (const configured of [100_001, 1_000_000]) {
+      expect(() =>
+        assertTenantStorageWithinPolicy(
+          { maxWebhookEvents: 10_000, maxAuditEvents: configured, maxPersistenceBytes: 67_108_864 },
+          { webhookEvents: 0, auditEvents: 0, persistenceBytes: 0 },
+        ),
+      ).toThrow(/audit policy exceeds verifiable integrity limit/);
+    }
+    expect(() =>
+      assertTenantStorageWithinPolicy(
+        { maxWebhookEvents: 10_000, maxAuditEvents: 100_000, maxPersistenceBytes: 67_108_864 },
+        { webhookEvents: 0, auditEvents: 100_000, persistenceBytes: 0 },
+      ),
+    ).not.toThrow();
+  });
+
+  it("rejects oversized stored audit history even when the policy itself is valid", () => {
+    expect(() =>
+      assertTenantStorageWithinPolicy(
+        { maxWebhookEvents: 10_000, maxAuditEvents: 100_000, maxPersistenceBytes: 67_108_864 },
+        { webhookEvents: 0, auditEvents: 100_001, persistenceBytes: 0 },
+      ),
+    ).toThrow(/audit history exceeds verifiable integrity limit/);
   });
 
   it("fails visibly on every exceeded dimension", () => {

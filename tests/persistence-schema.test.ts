@@ -62,6 +62,12 @@ describe("persistence foundation schema", () => {
     expect(limitSql).toContain("DEFAULT 100000");
     expect(limitSql).toContain("DEFAULT 67108864");
     expect(limitSql).toContain("octet_length(resource_ciphertext) BETWEEN 1 AND 512");
+    // Old migration checksums remain untouched. V6 adds a narrower constraint.
+    const ceilingSql = read("src/persistence/migrations/006_tenant_audit_integrity_ceiling.sql");
+    expect(limitSql).toContain("max_audit_events BETWEEN 1 AND 1000000");
+    expect(ceilingSql).toContain("ADD CONSTRAINT tenant_audit_integrity_ceiling");
+    expect(ceilingSql).toContain("CHECK (max_audit_events <= 100000)");
+    expect(ceilingSql).not.toMatch(/UPDATE tenants|DELETE FROM|DROP CONSTRAINT|TRUNCATE/i);
   });
 
   it("reserves audit mutation for the migration/maintenance role", () => {
@@ -142,12 +148,13 @@ describe("persistence structural policy", () => {
 
 describe("schema version fail-closed helpers", () => {
   it("accepts only the exact known schema version", () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(5);
-    expect(assessSchemaVersion(5)).toBe("AVAILABLE");
+    expect(CURRENT_SCHEMA_VERSION).toBe(6);
+    expect(assessSchemaVersion(6)).toBe("AVAILABLE");
+    expect(assessSchemaVersion(5)).toBe("VERSION_MISMATCH");
     expect(assessSchemaVersion(null)).toBe("UNAVAILABLE");
     expect(assessSchemaVersion(0)).toBe("INTEGRITY_FAILED");
     expect(assessSchemaVersion(1)).toBe("VERSION_MISMATCH");
-    expect(assessSchemaVersion(6)).toBe("VERSION_MISMATCH");
+    expect(assessSchemaVersion(7)).toBe("VERSION_MISMATCH");
     expect(() => requireKnownSchemaVersion(1)).toThrow(/VERSION_MISMATCH/);
   });
 });

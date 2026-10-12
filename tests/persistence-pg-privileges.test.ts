@@ -115,8 +115,30 @@ describe.skipIf(!postgresAvailable())("runtime privilege verification on real Po
     ["CREATE on another schema", ["CREATE SCHEMA other_{r}", "GRANT USAGE, CREATE ON SCHEMA other_{r} TO {r}"], "ANY_SCHEMA_CREATE"],
     ["an own schema (first in the default search_path)", ["CREATE SCHEMA {r} AUTHORIZATION {r}"], "SCHEMA_OWNER"],
     ["the REPLICATION attribute", ["ALTER ROLE {r} REPLICATION"], "REPLICATION"],
+    ["SET on session_replication_role (skips ordinary triggers)", ["GRANT SET ON PARAMETER session_replication_role TO {r}"], "PARAMETER_PRIVILEGE"],
+    ["ownership of a function", ["CREATE FUNCTION public.f_{r}() RETURNS int LANGUAGE sql AS 'SELECT 1'", "ALTER FUNCTION public.f_{r}() OWNER TO {r}"], "OBJECT_OWNER"],
+    ["ownership of the append guard function", ["ALTER FUNCTION public.audit_events_append_guard() OWNER TO {r}"], "OBJECT_OWNER"],
+    ["default privileges on future tables", ["ALTER DEFAULT PRIVILEGES FOR ROLE lus_owner IN SCHEMA public GRANT ALL ON TABLES TO {r}"], "DEFAULT_PRIVILEGES"],
   ])("rejects a role with %s", async (_label, extra, code) => {
-    expect(await check({ extra })).toContain(code);
+    try {
+      expect(await check({ extra })).toContain(code);
+    } finally {
+      await fx.admin("ALTER FUNCTION public.audit_events_append_guard() OWNER TO lus_owner");
+    }
+  });
+
+  it("a session that created a temporary table still passes (own temp schema is not 'CREATE on any schema')", async () => {
+    const db = fx.runtime();
+    const message = await db.transaction(async (tx) => {
+      await tx.query({ text: "CREATE TEMPORARY TABLE scratch_probe (x int) ON COMMIT DROP", values: [] });
+      try {
+        assertLeastPrivilegeRuntimeRole(await inspectRuntimePrivileges(tx), "lus_runtime");
+        return null;
+      } catch (error) {
+        return (error as Error).message;
+      }
+    });
+    expect(message).toBeNull();
   });
 
   it("search_path is pinned: an own-schema or temporary table never shadows a persistence table", async () => {

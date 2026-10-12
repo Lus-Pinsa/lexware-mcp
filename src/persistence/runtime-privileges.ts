@@ -22,6 +22,9 @@ export function assertLeastPrivilegeRuntimeRole(
   if (snapshot.canCreateInAnySchema) violations.push("ANY_SCHEMA_CREATE");
   if (snapshot.ownsSchema) violations.push("SCHEMA_OWNER");
   if (snapshot.isReplication) violations.push("REPLICATION");
+  if (snapshot.parameterPrivileges) violations.push("PARAMETER_PRIVILEGE");
+  if (snapshot.ownsObjects) violations.push("OBJECT_OWNER");
+  if (snapshot.defaultPrivileges) violations.push("DEFAULT_PRIVILEGES");
   if (!snapshot.migrationsSelect) violations.push("MIGRATION_READ_MISSING");
   if (snapshot.migrationsMutate) violations.push("MIGRATION_MUTATION");
   if (!snapshot.tenantsSelect) violations.push("TENANT_READ_MISSING");

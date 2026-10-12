@@ -47,7 +47,11 @@ describe("runtime privilege SQL semantics", () => {
 
   it("checks CREATE on every schema, schema ownership and the replication attribute (search_path shadowing)", async () => {
     const sql = await capturedSql();
-    expect(sql).toContain("EXISTS (SELECT 1 FROM pg_namespace n WHERE has_schema_privilege(current_user, n.oid, 'CREATE')) AS can_create_in_any_schema");
+    expect(sql).toContain("EXISTS (SELECT 1 FROM pg_namespace n WHERE has_schema_privilege(current_user, n.oid, 'CREATE') AND n.oid <> pg_my_temp_schema()");
+    expect(sql).toContain("AS can_create_in_any_schema");
+    expect(sql).toContain("EXISTS (SELECT 1 FROM pg_parameter_acl a WHERE has_parameter_privilege(current_user, a.parname, 'SET')");
+    expect(sql).toContain("AS owns_objects");
+    expect(sql).toContain("AS default_privileges");
     expect(sql).toContain("EXISTS (SELECT 1 FROM pg_namespace n WHERE n.nspowner = r.oid) AS owns_schema");
     expect(sql).toContain("r.rolreplication AS is_replication");
   });

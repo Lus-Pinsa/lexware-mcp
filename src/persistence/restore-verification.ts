@@ -7,6 +7,7 @@ import {
 } from "./repository.js";
 import { readRestoreEvidenceRows } from "./restore-repository.js";
 import { assertMigrationStateCurrent } from "./migration-runner.js";
+import { verifySchemaSafety } from "./schema-safety-repository.js";
 import {
   type TenantId,
   PersistenceValidationError,
@@ -14,7 +15,7 @@ import {
 } from "./types.js";
 
 export interface RestoreVerificationManifest {
-  readonly version: 1;
+  readonly version: 2;
   readonly tenantId: TenantId;
   readonly schemaMigrationCount: number;
   readonly schemaMigrationDigest: string;
@@ -25,6 +26,7 @@ export interface RestoreVerificationManifest {
   readonly auditCount: number;
   readonly auditDigest: string;
   readonly auditAnchorHash: string | null;
+  readonly auditAnchorSeq: number | null;
   readonly auditHeadHash: string | null;
 }
 
@@ -51,6 +53,9 @@ export async function captureRestoreVerificationManifest(
     listAppliedSchemaMigrations(tx),
   );
   assertMigrationStateCurrent(migrations);
+  // A restore must also bring back the schema's safety objects (RLS, policies, append guard, guard indexes);
+  // a dump restored without them would otherwise compare equal on data alone.
+  await db.transaction((tx) => verifySchemaSafety(tx));
 
   const migrationDigest = digest(
     "schema-migrations",
@@ -73,6 +78,7 @@ export async function captureRestoreVerificationManifest(
             evidence.tenantBinding.organizationIdHash,
             evidence.tenantBinding.status,
             evidence.tenantBinding.capabilityTier,
+            evidence.tenantBinding.policyFingerprint,
           ]],
     );
 
@@ -83,6 +89,7 @@ export async function captureRestoreVerificationManifest(
         row.payloadChecksum,
         row.receivedAt,
         row.acknowledgedAt ?? "",
+        row.rowFingerprint,
       ]),
     );
 
@@ -103,7 +110,7 @@ export async function captureRestoreVerificationManifest(
     }
 
     return Object.freeze({
-      version: 1 as const,
+      version: 2 as const,
       tenantId,
       schemaMigrationCount: migrations.length,
       schemaMigrationDigest: migrationDigest,
@@ -114,6 +121,7 @@ export async function captureRestoreVerificationManifest(
       auditCount: evidence.auditRows.length,
       auditDigest,
       auditAnchorHash: evidence.auditAnchorHash,
+      auditAnchorSeq: evidence.auditAnchorSeq,
       auditHeadHash: integrity.headHash,
     });
   });
@@ -131,6 +139,7 @@ const MANIFEST_FIELDS: readonly (keyof RestoreVerificationManifest)[] = [
   "auditCount",
   "auditDigest",
   "auditAnchorHash",
+  "auditAnchorSeq",
   "auditHeadHash",
 ];
 

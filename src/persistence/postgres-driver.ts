@@ -86,6 +86,21 @@ function boundedInteger(
   return resolved;
 }
 
+/** Session settings sent at connect time; they take precedence over role and database defaults. */
+export const PINNED_SESSION_SETTINGS: Readonly<Record<string, string>> = Object.freeze({
+  search_path: "public, pg_temp",
+  TimeZone: "UTC",
+  DateStyle: "ISO, MDY",
+  IntervalStyle: "postgres",
+  bytea_output: "hex",
+  extra_float_digits: "1",
+  default_transaction_isolation: "read committed",
+});
+
+function PINNED_SESSION_SETTINGS_WITH(applicationName: string): Record<string, string> {
+  return { application_name: applicationName, ...PINNED_SESSION_SETTINGS };
+}
+
 function normalizedConnectionString(raw: string): string {
   if (raw.trim() !== raw || raw.length < 1 || raw.length > 4096) {
     throw new PersistenceValidationError("Invalid persistence database URL.");
@@ -108,6 +123,11 @@ function normalizedConnectionString(raw: string): string {
   // hints so a supplied query string can never weaken or conflict with that policy.
   for (const key of ["sslmode", "ssl", "sslcert", "sslkey", "sslrootcert"]) {
     url.searchParams.delete(key);
+  }
+  // Any other query parameter would be sent as a session setting AFTER the pinned ones below and override them
+  // (search_path, TimeZone, DateStyle, isolation, options=-c …). Fail instead of silently accepting or dropping it.
+  if ([...url.searchParams.keys()].length > 0) {
+    throw new PersistenceValidationError("Persistence database URL contains unsupported parameters.");
   }
   return url.toString();
 }
@@ -191,12 +211,9 @@ function createDriver(
     //   role-owned table can never shadow a persistence table.
     // - TimeZone UTC: timestamptz is printed in a form the driver parses back to the same instant.
     // - read committed: appends serialize on the tenant advisory lock and must see the latest committed head.
-    connection: {
-      application_name: applicationName,
-      search_path: "public, pg_temp",
-      TimeZone: "UTC",
-      default_transaction_isolation: "read committed",
-    },
+    // - DateStyle, IntervalStyle, bytea_output, extra_float_digits: the driver parses text output; a role default
+    //   such as DateStyle 'SQL, DMY' or bytea_output 'escape' would make it misread timestamps and ciphertext.
+    connection: PINNED_SESSION_SETTINGS_WITH(applicationName),
   });
 }
 

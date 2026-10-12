@@ -71,6 +71,7 @@ export function loadKnownMigrations(): readonly MigrationDefinition[] {
     loadMigration(6, "tenant_audit_integrity_ceiling", "006_tenant_audit_integrity_ceiling.sql"),
     loadMigration(7, "audit_append_ordinal", "007_audit_append_ordinal.sql"),
     loadMigration(8, "audit_append_guard", "008_audit_append_guard.sql"),
+    loadMigration(9, "audit_append_guard_always", "009_audit_append_guard_always.sql"),
   ]);
 }
 

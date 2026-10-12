@@ -79,9 +79,24 @@ const SQL_RUNTIME_PRIVILEGES =
   // CREATE on any schema, or owning one, would let the runtime create a table that shadows a persistence table
   // through search_path ("$user" schema first by default). The driver pins search_path, and this check fails closed
   // on mis-provisioned roles regardless.
-  "EXISTS (SELECT 1 FROM pg_namespace n WHERE has_schema_privilege(current_user, n.oid, 'CREATE')) AS can_create_in_any_schema, " +
+  // Temporary schemas are excluded: a session holds every right on its own temp schema once it has created a
+  // temporary object (and pg_temp is searched last, see the driver).
+  "EXISTS (SELECT 1 FROM pg_namespace n WHERE has_schema_privilege(current_user, n.oid, 'CREATE') " +
+  "AND n.oid <> pg_my_temp_schema() AND NOT pg_is_other_temp_schema(n.oid) AND n.nspname !~ '^pg_toast_temp_') AS can_create_in_any_schema, " +
   "EXISTS (SELECT 1 FROM pg_namespace n WHERE n.nspowner = r.oid) AS owns_schema, " +
   "r.rolreplication AS is_replication, " +
+  // A granted parameter privilege (PostgreSQL 15+), e.g. SET on session_replication_role, would let the runtime switch
+  // off ordinary triggers and foreign keys. Owning any object (table, function, type, schema, database) would let it
+  // drop or replace the append guard or policies. Default privileges would hand it rights on future tables.
+  "EXISTS (SELECT 1 FROM pg_parameter_acl a WHERE has_parameter_privilege(current_user, a.parname, 'SET') " +
+  "OR has_parameter_privilege(current_user, a.parname, 'ALTER SYSTEM')) AS parameter_privileges, " +
+  "EXISTS (SELECT 1 FROM pg_shdepend d WHERE d.refclassid = 'pg_authid'::regclass AND d.refobjid = r.oid AND d.deptype = 'o' " +
+  "AND d.dbid IN (0, (SELECT oid FROM pg_database WHERE datname = current_database())) " +
+  // Temporary relations (and their row types) live and die with a session and cannot shadow anything (pg_temp last).
+  "AND NOT EXISTS (SELECT 1 FROM pg_class c WHERE d.classid = 'pg_class'::regclass AND c.oid = d.objid AND c.relpersistence = 't') " +
+  "AND NOT EXISTS (SELECT 1 FROM pg_type ty JOIN pg_namespace tn ON tn.oid = ty.typnamespace WHERE d.classid = 'pg_type'::regclass " +
+  "AND ty.oid = d.objid AND (tn.oid = pg_my_temp_schema() OR pg_is_other_temp_schema(tn.oid)))) AS owns_objects, " +
+  "EXISTS (SELECT 1 FROM pg_default_acl d CROSS JOIN LATERAL aclexplode(d.defaclacl) x WHERE x.grantee = r.oid) AS default_privileges, " +
   // Required privileges: every listed privilege must be held. has_table_privilege(..., 'A,B') is ANY-OF in
   // PostgreSQL, so each required privilege is checked on its own and combined with AND.
   // Forbidden privileges: holding any one of them is a violation. Column-level grants are invisible to
@@ -219,6 +234,9 @@ export interface RuntimePrivilegeSnapshot {
   readonly canCreateInAnySchema: boolean;
   readonly ownsSchema: boolean;
   readonly isReplication: boolean;
+  readonly parameterPrivileges: boolean;
+  readonly ownsObjects: boolean;
+  readonly defaultPrivileges: boolean;
   readonly migrationsSelect: boolean;
   readonly migrationsMutate: boolean;
   readonly tenantsSelect: boolean;
@@ -246,6 +264,9 @@ export async function inspectRuntimePrivileges(
     can_create_in_any_schema: boolean;
     owns_schema: boolean;
     is_replication: boolean;
+    parameter_privileges: boolean;
+    owns_objects: boolean;
+    default_privileges: boolean;
     migrations_select: boolean;
     migrations_mutate: boolean;
     tenants_select: boolean;
@@ -281,6 +302,9 @@ export async function inspectRuntimePrivileges(
     canCreateInAnySchema: row.can_create_in_any_schema,
     ownsSchema: row.owns_schema,
     isReplication: row.is_replication,
+    parameterPrivileges: row.parameter_privileges,
+    ownsObjects: row.owns_objects,
+    defaultPrivileges: row.default_privileges,
     migrationsSelect: row.migrations_select,
     migrationsMutate: row.migrations_mutate,
     tenantsSelect: row.tenants_select,

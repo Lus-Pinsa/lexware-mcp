@@ -80,20 +80,31 @@ describe.skipIf(!postgresAvailable())("durable queue and webhook acceptance on r
       droppedTotal: () => 0,
       log: (line) => logs.push(line),
     });
+    const statuses: number[] = [];
     const send = async (raw: Buffer, signature: string) => {
-      let status = 0;
+      const before = statuses.length;
       const req: WebhookRequest = { body: raw, get: (n) => (n.toLowerCase() === "x-lxo-signature" ? signature : undefined) };
-      await handler(req, { sendStatus: (s: number) => (status = s) });
-      return status;
+      await handler(req, { sendStatus: (s: number) => statuses.push(s) });
+      // Exactly one status per request.
+      expect(statuses.length - before).toBe(1);
+      return statuses[statuses.length - 1]!;
     };
-    return { send, logs };
+    return { send, logs, statuses };
   };
 
   it("answers 204 only after the row is committed: a separate connection sees it immediately after", async () => {
     const s = store(fx.tenantA);
-    const { send } = handlerFor((e) => s.enqueue(e));
+    const observed: Array<{ statusesBeforeCommit: number; committedAfter: number }> = [];
+    const h = handlerFor(async (e) => {
+      const result = await s.enqueue(e);
+      // The enqueue transaction has committed here; no status may have been sent yet.
+      observed.push({ statusesBeforeCommit: h.statuses.length, committedAfter: await committedRows(fx.tenantA) });
+      return result;
+    });
     const d = signedDelivery(RESOURCE);
-    expect(await send(d.raw, d.signature)).toBe(204);
+    expect(await h.send(d.raw, d.signature)).toBe(204);
+    expect(h.statuses).toEqual([204]);
+    expect(observed).toEqual([{ statusesBeforeCommit: 0, committedAfter: 1 }]);
     expect(await committedRows(fx.tenantA)).toBe(1);
     // The stored resource id is encrypted at rest and decrypts back for the bound tenant only.
     const listed = await store(fx.tenantA).list();

@@ -86,8 +86,8 @@ function migrationDb(
 describe("persistence migration runner", () => {
   it("loads the checked-in migration with a deterministic SHA-256 checksum", () => {
     const known = loadKnownMigrations();
-    expect(known).toHaveLength(8);
-    expect(known.map((item) => item.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(known).toHaveLength(9);
+    expect(known.map((item) => item.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     expect(known[0].name).toBe("foundation");
     expect(known[1].name).toBe("webhook_event_date");
     expect(known[2].name).toBe("audit_retention_anchor");
@@ -99,6 +99,8 @@ describe("persistence migration runner", () => {
     expect(known[6].sql).toContain("NULLS NOT DISTINCT");
     expect(known[7].name).toBe("audit_append_guard");
     expect(known[7].sql).toContain("BEFORE INSERT ON public.audit_events");
+    expect(known[8].name).toBe("audit_append_guard_always");
+    expect(known[8].sql).toContain("ENABLE ALWAYS TRIGGER audit_events_append_guard");
     for (const migration of known) expect(migration.checksum).toMatch(/^[0-9a-f]{64}$/);
     expect(known[0].sql).toContain("CREATE TABLE IF NOT EXISTS tenants");
     expect(known[1].sql).toContain("ADD COLUMN IF NOT EXISTS event_date");
@@ -129,7 +131,7 @@ describe("persistence migration runner", () => {
     const { db, state } = migrationDb();
     const result = await inspectMigrationState(db);
     expect(result.applied).toEqual([]);
-    expect(result.pending.map((item) => item.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(result.pending.map((item) => item.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     expect(state.staticScripts[0]).toContain("CREATE TABLE IF NOT EXISTS schema_migrations");
   });
 
@@ -137,8 +139,8 @@ describe("persistence migration runner", () => {
     const { db, state } = migrationDb();
     const result = await applyPendingMigrations(db);
 
-    expect(result.appliedVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
-    expect(state.applied).toHaveLength(8);
+    expect(result.appliedVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(state.applied).toHaveLength(9);
     expect(state.applied[0]).toMatchObject({ version: 1, name: "foundation" });
     expect(state.applied[1]).toMatchObject({ version: 2, name: "webhook_event_date" });
     expect(state.applied[2]).toMatchObject({ version: 3, name: "audit_retention_anchor" });
@@ -147,14 +149,15 @@ describe("persistence migration runner", () => {
     expect(state.applied[5]).toMatchObject({ version: 6, name: "tenant_audit_integrity_ceiling" });
     expect(state.applied[6]).toMatchObject({ version: 7, name: "audit_append_ordinal" });
     expect(state.applied[7]).toMatchObject({ version: 8, name: "audit_append_guard" });
+    expect(state.applied[8]).toMatchObject({ version: 9, name: "audit_append_guard_always" });
     expect(state.applied[0].checksum).toMatch(/^[0-9a-f]{64}$/);
     expect(state.staticScripts.some((script) => script === "LOCK TABLE schema_migrations IN EXCLUSIVE MODE")).toBe(true);
     expect(state.staticScripts.some((script) => script.includes("CREATE TABLE IF NOT EXISTS tenants"))).toBe(true);
-    expect(state.inserts).toHaveLength(8);
+    expect(state.inserts).toHaveLength(9);
 
     const after = await inspectMigrationState(db);
     expect(after.pending).toEqual([]);
-    expect(after.applied).toHaveLength(8);
+    expect(after.applied).toHaveLength(9);
   });
 
   it("accepts only the exact current migration ledger for runtime startup", () => {
@@ -183,6 +186,7 @@ describe("persistence migration runner", () => {
       { version: 6, name: "tenant_audit_integrity_ceiling", checksum: known[5].checksum },
       { version: 7, name: "audit_append_ordinal", checksum: known[6].checksum },
       { version: 8, name: "audit_append_guard", checksum: known[7].checksum },
+      { version: 9, name: "audit_append_guard_always", checksum: known[8].checksum },
     ]);
     const result = await applyPendingMigrations(db);
     expect(result.appliedVersions).toEqual([]);
@@ -221,7 +225,8 @@ describe("persistence migration runner", () => {
           { version: 6, name: "tenant_audit_integrity_ceiling", checksum: known[5].checksum },
           { version: 7, name: "audit_append_ordinal", checksum: known[6].checksum },
           { version: 8, name: "audit_append_guard", checksum: known[7].checksum },
-          { version: 9, name: "future", checksum: "b".repeat(64) },
+          { version: 9, name: "audit_append_guard_always", checksum: known[8].checksum },
+          { version: 10, name: "future", checksum: "b".repeat(64) },
         ]).db,
       ),
     ).rejects.toThrow(/newer or unknown/);

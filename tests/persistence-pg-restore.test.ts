@@ -112,13 +112,34 @@ describe.skipIf(!postgresAvailable())("backup/restore verification on real Postg
   it("a restore without the retention anchor fails the integrity check", async () => {
     const restored = await backupAndRestore();
     await restored.admin(`DELETE FROM audit_retention_anchors WHERE tenant_id = '${fx.tenantA}'`);
-    await expect(verifyRestoredDatabase(fx.runtime(), restored.runtime, fx.tenantA)).rejects.toThrow();
+    await expect(verifyRestoredDatabase(fx.runtime(), restored.runtime, fx.tenantA)).rejects.toThrow(/integrity/i);
     await expect(verify(restored.runtime, fx.tenantA)).rejects.toThrow(/integrity/i);
+  });
+
+  it.each([
+    ["raised tenant storage limits", (t: string) => `UPDATE tenants SET max_webhook_events = 100000, max_persistence_bytes = 1073741824 WHERE tenant_id = '${t}'`, /tenantBindingDigest/],
+    ["a moved webhook event date", (t: string) => `UPDATE webhook_events SET event_date = event_date + interval '400 days' WHERE tenant_id = '${t}'`, /webhookDigest/],
+    ["a zeroed ciphertext auth tag", (t: string) => `UPDATE webhook_events SET resource_auth_tag = decode(repeat('00', 16), 'hex') WHERE tenant_id = '${t}'`, /webhookDigest/],
+    ["a changed quality status", (t: string) => `UPDATE webhook_events SET quality_status = 'UNVERIFIED' WHERE tenant_id = '${t}'`, /webhookDigest/],
+    ["a dropped append guard", () => "DROP TRIGGER audit_events_append_guard ON audit_events", /schema safety verification failed: APPEND_GUARD/],
+    ["row-level security disabled", () => "ALTER TABLE webhook_events DISABLE ROW LEVEL SECURITY", /schema safety verification failed: RLS_NOT_FORCED/],
+    ["a policy replaced by USING (true)", () => "DROP POLICY tenant_isolation_audit_events ON audit_events; CREATE POLICY tenant_isolation_audit_events ON audit_events USING (true) WITH CHECK (true)", /schema safety verification failed: RLS_POLICY/],
+    ["dropped guard indexes", () => "DROP INDEX audit_events_tenant_chain_seq_uniq; DROP INDEX audit_events_tenant_previous_hash_uniq", /SEQ_INDEX,PREDECESSOR_INDEX/],
+  ])("a restore with %s is detected", async (_label, tamper, expected) => {
+    const restored = await backupAndRestore();
+    await restored.admin(tamper(fx.tenantA));
+    await expect(verifyRestoredDatabase(fx.runtime(), restored.runtime, fx.tenantA)).rejects.toThrow(expected);
+  });
+
+  it("a moved anchor position is detected", async () => {
+    const restored = await backupAndRestore();
+    await restored.admin(`UPDATE audit_retention_anchors SET last_pruned_seq = last_pruned_seq + 1000 WHERE tenant_id = '${fx.tenantA}'`);
+    await expect(verifyRestoredDatabase(fx.runtime(), restored.runtime, fx.tenantA)).rejects.toThrow(/integrity/i);
   });
 
   it("a restore with an incomplete migration ledger is refused", async () => {
     const restored = await backupAndRestore();
-    await restored.admin("DELETE FROM schema_migrations WHERE version = 8");
+    await restored.admin("DELETE FROM schema_migrations WHERE version = 9");
     await expect(verifyRestoredDatabase(fx.runtime(), restored.runtime, fx.tenantA)).rejects.toThrow(/pending migrations/);
   });
 });

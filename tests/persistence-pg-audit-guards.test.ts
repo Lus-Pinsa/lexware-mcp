@@ -81,9 +81,40 @@ describe.skipIf(!postgresAvailable())("audit guards on real PostgreSQL", () => {
       await runTenantRetention({ db: fx.runtimeMaintenance(), tenantId: fx.tenantA, actorHash: ACTOR, now: () => new Date("2027-06-01T00:00:00.000Z") });
       const state = await verify(fx, fx.tenantA);
       expect(state).toMatchObject({ count: 1, headSeq: 3 });
-      expect(await rawInsertError(fx, fx.tenantA, 1, null)).toMatchObject({ code: "23514" });
-      expect(await rawInsertError(fx, fx.tenantA, state.headSeq + 1, null)).toMatchObject({ code: "23514" });
+      const guard = { code: "23514", message: "audit event is not the next chain entry" };
+      expect(await rawInsertError(fx, fx.tenantA, 1, null)).toMatchObject(guard);
+      expect(await rawInsertError(fx, fx.tenantA, state.headSeq + 1, null)).toMatchObject(guard);
       await expect(verify(fx, fx.tenantA)).resolves.toMatchObject({ count: 1, headSeq: 3 });
+    } finally {
+      await fx.close();
+    }
+  });
+
+  it("the guard fires even in session_replication_role = replica (migration 009, ENABLE ALWAYS)", async () => {
+    const fx = await createPgFixture(pg);
+    try {
+      const head = await append(fx, fx.tenantA, "2026-05-01T00:00:00.000Z");
+      // A role that was (wrongly) granted SET on the parameter; start-up rejects such a role (PARAMETER_PRIVILEGE).
+      await fx.admin("GRANT SET ON PARAMETER session_replication_role TO lus_runtime");
+      const sql = postgres(pg.url(fx.database, "lus_runtime"), { ssl: "require", max: 1, onnotice: () => undefined });
+      let failure: { code?: string } | null = null;
+      try {
+        await sql.begin(async (tx) => {
+          await tx.unsafe("SET LOCAL session_replication_role = replica");
+          await tx.unsafe("SELECT set_config('app.tenant_id', $1, true)", [fx.tenantA]);
+          await tx.unsafe(
+            "INSERT INTO audit_events (audit_id, tenant_id, actor_hash, action, result, item_count, created_at, previous_hash, entry_hash, chain_seq, chain_version) VALUES ($1,$2,$3,'x','SUCCESS',0,'2026-05-02T00:00:00Z',$4,$5,$6,2)",
+            [randomUUID(), fx.tenantA, ACTOR, "f".repeat(64), "e".repeat(64), head.chainSeq + 50],
+          );
+        });
+      } catch (error) {
+        failure = error as { code?: string };
+      } finally {
+        await sql.end({ timeout: 5 });
+        await pg.admin("postgres", "REVOKE SET ON PARAMETER session_replication_role FROM lus_runtime");
+      }
+      expect(failure).toMatchObject({ code: "23514" });
+      await expect(verify(fx, fx.tenantA)).resolves.toMatchObject({ count: 2, headSeq: 2 });
     } finally {
       await fx.close();
     }
@@ -97,14 +128,18 @@ describe.skipIf(!postgresAvailable())("audit guards on real PostgreSQL", () => {
       expect(await rawInsertError(fx, fx.tenantA, head.chainSeq, "f".repeat(64))).toMatchObject({ code: "23505", constraint: "audit_events_tenant_chain_seq_uniq" });
       expect(await rawInsertError(fx, fx.tenantA, head.chainSeq + 1, head.previousHash)).toMatchObject({ code: "23505", constraint: "audit_events_tenant_previous_hash_uniq" });
       expect(await rawInsertError(fx, fx.tenantA, head.chainSeq + 1, null)).toMatchObject({ code: "23505", constraint: "audit_events_tenant_previous_hash_uniq" });
-      await fx.admin("ALTER TABLE audit_events ENABLE TRIGGER audit_events_append_guard");
+      await fx.admin("ALTER TABLE audit_events ENABLE ALWAYS TRIGGER audit_events_append_guard");
       await expect(verify(fx, fx.tenantA)).resolves.toMatchObject({ count: 2, headSeq: 2 });
     } finally {
       await fx.close();
     }
   });
 
-  it("migration 008 fails closed when a guard index was pre-empted by another relation of the same name", async () => {
+  it.each([
+    ["position index", "ALTER TABLE audit_events ADD COLUMN chain_seq bigint; CREATE INDEX audit_events_tenant_chain_seq_uniq ON audit_events (tenant_id); ALTER TABLE audit_events DROP COLUMN chain_seq;"],
+    // A plain unique index without NULLS NOT DISTINCT would allow several roots.
+    ["predecessor index", "CREATE UNIQUE INDEX audit_events_tenant_previous_hash_uniq ON audit_events (tenant_id, previous_hash);"],
+  ])("migration 008 fails closed when the %s was pre-empted by a different index of the same name", async (_label, preempt) => {
     const fx = await createPgFixture(pg, { migrate: false });
     try {
       const v7 = loadKnownMigrations().filter((m) => m.version <= 7);
@@ -113,7 +148,7 @@ describe.skipIf(!postgresAvailable())("audit guards on real PostgreSQL", () => {
         await tx.executeStatic("CREATE TABLE IF NOT EXISTS schema_migrations (version bigint PRIMARY KEY, name text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now(), checksum char(64) NOT NULL CHECK (checksum ~ '^[0-9a-f]{64}$'))");
         for (const m of v7) {
           // Simulate the IF NOT EXISTS hazard of 007: a non-unique index with the guard's name already exists.
-          if (m.version === 7) await tx.executeStatic("ALTER TABLE audit_events ADD COLUMN chain_seq bigint; CREATE INDEX audit_events_tenant_chain_seq_uniq ON audit_events (tenant_id); ALTER TABLE audit_events DROP COLUMN chain_seq;");
+          if (m.version === 7) await tx.executeStatic(preempt);
           await tx.executeStatic(m.sql);
           await tx.query({ text: "INSERT INTO schema_migrations (version, name, checksum) VALUES ($1,$2,$3)", values: [m.version, m.name, m.checksum] });
         }
@@ -173,7 +208,7 @@ describe.skipIf(!postgresAvailable())("audit guards on real PostgreSQL", () => {
     }
   });
 
-  it("a fresh database migrates v0 → v8 and starts with an empty, verifiable chain", async () => {
+  it("a fresh database migrates v0 → v9 and starts with an empty, verifiable chain", async () => {
     const fx = await createPgFixture(pg, { tenants: false });
     try {
       // createPgFixture applied all migrations through the production runner on an empty database.
@@ -183,7 +218,7 @@ describe.skipIf(!postgresAvailable())("audit guards on real PostgreSQL", () => {
     }
   });
 
-  it("an existing v6 installation with a tenant but no audit history upgrades to v8 and the chain starts at position 1", async () => {
+  it("an existing v6 installation with a tenant but no audit history upgrades to v9 and the chain starts at position 1", async () => {
     const fx = await createPgFixture(pg, { migrate: false });
     try {
       const v6 = loadKnownMigrations().filter((m) => m.version <= 6);
@@ -197,7 +232,7 @@ describe.skipIf(!postgresAvailable())("audit guards on real PostgreSQL", () => {
         await tx.query({ text: "SELECT set_config('app.tenant_id', $1, true)", values: [fx.tenantA] });
         await tx.query({ text: "INSERT INTO tenants (tenant_id, organization_id_hash, status) VALUES ($1,$2,'active')", values: [fx.tenantA, "5".repeat(64)] });
       });
-      await expect(applyPendingMigrations(fx.owner())).resolves.toEqual({ appliedVersions: [7, 8] });
+      await expect(applyPendingMigrations(fx.owner())).resolves.toEqual({ appliedVersions: [7, 8, 9] });
       await ownerDb.transaction(async (tx) => {
         for (const grant of RUNTIME_GRANTS) await tx.executeStatic(grant);
       });

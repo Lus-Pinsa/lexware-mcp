@@ -22,6 +22,9 @@ function database(options: {
   webhookKey?: string;
   auditEntryHashOverride?: string;
   tenantId?: string;
+  tenantPolicy?: string;
+  webhookRow?: string;
+  schemaUnsafe?: boolean;
 } = {}): PersistenceDatabase {
   const known = loadKnownMigrations();
   const eventKey = options.webhookKey ?? sha256Hex("event-1");
@@ -57,12 +60,27 @@ function database(options: {
     if (text.startsWith("SELECT set_config")) {
       return { rows: [] as readonly Row[], rowCount: 1 };
     }
-    if (text.startsWith("SELECT organization_id_hash, status, capability_tier FROM tenants")) {
+    if (text.startsWith("WITH t AS (")) {
+      return {
+        rows: [{
+          tables_present: 4,
+          tables_forced_rls: options.schemaUnsafe ? 3 : 4,
+          policies_total: 4,
+          policies_expected: 4,
+          append_guard: true,
+          seq_index: true,
+          predecessor_index: true,
+        }] as unknown as readonly Row[],
+        rowCount: 1,
+      };
+    }
+    if (text.startsWith("SELECT organization_id_hash, status, capability_tier, ")) {
       return {
         rows: [{
           organization_id_hash: ORG_HASH,
           status: "active",
           capability_tier: "read_only",
+          policy_fingerprint: options.tenantPolicy ?? "10000|100000|67108864|1760000000",
         }] as unknown as readonly Row[],
         rowCount: 1,
       };
@@ -74,6 +92,7 @@ function database(options: {
           payload_checksum: sha256Hex("payload"),
           received_at: "2026-10-09T08:00:00.000Z",
           acknowledged_at: null,
+          row_fingerprint: options.webhookRow ?? sha256Hex("row-1"),
         }] as unknown as readonly Row[],
         rowCount: 1,
       };
@@ -87,7 +106,7 @@ function database(options: {
         rowCount: 1,
       };
     }
-    if (text.startsWith("SELECT previous_hash FROM audit_retention_anchors") || text.startsWith("SELECT previous_hash, last_pruned_seq FROM audit_retention_anchors")) {
+    if (text.startsWith("SELECT previous_hash, last_pruned_seq FROM audit_retention_anchors")) {
       return { rows: [] as readonly Row[], rowCount: 0 };
     }
     if (text.startsWith("SELECT audit_id, tenant_id")) {
@@ -122,7 +141,7 @@ function database(options: {
 describe("restore verification manifest", () => {
   it("captures only counts, hashes and tenant-safe metadata", async () => {
     const manifest = await captureRestoreVerificationManifest(database(), TENANT);
-    expect(manifest.version).toBe(1);
+    expect(manifest.version).toBe(2);
     expect(manifest.schemaMigrationCount).toBe(loadKnownMigrations().length);
     expect(manifest.tenantRowCount).toBe(1);
     expect(manifest.webhookCount).toBe(1);
@@ -138,6 +157,15 @@ describe("restore verification manifest", () => {
     }
     expect(JSON.stringify(manifest)).not.toContain("synthetic-org");
     expect(JSON.stringify(manifest)).not.toContain("synthetic-actor");
+  });
+
+  it("fails closed when tenant limits, a stored webhook column or the schema safety objects differ", async () => {
+    const source = await captureRestoreVerificationManifest(database(), TENANT);
+    const limits = await captureRestoreVerificationManifest(database({ tenantPolicy: "100000|100000|1073741824|1760000000" }), TENANT);
+    expect(() => assertRestoreManifestMatches(source, limits)).toThrow(/tenantBindingDigest/);
+    const row = await captureRestoreVerificationManifest(database({ webhookRow: sha256Hex("row-1-tampered") }), TENANT);
+    expect(() => assertRestoreManifestMatches(source, row)).toThrow(/webhookDigest/);
+    await expect(captureRestoreVerificationManifest(database({ schemaUnsafe: true }), TENANT)).rejects.toThrow(/RLS_NOT_FORCED/);
   });
 
   it("is deterministic for identical source and restored evidence", async () => {

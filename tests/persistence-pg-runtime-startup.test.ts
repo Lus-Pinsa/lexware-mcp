@@ -20,6 +20,9 @@ import {
 import { assertLeastPrivilegeRuntimeRole } from "../src/persistence/runtime-privileges.js";
 import type { EnabledPersistenceRuntimeConfig } from "../src/persistence/runtime-config.js";
 import { verifyConfiguredTenantBinding } from "../src/persistence/tenant-binding.js";
+import { verifySchemaSafety, verifySessionSettings } from "../src/persistence/schema-safety-repository.js";
+import { createPostgresDatabase } from "../src/persistence/postgres-driver.js";
+import postgres from "postgres";
 import { PersistenceValidationError, parseTenantId, type TenantId } from "../src/persistence/types.js";
 import { postgresAvailable, type EphemeralPostgres } from "./helpers/ephemeral-postgres.js";
 import { ACTOR, ORG_A, ORG_B, createPgFixture, maybeStartPostgres, type PgFixture } from "./helpers/persistence-pg-fixture.js";
@@ -29,6 +32,10 @@ const READ_ONLY = { drafts: false, finalize: false } as const;
 /** Mirrors the start sequence in src/server.ts (persistence enabled branch). */
 async function startupGates(db: PersistenceDatabase, config: EnabledPersistenceRuntimeConfig, capabilities = READ_ONLY) {
   assertMigrationStateCurrent(await db.transaction((tx) => listAppliedSchemaMigrations(tx)));
+  await db.transaction(async (tx) => {
+    await verifySessionSettings(tx);
+    await verifySchemaSafety(tx);
+  });
   assertLeastPrivilegeRuntimeRole(await db.transaction((tx) => inspectRuntimePrivileges(tx)), config.expectedRuntimeRole);
   await verifyConfiguredTenantBinding(config, db, capabilities);
 }
@@ -63,7 +70,7 @@ describe.skipIf(!postgresAvailable())("runtime start-up gates on real PostgreSQL
   });
 
   it("refuses to start with a pending migration (ledger behind the code)", async () => {
-    await fx.admin("DELETE FROM schema_migrations WHERE version = 8");
+    await fx.admin("DELETE FROM schema_migrations WHERE version = 9");
     await expect(startupGates(fx.runtime(), configFor(fx.tenantA, ORG_A))).rejects.toThrow(/pending migrations/);
   });
 
@@ -73,8 +80,55 @@ describe.skipIf(!postgresAvailable())("runtime start-up gates on real PostgreSQL
   });
 
   it("refuses to start with an unknown newer schema version", async () => {
-    await fx.admin(`INSERT INTO schema_migrations (version, name, checksum) VALUES (9, 'future', '${"f".repeat(64)}')`);
+    await fx.admin(`INSERT INTO schema_migrations (version, name, checksum) VALUES (10, 'future', '${"f".repeat(64)}')`);
     await expect(startupGates(fx.runtime(), configFor(fx.tenantA, ORG_A))).rejects.toThrow(/newer or unknown/);
+  });
+
+  it.each([
+    ["the append guard trigger dropped", "DROP TRIGGER audit_events_append_guard ON audit_events", "APPEND_GUARD"],
+    ["the append guard disabled", "ALTER TABLE audit_events DISABLE TRIGGER audit_events_append_guard", "APPEND_GUARD"],
+    ["the append guard not ALWAYS (skipped in replica mode)", "ALTER TABLE audit_events ENABLE TRIGGER audit_events_append_guard", "APPEND_GUARD"],
+    ["the guard function made SECURITY DEFINER", "ALTER FUNCTION public.audit_events_append_guard() SECURITY DEFINER", "APPEND_GUARD"],
+    ["row-level security not forced on webhook_events", "ALTER TABLE webhook_events NO FORCE ROW LEVEL SECURITY", "RLS_NOT_FORCED"],
+    ["row-level security disabled on tenants", "ALTER TABLE tenants DISABLE ROW LEVEL SECURITY", "RLS_NOT_FORCED"],
+    ["an additional permissive policy", "CREATE POLICY open_read ON audit_events FOR SELECT USING (true)", "RLS_POLICY"],
+    ["a policy replaced by USING (true)", "DROP POLICY tenant_isolation_webhook_events ON webhook_events; CREATE POLICY tenant_isolation_webhook_events ON webhook_events USING (true) WITH CHECK (true)", "RLS_POLICY"],
+    ["the position index dropped", "DROP INDEX audit_events_tenant_chain_seq_uniq", "SEQ_INDEX"],
+    ["the predecessor index replaced without NULLS NOT DISTINCT", "DROP INDEX audit_events_tenant_previous_hash_uniq; CREATE UNIQUE INDEX audit_events_tenant_previous_hash_uniq ON audit_events (tenant_id, previous_hash)", "PREDECESSOR_INDEX"],
+  ])("refuses to start with %s although the ledger is current", async (_label, sql, code) => {
+    await fx.admin(sql);
+    await expect(startupGates(fx.runtime(), configFor(fx.tenantA, ORG_A))).rejects.toThrow(new RegExp(`schema safety verification failed: .*${code}`));
+  });
+
+  it("role defaults for DateStyle and bytea_output do not change what the runtime reads", async () => {
+    await fx.admin(
+      `ALTER ROLE lus_runtime IN DATABASE ${fx.database} SET datestyle = 'SQL, DMY'; ` +
+        `ALTER ROLE lus_runtime IN DATABASE ${fx.database} SET bytea_output = 'escape'; ` +
+        `ALTER ROLE lus_runtime IN DATABASE ${fx.database} SET intervalstyle = 'sql_standard'`,
+    );
+    await expect(startupGates(fx.runtime(), configFor(fx.tenantA, ORG_A))).resolves.toBeUndefined();
+    const read = await fx.runtime().transaction(async (tx) => (await tx.query<{ t: Date; b: Uint8Array }>({
+      text: "SELECT '2026-01-12T00:00:00Z'::timestamptz AS t, '\\x0102'::bytea AS b",
+      values: [],
+    })).rows[0]!);
+    expect(read.t.toISOString()).toBe("2026-01-12T00:00:00.000Z");
+    expect([...read.b]).toEqual([1, 2]);
+  });
+
+  it("refuses to start when the pinned session settings are not in effect (e.g. a proxy dropped them)", async () => {
+    await fx.admin(`ALTER ROLE lus_runtime IN DATABASE ${fx.database} SET datestyle = 'SQL, DMY'`);
+    // A factory that drops the DateStyle startup parameter, as a connection pooler might.
+    const dropping = ((url: string, options: Record<string, unknown>) => {
+      const connection = { ...(options.connection as Record<string, string>) };
+      delete connection.DateStyle;
+      return postgres(url, { ...options, connection } as never);
+    }) as never;
+    const db = createPostgresDatabase({ connectionString: pg.url(fx.database, "lus_runtime"), tlsMode: "require", maxConnections: 1 }, dropping);
+    try {
+      await expect(startupGates(db, configFor(fx.tenantA, ORG_A))).rejects.toThrow(/session settings verification failed/);
+    } finally {
+      await db.close();
+    }
   });
 
   it("refuses to start as the table owner instead of the runtime role", async () => {
@@ -164,9 +218,25 @@ describe.skipIf(!postgresAvailable())("cross-tenant attacks against the runtime 
     const sentinel = new PersistenceValidationError("rollback-sentinel");
     await expect(asRuntime(fx.tenantB, async (q) => { await auditInsert(q, fx.tenantB); throw sentinel; })).rejects.toBe(sentinel);
     await expect(asRuntime(fx.tenantB, async (q) => { await webhookInsert(q, fx.tenantB); throw sentinel; })).rejects.toBe(sentinel);
-    // Attacks: the same statements targeting tenant B from a tenant-A binding are rejected.
+    // Attacks: the same statements targeting tenant B from a tenant-A binding are rejected, by row-level security
+    // (SQLSTATE 42501, asserted through a plain client because the production driver hides database errors).
     await expect(asRuntime(fx.tenantA, (q) => auditInsert(q, fx.tenantB))).rejects.toThrow();
     await expect(asRuntime(fx.tenantA, (q) => webhookInsert(q, fx.tenantB))).rejects.toThrow();
+    const raw = postgres(pg.url(fx.database, "lus_runtime"), { ssl: "require", max: 1, onnotice: () => undefined });
+    try {
+      for (const insert of [auditInsert, webhookInsert]) {
+        const error = await raw
+          .begin(async (tx) => {
+            await tx.unsafe("SELECT set_config('app.tenant_id', $1, true)", [fx.tenantA]);
+            await insert((text, values = []) => tx.unsafe(text, values as never[]), fx.tenantB);
+          })
+          .then(() => null, (e: { code?: string; message?: string }) => e);
+        expect(error).toMatchObject({ code: "42501" });
+        expect(error?.message).toMatch(/row-level security/);
+      }
+    } finally {
+      await raw.end({ timeout: 5 });
+    }
   });
 
   it("switching the binding mid-transaction to tenant B does not grant access to A's rows, and B's chain stays intact", async () => {

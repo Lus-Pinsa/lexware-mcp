@@ -1,7 +1,8 @@
 # ADR: Audit append order and prefix-only retention (schema v7)
 
 Status: **IMPLEMENTED — schema v7 on branch `claude/audit-append-ordinal` (commit `b41ab5f`, reviewed), database append
-guard v8 on branch `claude/pg-runtime-gates` (fix round 1, review pending). Not approved, not merged, not deployed.**
+guard v8 and v9 on branch `claude/pg-runtime-gates` (fix rounds 1 and 2, review of round 2 pending). Not approved, not
+merged, not deployed.**
 Supersedes the draft `ai-company/persistence/audit-order-v6-adr.md` from branch `openai/audit-append-order-v6-adr`
 (commit `c16986e`, never merged). That draft's analysis and acceptance table are taken over here; the numbering
 changes to v7 because migration 006 is already used by PR #34.
@@ -77,6 +78,29 @@ caller-supplied event time and the random UUID, not the append order. On real Po
    forms the driver parses as a different instant (finding M1). The runtime privilege check also rejects CREATE on any
    schema, owning a schema, REPLICATION and REFERENCES (finding M2, F5).
 
+9. **Start-up and restore verify the safety objects (fix round 2).** The ledger proves which scripts ran, not that their
+   effects are intact. Therefore:
+   - Migration 009 sets the append guard to `ENABLE ALWAYS`, so it also fires under
+     `session_replication_role = replica`.
+   - Start-up (`src/server.ts`) and both sides of a restore check:
+     - forced row-level security on all four tenant tables;
+     - exactly the four expected policies (an extra permissive policy or `USING (true)` fails);
+     - the guard trigger: enabled ALWAYS, its function owned by the table owner, not SECURITY DEFINER;
+     - both guard indexes.
+   - The runtime role check rejects any parameter privilege (`pg_parameter_acl`), ownership of any object, and default
+     privileges granted to it.
+   - Pinned session settings now also cover `DateStyle`, `IntervalStyle`, `bytea_output` and `extra_float_digits`.
+     Start-up asserts that all of them are in effect (a pooler may drop startup parameters).
+   - Query parameters in the database URL other than the stripped SSL hints are rejected, because they would override
+     the pinned settings.
+   - The restore manifest (version 2) also covers:
+     - tenant storage limits and creation time;
+     - every stored webhook column, including the encrypted resource;
+     - the anchor position.
+10. **Restore procedure.** Only a full logical restore (`pg_dump` → `pg_restore` into an empty database) is supported.
+    A data-only restore into a migrated schema fails closed: COPY fires the guard, and the heap order is not the chain
+    order.
+
 ## Evidence (synthetic data, ephemeral PostgreSQL 16, TLS, real driver)
 
 | Scenario | Test | Result |
@@ -93,7 +117,11 @@ caller-supplied event time and the random UUID, not the append order. On real Po
 | New root after the original root was pruned | `persistence-pg-audit-guards` | rejected (23514) |
 | Guard index pre-empted by a same-named relation | `persistence-pg-audit-guards` | migration 008 fails, ledger stays v7 |
 | Role defaults TimeZone / isolation / search_path changed | `persistence-pg-audit-guards` | overridden; 8 concurrent appends all succeed |
-| v6 installation with a tenant, no audit history → v8 | `persistence-pg-audit-guards` | upgrades; chain starts at position 1 |
+| v6 installation with a tenant, no audit history → v9 | `persistence-pg-audit-guards` | upgrades; chain starts at position 1 |
+| Runtime granted SET on `session_replication_role`, gap insert in replica mode | `persistence-pg-audit-guards` | rejected (23514, guard ALWAYS); start-up rejects the role (PARAMETER_PRIVILEGE) |
+| Guard dropped/disabled/not ALWAYS/SECURITY DEFINER, RLS off, extra or replaced policy, index dropped or weakened | `persistence-pg-runtime-startup` | start-up refused with a fixed code |
+| Role defaults DateStyle/bytea_output/IntervalStyle; startup parameter dropped by a proxy | `persistence-pg-runtime-startup` | overridden / start-up refused |
+| Restore with raised limits, moved event date, zeroed auth tag, changed status, dropped guard, RLS off, open policy, dropped indexes, moved anchor | `persistence-pg-restore` | detected |
 | v6 → v7 with legacy row | `persistence-pg-audit-guards` | fails, ledger v6, data unchanged |
 | fresh database v0 → v8 | `persistence-pg-audit-guards` | succeeds, empty chain verifies |
 | Capacity full, nothing expired | `persistence-pg-audit-guards` | retention fails, complete rollback |
@@ -108,9 +136,18 @@ caller-supplied event time and the random UUID, not the append order. On real Po
 - The 100 000-entry window is a bounded V1 verifier, not proof of scalable verification. Incremental or checkpointed
   verification is future work.
 - Independent review of this design and code (creator ≠ reviewer). Release evidence on the final integrated SHA in CI.
-- Residuals from the independent reviews of fix round 1 (accepted for now, documented):
-  - A superuser or the table owner can disable the guard trigger; the runtime role cannot. Start-up does not yet assert
-    that the trigger is enabled.
+- **Owner decision (security review round 2, F5):** A role with INSERT can append an entry at the correct position
+  and with the correct link but a bogus hash. The guard checks position and link, not the hash, so the chain is then
+  permanently unverifiable and retention is blocked; detection works. Anyone with runtime credentials can also forge
+  entries that verify, because the hash is unkeyed SHA-256 over stored fields. Options:
+  - recompute the hash in the trigger;
+  - a keyed HMAC with the key outside the database;
+  - switch to read-only after a failed verification.
+- Residuals from the independent reviews (accepted for now, documented):
+  - A superuser or the table owner can disable the guard trigger; the runtime role cannot. Start-up now refuses to run
+    when the trigger is not enabled ALWAYS.
+  - Managed PostgreSQL offerings (predefined roles, provider schemas granting CREATE to PUBLIC) may make the stricter
+    role check fail closed; only PostgreSQL 16 was tested.
   - `MAINTAIN` (PostgreSQL 17+) is not in the forbidden privilege set; PostgreSQL 16 rejects the keyword. Add it before
     moving to PostgreSQL 17.
   - The runtime role keeps the default TEMPORARY privilege; with `pg_temp` last in `search_path` a temporary table

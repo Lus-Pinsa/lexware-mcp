@@ -42,12 +42,16 @@ describe("Postgres persistence driver", () => {
       fetch_types: false,
       onnotice: false,
       debug: false,
-      connection: {
-        application_name: "lus-persistence",
-        search_path: "public, pg_temp",
-        TimeZone: "UTC",
-        default_transaction_isolation: "read committed",
-      },
+    });
+    expect(fake.calls[0].options.connection).toEqual({
+      application_name: "lus-persistence",
+      search_path: "public, pg_temp",
+      TimeZone: "UTC",
+      DateStyle: "ISO, MDY",
+      IntervalStyle: "postgres",
+      bytea_output: "hex",
+      extra_float_digits: "1",
+      default_transaction_isolation: "read committed",
     });
 
     await db.close();
@@ -66,6 +70,24 @@ describe("Postgres persistence driver", () => {
     expect(fake.calls[0].connectionString).not.toContain("sslmode");
     expect(fake.calls[0].options.ssl).toBe("require");
     await db.close();
+  });
+
+  it("rejects URL query parameters that would override the pinned session settings", () => {
+    for (const query of [
+      "search_path=pg_temp,public",
+      "TimeZone=Africa/Monrovia",
+      "DateStyle=SQL,DMY",
+      "options=-c%20session_replication_role%3Dreplica",
+      "default_transaction_isolation=serializable",
+      "application_name=x",
+    ]) {
+      const fake = fakeFactory();
+      expect(
+        () => createPostgresDatabase({ connectionString: "postgresql://db.internal.example.test/lus?sslmode=require&" + query }, fake.factory as never),
+        query,
+      ).toThrow(/unsupported parameters/);
+      expect(fake.calls).toHaveLength(0);
+    }
   });
 
   it("rejects an unknown TLS mode", () => {

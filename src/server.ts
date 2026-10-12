@@ -29,6 +29,7 @@ import {
 import { loadPersistenceRuntimeConfig } from "./persistence/runtime-config.js";
 import { verifyConfiguredTenantBinding } from "./persistence/tenant-binding.js";
 import { assertMigrationStateCurrent } from "./persistence/migration-runner.js";
+import { verifySchemaSafety, verifySessionSettings } from "./persistence/schema-safety-repository.js";
 import {
   inspectRuntimePrivileges,
   listAppliedSchemaMigrations,
@@ -176,6 +177,15 @@ if (persistenceConfig.enabled) {
     );
   assertMigrationStateCurrent(
     appliedMigrations,
+  );
+
+  // The ledger proves which scripts ran, not that their effects are intact: verify the pinned session settings,
+  // row-level security, policies, the append guard and the guard indexes before accepting any traffic.
+  await persistenceDb.transaction(
+    async (tx) => {
+      await verifySessionSettings(tx);
+      await verifySchemaSafety(tx);
+    },
   );
 
   const runtimePrivileges =

@@ -1,7 +1,7 @@
 # Persistence-Integration: zentraler Handoff
 
 Dies ist die **einzige** Statusdatei für die Persistence-Integration. Sie ersetzt keine Owner-Freigabe.
-Erstellt durch Claude Code am 2026-10-12, Audit und Integration ab 07:40 UTC. Stand des Dokuments: Head der Branch `claude/pg-runtime-gates` (Fix-Runde 1 und Gate-Tests, 2026-10-12).
+Erstellt durch Claude Code am 2026-10-12, Audit und Integration ab 07:40 UTC. Stand des Dokuments: Head der Branch `claude/pg-runtime-gates` (Fix-Runden 1 und 2, Gate-Tests, 2026-10-12).
 
 ## 1. Referenzen (verifiziert per `git fetch` und GitHub-API)
 
@@ -66,6 +66,24 @@ Code Review (Agent `code-reviewer`): **APPROVE WITH NITS**, YELLOW. Security-Aud
 | F9 | NIT | tote Mock-Matcher | einer entfernt; der Restore-Matcher ist **nicht** tot (`restore-repository.ts:98`), bleibt |
 | INFO | — | Superuser/Owner kann den Trigger deaktivieren; Kette > 100 000 nicht prunebar; Versionsfehler im Migrationspfad generisch; TEMP-Recht bleibt (durch `pg_temp` zuletzt entschärft, getestet) | als Restrisiko im ADR |
 
+### 3b. Befunde Review Runde 2 auf #38 (`6afca6e`) und Fix-Runde 2
+
+Code Review: **REQUEST CHANGES** (klein, scoped), YELLOW. Alle Fixes aus Runde 1 sind bestätigt, keine Regression gefunden. Security-Audit: **PASS WITH RISKS**, YELLOW, kein CRITICAL/HIGH. Beide liefen in neuen Instanzen, die den Code nicht geschrieben haben.
+
+| ID | Schwere | Befund | Status |
+|---|---|---|---|
+| S2-F1 / C2-3 | MEDIUM | Eine falsch eingerichtete Runtime-Rolle umgeht den Guard (SET-Recht auf `session_replication_role`, Besitz der Guard-Funktion, Default-Privileges); Start prüft Trigger, RLS und Policies nicht | behoben: Migration 009 (`ENABLE ALWAYS`), Startprüfung `schema-safety-repository.ts` und erweiterte Rechteprüfung (`PARAMETER_PRIVILEGE`, `OBJECT_OWNER`, `DEFAULT_PRIVILEGES`) |
+| S2-F2 | MEDIUM | Die Runtime kann für ihre eigene Rolle DateStyle und `bytea_output` ändern; der Treiber liest Zeitstempel bzw. Chiffretexte danach falsch | behoben: DateStyle, IntervalStyle, `bytea_output` und `extra_float_digits` gepinnt; Start prüft alle gepinnten Werte |
+| S2-F3 / C2-1 | LOW / MEDIUM-LOW | Query-Parameter in der DB-URL überschreiben die gepinnten Settings | behoben: abgelehnt (außer den entfernten SSL-Hinweisen) |
+| S2-F4 | MEDIUM | Das Restore-Manifest erfasst weder Limits, alle Queue-Spalten, die Anker-Position noch die Schutzobjekte | behoben: Manifest v2 und Schema-Prüfung auf beiden Seiten |
+| S2-F5 | LOW (by design) | Ein korrekt verketteter Eintrag mit falschem Hash vergiftet die Kette; das Hashing ist ohne Schlüssel | **Owner-Entscheidung D-2** |
+| C2-2 | MEDIUM (Testintegrität) | Der 204-Test bewies nicht, dass der Commit vor der Antwort liegt | behoben: Statusfolge und Zeitpunkt werden geprüft; die Mutation „204 vor enqueue“ wird jetzt erkannt |
+| C2-4 | LOW | Die Prüfung des Vorgänger-Index in 008 war ungetestet | behoben |
+| C2-5 | LOW | Falsch-positiv bei eigenem Temp-Schema | behoben (auch beim Objektbesitz) |
+| C2-6 | NIT | Bloße `toThrow()`-Prüfungen | RLS-Angriff jetzt mit 42501, Guard mit Meldung; Restore ohne Anker mit Meldung |
+| C2-7 | INFO | Ein Data-only-Restore scheitert (fail closed) | ADR Punkt 10: nur vollständiger Restore |
+| S2-F6, C2-8/9 | INFO | Sitzungsweite `set_config` ist im App-Pfad nicht genutzt; CI-Variable fehlt (O-2); Start prüft Trigger und Indizes (jetzt behoben) | dokumentiert |
+
 ## 4. Nachweise je SHA
 
 Alle lokalen Läufe: Node v22.22.0, PostgreSQL 16.15 (kurzlebige Instanz, TLS, nur Loopback), synthetische Daten.
@@ -81,6 +99,8 @@ Alle lokalen Läufe: Node v22.22.0, PostgreSQL 16.15 (kurzlebige Instanz, TLS, n
 | Gegenproben Fix-Runde 1 | je Fix eine Mutation | `search_path` weg: 2 rot; Jahresgrenzen (beide Schichten) weg: 1 rot; Trigger wirkungslos: 2 rot; Index-Prüfung weg: 1 rot; `read committed` weg: 1 rot; `TimeZone` weg: 1 rot; neue Rechte-Codes ignoriert: 3 rot; REFERENCES weg: 2 rot |
 | Gegenproben Gates | je Gate eine Mutation | Kapazitätsprüfung weg: 1 rot; Webhook-Digest im Restore weg: 1 rot; Organisationsprüfung weg: 1 rot; `ON CONFLICT` weg: 2 rot |
 | F1-Nachweis | PostgreSQL-Binaries per `unshare` und Bind-Mount versteckt | ohne Variable: 6 übersprungen und sichtbare Warnung; mit `PERSISTENCE_REQUIRE_PG=1`: FAIL |
+| Fix-Runde 2 (Arbeitsstand vor Commit) | `npx tsc -b --force`; `npx vitest run`; Governance; Secret-Scan | exit 0; 57 Dateien, **1089/1089**; exit 0; 0 Funde |
+| Gegenproben Fix-Runde 2 | 12 Mutationen | alle erkannt (zwischen 1 und 9 rote Tests je Mutation), darunter die beiden, die Runde 2 überlebt hatten: „204 vor enqueue“ (3 rot) und „Vorgänger-Index-Prüfung weg“ (1 rot). **Nicht** durch einen Test abgedeckt: der Aufruf in `src/server.ts` selbst; die Startsequenz wird im Test nachgebildet, nicht als Prozess gestartet. |
 | Gegenproben | neue Tests gegen den jeweiligen Vorher-Commit | Lock: Bootstrap scheitert. Rechte: 17 rot. Zeit: 12 rot (plus 1 Treiber). Reihenfolge: 7 von 7 rot. |
 | CI #35–#37 | GitHub Actions | siehe Checks der PRs. Ob der Runner die PostgreSQL-Tests ausführt (statt sie sichtbar zu überspringen), steht im Log des Jobs `build-test`. |
 
@@ -92,15 +112,15 @@ Alle lokalen Läufe: Node v22.22.0, PostgreSQL 16.15 (kurzlebige Instanz, TLS, n
 |---|---|---|---|---|---|---|
 | Advisory Lock (E1) | ✅ #35 | ✅ | ✅ (2 Verbindungen, Rollback, Abbruch) | ✅ Runde 1 | ❌ | ❌ |
 | Rechteprüfung (A/A2/A3) | ✅ #35 | ✅ | ✅ (echte Rollen je Fall) | ✅ Runde 1 (Funde M2/F5 → #38) | ❌ | ❌ |
-| Rechteprüfung, Schemata/`search_path` (M2, F5) | ✅ #38 | ✅ | ✅ (Schattentabelle, eigenes Schema, REPLICATION, REFERENCES) | ⏳ Runde 2 | ❌ | ❌ |
+| Rechteprüfung, Schemata/`search_path` (M2, F5) | ✅ #38 | ✅ | ✅ (Schattentabelle, eigenes Schema, REPLICATION, REFERENCES) | Runde 2: bestätigt bzw. Funde behoben; ⏳ Runde 3 | ❌ | ❌ |
 | Zeitstempel (B) | ✅ #36 | ✅ | ✅ | ✅ Runde 1 (Fund M1 → #38) | ❌ | ❌ |
-| Zeitstempel-Grenzen, Session-Pinning (M1, L2) | ✅ #38 | ✅ | ✅ (Rollen-Defaults überschrieben) | ⏳ Runde 2 | ❌ | ❌ |
+| Zeitstempel-Grenzen, Session-Pinning (M1, L2) | ✅ #38 | ✅ | ✅ (Rollen-Defaults überschrieben) | Runde 2: bestätigt bzw. Funde behoben; ⏳ Runde 3 | ❌ | ❌ |
 | Append-Ordinal, Retention (C/D) | ✅ #37 | ✅ | ✅ (Parallelität, 100 000/100 001, Rollback) | ✅ Runde 1 (Funde L1/L3 → #38) | ❌ | ❌ |
-| DB-Append-Guard, Migration 008 (L1, L3) | ✅ #38 | ✅ | ✅ (Lücke, Fork, Wurzel, Vorbelegung, 100 000 mit Trigger) | ⏳ Runde 2 | ❌ | ❌ |
-| RLS/FORCE RLS, Cross-Tenant | vorhanden (#9) | ✅ | ✅ #38: 6 Angriffe (Lesen, Schreiben mit Positivkontrolle, Umbinden, RLS abschalten, SET ROLE) | ⏳ Runde 2 | ❌ | ❌ |
-| Durable Queue (#15) | vorhanden | ✅ | ✅ #38: 204 erst nach Commit, Dedupe (8 parallel), Kapazität → 503 mit Rollback, DB weg → 503 ohne RAM-Fallback, Tenant-Isolation | ⏳ Runde 2 | ❌ | ❌ (kein echtes Queue-Ack) |
-| Restore-Verifikation (#22) | vorhanden; Reihenfolge in #37 angepasst | ✅ | ✅ #38: `pg_dump`/`pg_restore`, 8 Fälle. Hinweis: Ein Restore ohne den neuesten Eintrag verifiziert für sich allein noch; erkannt wird er nur durch den Manifest-Vergleich. | ⏳ Runde 2 | ❌ | ❌ |
-| Runtime-Verkabelung (`server.ts`, fail closed) | vorhanden (#12–#17) | ✅ | ✅ #38: 10 Startfälle mit der Startsequenz aus `server.ts` (nachgebildet, nicht der Prozess selbst) | ⏳ Runde 2 | ❌ | ❌ |
+| DB-Append-Guard, Migration 008 (L1, L3) | ✅ #38 | ✅ | ✅ (Lücke, Fork, Wurzel, Vorbelegung, 100 000 mit Trigger) | Runde 2: bestätigt bzw. Funde behoben; ⏳ Runde 3 | ❌ | ❌ |
+| RLS/FORCE RLS, Cross-Tenant | vorhanden (#9) | ✅ | ✅ #38: 6 Angriffe (Lesen, Schreiben mit Positivkontrolle, Umbinden, RLS abschalten, SET ROLE) | Runde 2: bestätigt bzw. Funde behoben; ⏳ Runde 3 | ❌ | ❌ |
+| Durable Queue (#15) | vorhanden | ✅ | ✅ #38: 204 erst nach Commit (Reihenfolge seit Fix-Runde 2 bewiesen), Dedupe (8 parallel), Kapazität → 503 mit Rollback, DB weg → 503 ohne RAM-Fallback, Tenant-Isolation | ⏳ Runde 2 | ❌ | ❌ (kein echtes Queue-Ack) |
+| Restore-Verifikation (#22) | vorhanden; Reihenfolge in #37 angepasst; Manifest v2 in #38 | ✅ | ✅ #38: `pg_dump`/`pg_restore`, 17 Fälle. Hinweis: Ein Restore ohne den neuesten Eintrag verifiziert für sich allein noch; erkannt wird er nur durch den Manifest-Vergleich. | Runde 2: bestätigt bzw. Funde behoben; ⏳ Runde 3 | ❌ | ❌ |
+| Runtime-Verkabelung (`server.ts`, fail closed) | vorhanden (#12–#17); Schema- und Session-Prüfung in #38 ergänzt | ✅ | ✅ #38: 22 Startfälle mit der Startsequenz aus `server.ts` (nachgebildet, nicht der Prozess selbst) | Runde 2 mit Funden → Fix-Runde 2; ⏳ Runde 3 | ❌ | ❌ |
 | TLS-Policy (#17) | vorhanden | Mock | Tests nutzen `require` gegen ein selbstsigniertes Zertifikat; `verify-full` nicht real getestet | ❌ | Entscheidung offen (`render-internal-tls-decision.md`) | ❌ |
 | Handlebars-Fix (#19) | ✅ | CI grün auf `008fcba` | — | ✅ (Claude, unabhängig von ChatGPT) | ❌ (Owner-Merge) | ❌ |
 
@@ -112,9 +132,9 @@ Alle lokalen Läufe: Node v22.22.0, PostgreSQL 16.15 (kurzlebige Instanz, TLS, n
 
 ## 6. Offene Gates (Reihenfolge)
 
-1. **Unabhängiger Review Runde 2** von #38 (`e0b19b3`): Code Review und Security-Audit auf die Fixes und die neuen Gates. Danach höchstens zwei weitere Fix-Runden je Problem, sonst BLOCKED.
+1. **Unabhängiger Review Runde 3** auf Fix-Runde 2. Danach ist für Befunde aus Runde 2 noch höchstens eine Fix-Runde erlaubt (Grenze 3); sonst BLOCKED und Eskalation.
 2. **CI-Nachweis** auf dem finalen SHA. Fehlt PostgreSQL auf dem Runner, werden die Tests übersprungen und gelten **nicht** als bestanden (O-2).
-3. Restrisiken aus 3a (Trigger-Deaktivierung durch Superuser, MAINTAIN ab PG 17, Kette > 100 000) bewusst annehmen oder beauftragen.
+3. Owner-Entscheidungen D-1 und D-2 sowie die Restrisiken im ADR (Superuser kann den Trigger abschalten; MAINTAIN ab PG 17; Managed-PostgreSQL ungetestet; Kette > 100 000).
 4. TLS-Entscheidung (`verify-full` gegen Render intern), separat und durch den Owner.
 5. Erst danach: Merge der Linie A durch den Owner. Die Reihenfolge der Stack-Merges legt der Owner fest.
 
@@ -126,9 +146,10 @@ Alle lokalen Läufe: Node v22.22.0, PostgreSQL 16.15 (kurzlebige Instanz, TLS, n
 | O-2 | In `.github/workflows/ci.yml` (Gate-Datei, Maintenance-Modus) im Job `build-test` `PERSISTENCE_REQUIRE_PG=1` setzen | Ohne die Variable würden die PostgreSQL-Tests auf einem Runner ohne PostgreSQL still übersprungen | Ein grüner CI-Lauf ohne echten PostgreSQL-Nachweis | #35 | im CI-Log prüfen, dass die `persistence-pg-*`-Tests ausgeführt wurden |
 | D-1 | Bestätigen, dass Persistence nie mit echten Daten aktiviert wurde (es gibt keine DB mit Audit-Zeilen). Falls doch: Umgang mit der Alt-Historie entscheiden. Das Code Review verlangt die Bestätigung vor einem Merge (F6). | Migration 007 bricht bei vorhandener Audit-Historie bewusst ab | keines (fail closed), aber Merge ohne dokumentierte Entscheidung | #37 | keine Persistence-DB anlegen, bevor D-1 entschieden ist |
 
+| D-2 | Wie soll Hash-Fälschung durch Inhaber der Runtime-Zugangsdaten behandelt werden? Optionen: (a) akzeptieren und nur erkennen (Ist-Stand), (b) Hash im Trigger nachrechnen, (c) HMAC mit einem Schlüssel außerhalb der DB, (d) nach einer fehlgeschlagenen Verifikation auf read-only schalten | Security-Review Runde 2, F5: Wer die Runtime-Zugangsdaten hat, kann Einträge fälschen oder die Kette vergiften | Fälschung durch Insider bleibt möglich; Erkennung funktioniert (außer bei korrekt berechneten Fälschungen) | #38 | Runtime-Zugangsdaten nur dem Dienst geben; Persistence bleibt aus |
+
 Bereits früher gemeldete und unveränderte Punkte werden hier nicht wiederholt, z. B. SUP-01 (Ruleset) und SAG-02 (Read-only-Standard) aus PR #6.
 
 ## 8. Nächste Review-Aufträge
 
-- **Runde 2, Code Reviewer:** #38 `0cd2a46` + `e0b19b3`: Fixes gegen die Befunde aus 3a, Testintegrität der neuen Gate-Suites, Migration 008
-- **Runde 2, Security/Adversarial:** Umgehung von Trigger und `search_path`, Restore-Lücken, Cross-Tenant, Queue-Rennen
+- **Runde 3, Code Reviewer und Security:** Fix-Runde 2 auf #38: Migration 009, `schema-safety-repository.ts`, erweiterte Rechteprüfung, Session-Pinning, URL-Ablehnung, Restore-Manifest v2, Queue-Test

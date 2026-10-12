@@ -1,7 +1,7 @@
 # Persistence-Integration: zentraler Handoff
 
 Dies ist die **einzige** Statusdatei für die Persistence-Integration. Sie ersetzt keine Owner-Freigabe.
-Erstellt durch Claude Code am 2026-10-12, Audit und Integration ab 07:40 UTC. Stand des Dokuments: Head der Branch `claude/pg-runtime-gates` (Fix-Runden 1 und 2, Gate-Tests, 2026-10-12).
+Erstellt durch Claude Code am 2026-10-12, Audit und Integration ab 07:40 UTC. Stand des Dokuments: Head der Branch `claude/pg-runtime-gates` (Fix-Runden 1–3, Gate-Tests, 2026-10-12).
 
 ## 1. Referenzen (verifiziert per `git fetch` und GitHub-API)
 
@@ -84,6 +84,29 @@ Code Review: **REQUEST CHANGES** (klein, scoped), YELLOW. Alle Fixes aus Runde 1
 | C2-7 | INFO | Ein Data-only-Restore scheitert (fail closed) | ADR Punkt 10: nur vollständiger Restore |
 | S2-F6, C2-8/9 | INFO | Sitzungsweite `set_config` ist im App-Pfad nicht genutzt; CI-Variable fehlt (O-2); Start prüft Trigger und Indizes (jetzt behoben) | dokumentiert |
 
+### 3c. Befunde Review Runde 3 auf #38 (`91a3d04`) und Fix-Runde 3 (letzte zulässige Runde)
+
+**Code Review:** **APPROVE WITH NITS**, YELLOW. Es gab keine Defekte; YELLOW nur wegen nicht prüfbarer Punkte (PG 15/17, Managed-PostgreSQL). Der Reviewer hat zusätzlich das echte `dist/server.js` gegen einen Cluster gestartet:
+- korrekt eingerichtet: Start ok, `persistence=postgres`
+- Guard auf `ENABLE` (O): Abbruch mit APPEND_GUARD
+- URL-Parameter: Abbruch
+- Persistence aus: unverändert
+
+Damit ist der Aufrufpfad in `server.ts` nachgewiesen.
+
+**Security-Audit:** **FAIL** wegen eines blockierenden Befunds, YELLOW, kein CRITICAL/HIGH.
+
+| ID | Schwere | Befund | Status |
+|---|---|---|---|
+| S3-F1 / C3-F2 | MEDIUM, **blockierend** | Die Schema-Prüfung fand den Guard nur über den Namen. Ersetzter Funktionsrumpf, Trigger als BEFORE UPDATE, ein zweiter BEFORE-Trigger (verschiebt `chain_seq`), Rule, Vererbungs-Kind oder UNLOGGED gingen bei Start und Restore durch. Das ist nur dem Owner, einem Superuser oder per manipuliertem Dump möglich. | behoben in Fix-Runde 3: tgtype, WHEN, Argumente, Funktionsrumpf (SHA-256 aus Migration 008), Sprache, `proconfig`, keine weiteren Trigger, keine Rules, keine Vererbung, `relpersistence` |
+| S3-F2 | LOW | Die Runtime kann eigene Rollen-Defaults für nicht gepinnte Settings setzen (`synchronous_commit=off` hebelt „204 erst nach dauerhaftem Commit“ aus) | behoben: `synchronous_commit`, `standard_conforming_strings`, `row_security` gepinnt und geprüft |
+| S3-F3 | LOW/MEDIUM | Eine ausführbare SECURITY-DEFINER-Funktion des Owners kann Audit-Zeilen ändern | behoben: `SECURITY_DEFINER_FUNCTION` |
+| S3-F4 | LOW | Mikrosekunden-Änderungen an Zeitstempeln wurden vom Restore-Manifest nicht erkannt | behoben: Epoch mit Mikrosekunden im Fingerprint bzw. Audit-Digest |
+| C3-F1 | LOW | `session_replication_role` wurde nicht geprüft (Superuser-Rollen-Default `replica` schaltet FK-Trigger ab) | behoben: Start verlangt `origin` |
+| C3-F3, C3-F4 | LOW/NIT (Testlücken) | `auditAnchorSeq` und der ALTER-SYSTEM-Zweig waren ungetestet (Mutationen überlebten) | behoben |
+| C3-F6 | NIT | Domänen-String noch `v1` | auf `v2` |
+| S3-F5, C3-F5, C3-F7 | INFO | Metadaten-Zeitstempel, PUBLIC-Default-ACL, `work_mem`-an-PUBLIC als mögliches Falsch-Positiv, Stacktrace beim Startabbruch, Spalten-UPDATE nicht zulässig | im ADR als Restrisiko |
+
 ## 4. Nachweise je SHA
 
 Alle lokalen Läufe: Node v22.22.0, PostgreSQL 16.15 (kurzlebige Instanz, TLS, nur Loopback), synthetische Daten.
@@ -101,6 +124,10 @@ Alle lokalen Läufe: Node v22.22.0, PostgreSQL 16.15 (kurzlebige Instanz, TLS, n
 | F1-Nachweis | PostgreSQL-Binaries per `unshare` und Bind-Mount versteckt | ohne Variable: 6 übersprungen und sichtbare Warnung; mit `PERSISTENCE_REQUIRE_PG=1`: FAIL |
 | Fix-Runde 2 (Arbeitsstand vor Commit) | `npx tsc -b --force`; `npx vitest run`; Governance; Secret-Scan | exit 0; 57 Dateien, **1089/1089**; exit 0; 0 Funde |
 | Gegenproben Fix-Runde 2 | 12 Mutationen | alle erkannt (zwischen 1 und 9 rote Tests je Mutation), darunter die beiden, die Runde 2 überlebt hatten: „204 vor enqueue“ (3 rot) und „Vorgänger-Index-Prüfung weg“ (1 rot). **Nicht** durch einen Test abgedeckt: der Aufruf in `src/server.ts` selbst; die Startsequenz wird im Test nachgebildet, nicht als Prozess gestartet. |
+| Fix-Runde 3 (Arbeitsstand vor Commit) | `npx tsc -b --force`; `npx vitest run`; Governance; Secret-Scan | exit 0; 57 Dateien, **1109/1109**; exit 0; 0 Funde |
+| Gegenproben Fix-Runde 3 | 14 Mutationen | alle erkannt (je 1–3 rote Tests): tgtype, WHEN, Rumpf-Hash, weitere Trigger, Rules, Vererbung, UNLOGGED, SECURITY DEFINER, `session_replication_role`, `received_at`-Epoch, Audit-Epoch, `synchronous_commit`, `auditAnchorSeq`, ALTER-SYSTEM-Zweig |
+| `server.ts`-Aufrufpfad | Code-Reviewer Runde 3: echtes `dist/server.js` gegen einen ephemeren Cluster | Start ok; Guard nicht ALWAYS → Exit 1 (APPEND_GUARD); URL-Parameter → Exit 1; Persistence aus unverändert |
+| CI `6afca6e` | GitHub-Runner (ubuntu-latest, kein Root) | 57 Dateien, 1056/1056; die PostgreSQL-Suites, auch `pg_dump`/`pg_restore`, liefen tatsächlich (Log des Jobs `build-test`) |
 | Gegenproben | neue Tests gegen den jeweiligen Vorher-Commit | Lock: Bootstrap scheitert. Rechte: 17 rot. Zeit: 12 rot (plus 1 Treiber). Reihenfolge: 7 von 7 rot. |
 | CI #35–#37 | GitHub Actions | siehe Checks der PRs. Ob der Runner die PostgreSQL-Tests ausführt (statt sie sichtbar zu überspringen), steht im Log des Jobs `build-test`. |
 
@@ -132,7 +159,7 @@ Alle lokalen Läufe: Node v22.22.0, PostgreSQL 16.15 (kurzlebige Instanz, TLS, n
 
 ## 6. Offene Gates (Reihenfolge)
 
-1. **Unabhängiger Review Runde 3** auf Fix-Runde 2. Danach ist für Befunde aus Runde 2 noch höchstens eine Fix-Runde erlaubt (Grenze 3); sonst BLOCKED und Eskalation.
+1. **Unabhängiger Review Runde 4** (Verifikation) auf Fix-Runde 3. Für das Problem „Guard-Umgehung bei fehlerhafter Einrichtung“ war das die **dritte und letzte** automatische Fix-Runde. Bleibt ein blockierender Befund, ist der Status **BLOCKED** und wird an den Owner eskaliert; es folgt keine weitere automatische Runde.
 2. **CI-Nachweis** auf dem finalen SHA. Fehlt PostgreSQL auf dem Runner, werden die Tests übersprungen und gelten **nicht** als bestanden (O-2).
 3. Owner-Entscheidungen D-1 und D-2 sowie die Restrisiken im ADR (Superuser kann den Trigger abschalten; MAINTAIN ab PG 17; Managed-PostgreSQL ungetestet; Kette > 100 000).
 4. TLS-Entscheidung (`verify-full` gegen Render intern), separat und durch den Owner.
@@ -152,4 +179,4 @@ Bereits früher gemeldete und unveränderte Punkte werden hier nicht wiederholt,
 
 ## 8. Nächste Review-Aufträge
 
-- **Runde 3, Code Reviewer und Security:** Fix-Runde 2 auf #38: Migration 009, `schema-safety-repository.ts`, erweiterte Rechteprüfung, Session-Pinning, URL-Ablehnung, Restore-Manifest v2, Queue-Test
+- **Runde 4 (Verifikation), Code Reviewer und Security:** Fix-Runde 3 auf #38: Guard-Struktur (tgtype, Rumpf-Hash, weitere Trigger, Rules, Vererbung, Persistenz), SECURITY-DEFINER-Prüfung, zusätzliche Pins, `session_replication_role`, Mikrosekunden im Manifest

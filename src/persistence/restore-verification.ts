@@ -36,7 +36,7 @@ function encode(value: string): string {
 
 function digest(domain: string, rows: readonly (readonly string[])[]): string {
   const hash = createHash("sha256");
-  hash.update("lus-restore-manifest-v1\0" + domain + "\0", "utf8");
+  hash.update("lus-restore-manifest-v2\0" + domain + "\0", "utf8");
   for (const row of rows) {
     hash.update(row.map(encode).join("|") + "\n", "utf8");
   }
@@ -95,7 +95,7 @@ export async function captureRestoreVerificationManifest(
 
     const auditDigest = digest(
       "audit-events",
-      evidence.auditRows.map((row) => [row.auditId, row.entryHash]),
+      evidence.auditRows.map((row) => [row.auditId, row.entryHash, row.createdEpoch]),
     );
 
     if (integrity.count !== evidence.auditRows.length) {

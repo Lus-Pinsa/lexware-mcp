@@ -97,6 +97,10 @@ const SQL_RUNTIME_PRIVILEGES =
   "AND NOT EXISTS (SELECT 1 FROM pg_type ty JOIN pg_namespace tn ON tn.oid = ty.typnamespace WHERE d.classid = 'pg_type'::regclass " +
   "AND ty.oid = d.objid AND (tn.oid = pg_my_temp_schema() OR pg_is_other_temp_schema(tn.oid)))) AS owns_objects, " +
   "EXISTS (SELECT 1 FROM pg_default_acl d CROSS JOIN LATERAL aclexplode(d.defaclacl) x WHERE x.grantee = r.oid) AS default_privileges, " +
+  // An executable SECURITY DEFINER function outside the system schemas runs with its owner's rights and could
+  // modify audit rows on the runtime's behalf.
+  "EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace pn ON pn.oid = p.pronamespace WHERE p.prosecdef " +
+  "AND pn.nspname NOT IN ('pg_catalog', 'information_schema') AND has_function_privilege(current_user, p.oid, 'EXECUTE')) AS security_definer_functions, " +
   // Required privileges: every listed privilege must be held. has_table_privilege(..., 'A,B') is ANY-OF in
   // PostgreSQL, so each required privilege is checked on its own and combined with AND.
   // Forbidden privileges: holding any one of them is a violation. Column-level grants are invisible to
@@ -237,6 +241,7 @@ export interface RuntimePrivilegeSnapshot {
   readonly parameterPrivileges: boolean;
   readonly ownsObjects: boolean;
   readonly defaultPrivileges: boolean;
+  readonly securityDefinerFunctions: boolean;
   readonly migrationsSelect: boolean;
   readonly migrationsMutate: boolean;
   readonly tenantsSelect: boolean;
@@ -267,6 +272,7 @@ export async function inspectRuntimePrivileges(
     parameter_privileges: boolean;
     owns_objects: boolean;
     default_privileges: boolean;
+    security_definer_functions: boolean;
     migrations_select: boolean;
     migrations_mutate: boolean;
     tenants_select: boolean;
@@ -305,6 +311,7 @@ export async function inspectRuntimePrivileges(
     parameterPrivileges: row.parameter_privileges,
     ownsObjects: row.owns_objects,
     defaultPrivileges: row.default_privileges,
+    securityDefinerFunctions: row.security_definer_functions,
     migrationsSelect: row.migrations_select,
     migrationsMutate: row.migrations_mutate,
     tenantsSelect: row.tenants_select,

@@ -26,9 +26,17 @@ export interface RestoreEvidenceRows {
   readonly auditRows: readonly {
     readonly auditId: string;
     readonly entryHash: string;
+    readonly createdEpoch: string;
   }[];
   readonly auditAnchorHash: string | null;
   readonly auditAnchorSeq: number | null;
+}
+
+function assertEpochText(value: string): string {
+  if (typeof value !== "string" || !/^[0-9]{1,12}(\.[0-9]{1,6})?$/.test(value)) {
+    throw new PersistenceValidationError("Invalid restore audit timestamp.");
+  }
+  return value;
 }
 
 function assertFingerprintText(value: string): string {
@@ -96,7 +104,8 @@ export async function readRestoreEvidenceRows(
       "SELECT event_key_hash, payload_checksum, received_at, acknowledged_at, " +
       // Text columns have restricted character sets without '|'; nonce (12) and tag (16) have fixed sizes, so the
       // concatenation is unambiguous. Timestamps as epoch text: independent of DateStyle and TimeZone.
-      "encode(sha256(convert_to(concat_ws('|', event_type, key_id, extract(epoch FROM event_date), source, " +
+      "encode(sha256(convert_to(concat_ws('|', event_type, key_id, extract(epoch FROM event_date), " +
+      "extract(epoch FROM received_at), coalesce(extract(epoch FROM acknowledged_at)::text, '-'), source, " +
       "request_budget_status, quality_status), 'UTF8') || '\\x7c'::bytea || resource_ciphertext || resource_nonce || resource_auth_tag), 'hex') " +
       "AS row_fingerprint " +
       "FROM webhook_events WHERE tenant_id = $1 " +
@@ -107,9 +116,11 @@ export async function readRestoreEvidenceRows(
   const audit = await tx.query<{
     audit_id: string;
     entry_hash: string;
+    created_epoch: string;
   }>({
     text:
-      "SELECT audit_id::text AS audit_id, entry_hash FROM audit_events " +
+      // created_at as epoch text: the entry hash covers it only at millisecond precision.
+      "SELECT audit_id::text AS audit_id, entry_hash, extract(epoch FROM created_at)::text AS created_epoch FROM audit_events " +
       "WHERE tenant_id = $1 ORDER BY chain_seq ASC",
     values: [checkedTenantId],
   });
@@ -159,6 +170,7 @@ export async function readRestoreEvidenceRows(
         Object.freeze({
           auditId: row.audit_id,
           entryHash: assertSha256Hex(row.entry_hash, "restore audit entry hash"),
+          createdEpoch: assertEpochText(row.created_epoch),
         }),
       ),
     ),

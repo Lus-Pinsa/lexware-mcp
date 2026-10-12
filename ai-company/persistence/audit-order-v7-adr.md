@@ -1,7 +1,7 @@
 # ADR: Audit append order and prefix-only retention (schema v7)
 
 Status: **IMPLEMENTED — schema v7 on branch `claude/audit-append-ordinal` (commit `b41ab5f`, reviewed), database append
-guard v8 and v9 on branch `claude/pg-runtime-gates` (fix rounds 1 and 2, review of round 2 pending). Not approved, not
+guard v8 and v9 on branch `claude/pg-runtime-gates` (fix rounds 1–3; review of round 3 pending). Not approved, not
 merged, not deployed.**
 Supersedes the draft `ai-company/persistence/audit-order-v6-adr.md` from branch `openai/audit-append-order-v6-adr`
 (commit `c16986e`, never merged). That draft's analysis and acceptance table are taken over here; the numbering
@@ -87,16 +87,30 @@ caller-supplied event time and the random UUID, not the append order. On real Po
      - exactly the four expected policies (an extra permissive policy or `USING (true)` fails);
      - the guard trigger: enabled ALWAYS, its function owned by the table owner, not SECURITY DEFINER;
      - both guard indexes.
-   - The runtime role check rejects any parameter privilege (`pg_parameter_acl`), ownership of any object, and default
-     privileges granted to it.
-   - Pinned session settings now also cover `DateStyle`, `IntervalStyle`, `bytea_output` and `extra_float_digits`.
-     Start-up asserts that all of them are in effect (a pooler may drop startup parameters).
+   - Fix round 3 (security review round 3, F1: the guard was checked by name only) adds:
+     - the trigger is exactly ROW / BEFORE / INSERT, with no WHEN clause, arguments or column list;
+     - the function body is byte-identical to migration 008 (SHA-256 derived from the checksummed migration file),
+       in plpgsql, with `search_path = pg_catalog, pg_temp`;
+     - no other user trigger on the four tables (a later BEFORE trigger could modify `NEW`);
+     - no rewrite rules, no inheritance parents or children, all tables permanent (not UNLOGGED).
+   - The runtime role check rejects:
+     - any parameter privilege (`pg_parameter_acl`);
+     - ownership of any non-temporary object;
+     - default privileges granted to it;
+     - since fix round 3, any executable SECURITY DEFINER function outside the system schemas.
+   - Pinned session settings now also cover:
+     - `DateStyle`, `IntervalStyle`, `bytea_output`, `extra_float_digits`;
+     - since fix round 3, `synchronous_commit`, `standard_conforming_strings` and `row_security`.
+
+     Start-up asserts that all of them are in effect (a pooler may drop startup parameters). It also asserts
+     `session_replication_role = origin`, which cannot be pinned without superuser rights.
    - Query parameters in the database URL other than the stripped SSL hints are rejected, because they would override
      the pinned settings.
    - The restore manifest (version 2) also covers:
      - tenant storage limits and creation time;
      - every stored webhook column, including the encrypted resource;
-     - the anchor position.
+     - the anchor position;
+     - since fix round 3, `received_at`, `acknowledged_at` and audit `created_at` at microsecond precision.
 10. **Restore procedure.** Only a full logical restore (`pg_dump` → `pg_restore` into an empty database) is supported.
     A data-only restore into a migrated schema fails closed: COPY fires the guard, and the heap order is not the chain
     order.
@@ -144,6 +158,13 @@ caller-supplied event time and the random UUID, not the append order. On real Po
   - a keyed HMAC with the key outside the database;
   - switch to read-only after a failed verification.
 - Residuals from the independent reviews (accepted for now, documented):
+  - The table owner remains trusted for constraints. A dropped CHECK or foreign-key constraint is not detected at
+    start-up. The entry hash still covers every audit field, and the guard still enforces position and link.
+  - Default privileges granted to PUBLIC are not flagged; current tables are checked directly. Conversely, a harmless
+    `GRANT SET ON PARAMETER <user setting> TO PUBLIC` fails closed (possible false positive on managed PostgreSQL).
+  - The runtime needs table-level UPDATE on `webhook_events`, so it can rewrite its own tenant's queue rows. Column-level
+    UPDATE on `acknowledged_at` would be narrower but is rejected by the current check (pre-existing).
+  - `audit_retention_anchors.updated_at` and `schema_migrations.applied_at` are metadata and not in the manifest.
   - A superuser or the table owner can disable the guard trigger; the runtime role cannot. Start-up now refuses to run
     when the trigger is not enabled ALWAYS.
   - Managed PostgreSQL offerings (predefined roles, provider schemas granting CREATE to PUBLIC) may make the stricter

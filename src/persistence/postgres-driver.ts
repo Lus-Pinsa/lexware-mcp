@@ -95,6 +95,10 @@ export const PINNED_SESSION_SETTINGS: Readonly<Record<string, string>> = Object.
   bytea_output: "hex",
   extra_float_digits: "1",
   default_transaction_isolation: "read committed",
+  // A 204 to Lexware promises a durable commit; string literals and row-level security must behave as designed.
+  synchronous_commit: "on",
+  standard_conforming_strings: "on",
+  row_security: "on",
 });
 
 function PINNED_SESSION_SETTINGS_WITH(applicationName: string): Record<string, string> {

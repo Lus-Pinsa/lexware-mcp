@@ -94,6 +94,14 @@ describe.skipIf(!postgresAvailable())("runtime start-up gates on real PostgreSQL
     ["an additional permissive policy", "CREATE POLICY open_read ON audit_events FOR SELECT USING (true)", "RLS_POLICY"],
     ["a policy replaced by USING (true)", "DROP POLICY tenant_isolation_webhook_events ON webhook_events; CREATE POLICY tenant_isolation_webhook_events ON webhook_events USING (true) WITH CHECK (true)", "RLS_POLICY"],
     ["the position index dropped", "DROP INDEX audit_events_tenant_chain_seq_uniq", "SEQ_INDEX"],
+    ["the guard body replaced by RETURN NEW", "CREATE OR REPLACE FUNCTION public.audit_events_append_guard() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$BEGIN RETURN NEW; END$$", "APPEND_GUARD"],
+    ["the guard re-created as BEFORE UPDATE", "DROP TRIGGER audit_events_append_guard ON audit_events; CREATE TRIGGER audit_events_append_guard BEFORE UPDATE ON audit_events FOR EACH ROW EXECUTE FUNCTION public.audit_events_append_guard(); ALTER TABLE audit_events ENABLE ALWAYS TRIGGER audit_events_append_guard", "APPEND_GUARD"],
+    ["the guard with a WHEN clause", "DROP TRIGGER audit_events_append_guard ON audit_events; CREATE TRIGGER audit_events_append_guard BEFORE INSERT ON audit_events FOR EACH ROW WHEN (NEW.item_count < 0) EXECUTE FUNCTION public.audit_events_append_guard(); ALTER TABLE audit_events ENABLE ALWAYS TRIGGER audit_events_append_guard", "APPEND_GUARD"],
+    ["a second BEFORE INSERT trigger that runs after the guard", "CREATE FUNCTION public.zz_shift() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN NEW.chain_seq := NEW.chain_seq + 10; RETURN NEW; END$$; CREATE TRIGGER zz_shift BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION public.zz_shift()", "EXTRA_TRIGGER"],
+    ["an INSTEAD rule on audit_events", "CREATE RULE swallow AS ON INSERT TO audit_events DO INSTEAD NOTHING", "RULE"],
+    ["an UPDATE rule on webhook_events", "CREATE RULE no_ack AS ON UPDATE TO webhook_events DO INSTEAD NOTHING", "RULE"],
+    ["an inheritance child of audit_events", "CREATE TABLE audit_child () INHERITS (audit_events); GRANT INSERT, SELECT ON audit_child TO lus_runtime", "INHERITANCE"],
+    ["audit_retention_anchors set UNLOGGED", "ALTER TABLE audit_retention_anchors SET UNLOGGED", "NOT_PERMANENT"],
     ["the predecessor index replaced without NULLS NOT DISTINCT", "DROP INDEX audit_events_tenant_previous_hash_uniq; CREATE UNIQUE INDEX audit_events_tenant_previous_hash_uniq ON audit_events (tenant_id, previous_hash)", "PREDECESSOR_INDEX"],
   ])("refuses to start with %s although the ledger is current", async (_label, sql, code) => {
     await fx.admin(sql);
@@ -104,7 +112,10 @@ describe.skipIf(!postgresAvailable())("runtime start-up gates on real PostgreSQL
     await fx.admin(
       `ALTER ROLE lus_runtime IN DATABASE ${fx.database} SET datestyle = 'SQL, DMY'; ` +
         `ALTER ROLE lus_runtime IN DATABASE ${fx.database} SET bytea_output = 'escape'; ` +
-        `ALTER ROLE lus_runtime IN DATABASE ${fx.database} SET intervalstyle = 'sql_standard'`,
+        `ALTER ROLE lus_runtime IN DATABASE ${fx.database} SET intervalstyle = 'sql_standard'; ` +
+        `ALTER ROLE lus_runtime IN DATABASE ${fx.database} SET synchronous_commit = off; ` +
+        `ALTER ROLE lus_runtime IN DATABASE ${fx.database} SET standard_conforming_strings = off; ` +
+        `ALTER ROLE lus_runtime IN DATABASE ${fx.database} SET row_security = off`,
     );
     await expect(startupGates(fx.runtime(), configFor(fx.tenantA, ORG_A))).resolves.toBeUndefined();
     const read = await fx.runtime().transaction(async (tx) => (await tx.query<{ t: Date; b: Uint8Array }>({
@@ -113,6 +124,16 @@ describe.skipIf(!postgresAvailable())("runtime start-up gates on real PostgreSQL
     })).rows[0]!);
     expect(read.t.toISOString()).toBe("2026-01-12T00:00:00.000Z");
     expect([...read.b]).toEqual([1, 2]);
+    const settings = await fx.runtime().transaction(async (tx) => (await tx.query<Record<string, string>>({
+      text: "SELECT current_setting('synchronous_commit') AS sc, current_setting('standard_conforming_strings') AS scs, current_setting('row_security') AS rs",
+      values: [],
+    })).rows[0]!);
+    expect(settings).toEqual({ sc: "on", scs: "on", rs: "on" });
+  });
+
+  it("refuses to start when a superuser set session_replication_role = replica for the runtime role", async () => {
+    await fx.admin(`ALTER ROLE lus_runtime IN DATABASE ${fx.database} SET session_replication_role = replica`);
+    await expect(startupGates(fx.runtime(), configFor(fx.tenantA, ORG_A))).rejects.toThrow(/session settings verification failed/);
   });
 
   it("refuses to start when the pinned session settings are not in effect (e.g. a proxy dropped them)", async () => {

@@ -121,10 +121,17 @@ describe.skipIf(!postgresAvailable())("backup/restore verification on real Postg
     ["a moved webhook event date", (t: string) => `UPDATE webhook_events SET event_date = event_date + interval '400 days' WHERE tenant_id = '${t}'`, /webhookDigest/],
     ["a zeroed ciphertext auth tag", (t: string) => `UPDATE webhook_events SET resource_auth_tag = decode(repeat('00', 16), 'hex') WHERE tenant_id = '${t}'`, /webhookDigest/],
     ["a changed quality status", (t: string) => `UPDATE webhook_events SET quality_status = 'UNVERIFIED' WHERE tenant_id = '${t}'`, /webhookDigest/],
-    ["a dropped append guard", () => "DROP TRIGGER audit_events_append_guard ON audit_events", /schema safety verification failed: APPEND_GUARD/],
+    ["a dropped append guard", () => "DROP TRIGGER audit_events_append_guard ON audit_events", /schema safety verification failed: .*APPEND_GUARD/],
     ["row-level security disabled", () => "ALTER TABLE webhook_events DISABLE ROW LEVEL SECURITY", /schema safety verification failed: RLS_NOT_FORCED/],
     ["a policy replaced by USING (true)", () => "DROP POLICY tenant_isolation_audit_events ON audit_events; CREATE POLICY tenant_isolation_audit_events ON audit_events USING (true) WITH CHECK (true)", /schema safety verification failed: RLS_POLICY/],
     ["dropped guard indexes", () => "DROP INDEX audit_events_tenant_chain_seq_uniq; DROP INDEX audit_events_tenant_previous_hash_uniq", /SEQ_INDEX,PREDECESSOR_INDEX/],
+    ["a replaced guard body", () => "CREATE OR REPLACE FUNCTION public.audit_events_append_guard() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$BEGIN RETURN NEW; END$$", /APPEND_GUARD/],
+    ["an extra trigger", () => "CREATE FUNCTION public.zz_noop() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RETURN NEW; END$$; CREATE TRIGGER zz_noop BEFORE INSERT ON audit_events FOR EACH ROW EXECUTE FUNCTION public.zz_noop()", /EXTRA_TRIGGER/],
+    ["a rule", () => "CREATE RULE swallow AS ON INSERT TO audit_events DO INSTEAD NOTHING", /RULE/],
+    ["an UNLOGGED table", () => "ALTER TABLE audit_events SET UNLOGGED", /NOT_PERMANENT/],
+    ["received_at shifted by 400 microseconds", (t: string) => `UPDATE webhook_events SET received_at = received_at + interval '400 microseconds' WHERE tenant_id = '${t}'`, /webhookDigest/],
+    ["acknowledged_at shifted by 400 microseconds", (t: string) => `UPDATE webhook_events SET acknowledged_at = acknowledged_at + interval '400 microseconds' WHERE tenant_id = '${t}' AND acknowledged_at IS NOT NULL`, /webhookDigest/],
+    ["an audit created_at shifted by 400 microseconds", (t: string) => `ALTER TABLE audit_events DISABLE TRIGGER audit_events_append_guard; UPDATE audit_events SET created_at = created_at + interval '400 microseconds' WHERE tenant_id = '${t}'; ALTER TABLE audit_events ENABLE ALWAYS TRIGGER audit_events_append_guard`, /auditDigest/],
   ])("a restore with %s is detected", async (_label, tamper, expected) => {
     const restored = await backupAndRestore();
     await restored.admin(tamper(fx.tenantA));

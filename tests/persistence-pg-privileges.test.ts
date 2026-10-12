@@ -116,14 +116,21 @@ describe.skipIf(!postgresAvailable())("runtime privilege verification on real Po
     ["an own schema (first in the default search_path)", ["CREATE SCHEMA {r} AUTHORIZATION {r}"], "SCHEMA_OWNER"],
     ["the REPLICATION attribute", ["ALTER ROLE {r} REPLICATION"], "REPLICATION"],
     ["SET on session_replication_role (skips ordinary triggers)", ["GRANT SET ON PARAMETER session_replication_role TO {r}"], "PARAMETER_PRIVILEGE"],
+    ["ALTER SYSTEM on a parameter", ["GRANT ALTER SYSTEM ON PARAMETER work_mem TO {r}"], "PARAMETER_PRIVILEGE"],
     ["ownership of a function", ["CREATE FUNCTION public.f_{r}() RETURNS int LANGUAGE sql AS 'SELECT 1'", "ALTER FUNCTION public.f_{r}() OWNER TO {r}"], "OBJECT_OWNER"],
     ["ownership of the append guard function", ["ALTER FUNCTION public.audit_events_append_guard() OWNER TO {r}"], "OBJECT_OWNER"],
     ["default privileges on future tables", ["ALTER DEFAULT PRIVILEGES FOR ROLE lus_owner IN SCHEMA public GRANT ALL ON TABLES TO {r}"], "DEFAULT_PRIVILEGES"],
+    ["an executable SECURITY DEFINER function", ["CREATE FUNCTION public.ops_fix_{r}() RETURNS void LANGUAGE sql SECURITY DEFINER AS 'SELECT 1'", "ALTER FUNCTION public.ops_fix_{r}() OWNER TO lus_owner"], "SECURITY_DEFINER_FUNCTION"],
   ])("rejects a role with %s", async (_label, extra, code) => {
     try {
       expect(await check({ extra })).toContain(code);
     } finally {
-      await fx.admin("ALTER FUNCTION public.audit_events_append_guard() OWNER TO lus_owner");
+      // Shared fixture: undo database-wide side effects so later cases start from the provisioned state.
+      await fx.admin(
+        "ALTER FUNCTION public.audit_events_append_guard() OWNER TO lus_owner; " +
+          "DO $$DECLARE f record; BEGIN FOR f IN SELECT oid::regprocedure AS sig FROM pg_proc WHERE proname LIKE 'ops_fix_%' " +
+          "LOOP EXECUTE 'DROP FUNCTION ' || f.sig; END LOOP; END $$;",
+      );
     }
   });
 

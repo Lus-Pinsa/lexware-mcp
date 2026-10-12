@@ -52,6 +52,9 @@ describe("Postgres persistence driver", () => {
       bytea_output: "hex",
       extra_float_digits: "1",
       default_transaction_isolation: "read committed",
+      synchronous_commit: "on",
+      standard_conforming_strings: "on",
+      row_security: "on",
     });
 
     await db.close();

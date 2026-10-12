@@ -65,6 +65,10 @@ function database(options: {
         rows: [{
           tables_present: 4,
           tables_forced_rls: options.schemaUnsafe ? 3 : 4,
+          tables_permanent: 4,
+          rules: 0,
+          inheritance: 0,
+          user_triggers: 1,
           policies_total: 4,
           policies_expected: 4,
           append_guard: true,
@@ -102,6 +106,7 @@ function database(options: {
         rows: [{
           audit_id: auditInput.auditId,
           entry_hash: auditHash,
+          created_epoch: "1791532800.000000",
         }] as unknown as readonly Row[],
         rowCount: 1,
       };
@@ -166,6 +171,12 @@ describe("restore verification manifest", () => {
     const row = await captureRestoreVerificationManifest(database({ webhookRow: sha256Hex("row-1-tampered") }), TENANT);
     expect(() => assertRestoreManifestMatches(source, row)).toThrow(/webhookDigest/);
     await expect(captureRestoreVerificationManifest(database({ schemaUnsafe: true }), TENANT)).rejects.toThrow(/RLS_NOT_FORCED/);
+  });
+
+  it("compares the anchor position as its own manifest field", async () => {
+    const base = await captureRestoreVerificationManifest(database(), TENANT);
+    expect(base.auditAnchorSeq).toBeNull();
+    expect(() => assertRestoreManifestMatches(base, { ...base, auditAnchorSeq: 5 })).toThrow(/Restore verification failed: auditAnchorSeq\./);
   });
 
   it("is deterministic for identical source and restored evidence", async () => {

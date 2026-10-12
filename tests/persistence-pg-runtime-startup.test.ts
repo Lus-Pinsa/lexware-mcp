@@ -91,7 +91,7 @@ describe.skipIf(!postgresAvailable())("runtime start-up gates on real PostgreSQL
   });
 
   it("refuses to start with a pending migration (ledger behind the code)", async () => {
-    await fx.admin("DELETE FROM schema_migrations WHERE version = 9");
+    await fx.admin("DELETE FROM schema_migrations WHERE version = 10");
     await expect(startupGates(fx.runtime(), configFor(fx.tenantA, ORG_A))).rejects.toThrow(/pending migrations/);
   });
 
@@ -131,6 +131,11 @@ describe.skipIf(!postgresAvailable())("runtime start-up gates on real PostgreSQL
     ["a shadowing overload of the binding function (C-01)", "CREATE FUNCTION public.tenant_runtime_allowed(p text) RETURNS boolean LANGUAGE sql AS $$SELECT true$$", "BINDING_FUNCTION"],
     ["row-level security disabled on the binding table (C-01)", "ALTER TABLE tenant_runtime_bindings DISABLE ROW LEVEL SECURITY", "BINDING_TABLE"],
     ["an additional permissive policy on the binding table (C-01)", "CREATE POLICY see_all ON tenant_runtime_bindings FOR SELECT USING (true)", "BINDING_TABLE"],
+    ["FORCE row-level security on the binding table (owner could no longer bind) (C-01)", "ALTER TABLE tenant_runtime_bindings FORCE ROW LEVEL SECURITY", "BINDING_TABLE"],
+    ["the binding table's tenant foreign key dropped (stale bindings) (C-01)", "ALTER TABLE tenant_runtime_bindings DROP CONSTRAINT tenant_runtime_bindings_tenant_id_fkey", "BINDING_TABLE"],
+    ["the binding table's foreign key without ON DELETE CASCADE (C-01)", "ALTER TABLE tenant_runtime_bindings DROP CONSTRAINT tenant_runtime_bindings_tenant_id_fkey; ALTER TABLE tenant_runtime_bindings ADD CONSTRAINT tenant_runtime_bindings_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES tenants (tenant_id)", "BINDING_TABLE"],
+    ["the binding table's primary key dropped (C-01)", "ALTER TABLE tenant_runtime_bindings DROP CONSTRAINT tenant_runtime_bindings_pkey", "BINDING_TABLE"],
+    ["an extra column on the binding table (C-01)", "ALTER TABLE tenant_runtime_bindings ADD COLUMN wildcard boolean NOT NULL DEFAULT false", "BINDING_TABLE"],
     ["a trigger on the binding table (C-01)", "CREATE FUNCTION public.zz_bind() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RETURN NEW; END$$; CREATE TRIGGER zz_bind BEFORE INSERT ON tenant_runtime_bindings FOR EACH ROW EXECUTE FUNCTION public.zz_bind()", "BINDING_TABLE"],
     ["the predecessor index replaced without NULLS NOT DISTINCT", "DROP INDEX audit_events_tenant_previous_hash_uniq; CREATE UNIQUE INDEX audit_events_tenant_previous_hash_uniq ON audit_events (tenant_id, previous_hash)", "PREDECESSOR_INDEX"],
   ])("refuses to start with %s although the ledger is current", async (_label, sql, code) => {
@@ -190,8 +195,9 @@ describe.skipIf(!postgresAvailable())("runtime start-up gates on real PostgreSQL
     await expect(startupGates(fx.runtime(), configFor(fx.tenantA, ORG_A, "lus_runtime_other"))).rejects.toThrow(/ROLE_MISMATCH/);
   });
 
-  it("refuses to start for a tenant that does not exist", async () => {
-    await expect(startupGates(fx.runtime(), configFor(parseTenantId(randomUUID()), ORG_A))).rejects.toThrow(/does not exist/);
+  it("refuses to start for a tenant that does not exist (no binding can reference it)", async () => {
+    // The binding table references tenants, so an unknown tenant can never be bound: start-up stops at the binding gate.
+    await expect(startupGates(fx.runtime(), configFor(parseTenantId(randomUUID()), ORG_A))).rejects.toThrow(/not bound to exactly the configured tenant/);
   });
 
   it("refuses to start when the tenant belongs to another organization", async () => {

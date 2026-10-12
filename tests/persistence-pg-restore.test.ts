@@ -45,12 +45,12 @@ describe.skipIf(!postgresAvailable())("backup/restore verification on real Postg
   const verify = (db: PersistenceDatabase, tenant: TenantId) => withTenantTransaction(tenant, db, (tx) => verifyAuditChainIntegrity(tenant, tx));
 
   /** Restores the current fixture database into a fresh database and returns a runtime connection to it. */
-  const backupAndRestore = async () => {
+  const backupAndRestore = async (sourceDatabase = fx.database) => {
     const name = `lus_restored_${process.pid}_${restoreCounter++}`;
     await pg.createDatabase(name);
     await pg.admin("postgres", `ALTER DATABASE ${name} OWNER TO lus_owner`);
     await pg.admin(name, "ALTER SCHEMA public OWNER TO lus_owner; REVOKE CREATE ON SCHEMA public FROM PUBLIC;");
-    pg.dumpRestore(fx.database, name);
+    pg.dumpRestore(sourceDatabase, name);
     const runtime = createPostgresDatabase({ connectionString: pg.url(name, "lus_runtime"), tlsMode: "require", maxConnections: 2 });
     opened.push(runtime);
     return { name, runtime, admin: (sql: string) => pg.admin(name, sql) };
@@ -199,5 +199,36 @@ describe.skipIf(!postgresAvailable())("backup/restore verification on real Postg
   it("C-03: completeness verification refuses a role that cannot see every tenant (no partial view reported as complete)", async () => {
     await expect(captureCompleteRestoreManifest(fx.runtime())).rejects.toThrow(/bypasses row-level security/);
     await expect(captureCompleteRestoreManifest(fx.runtimeMaintenance())).rejects.toThrow(/bypasses row-level security/);
+  });
+  it("C-03: an empty (zero-tenant) restore with a dropped append guard or a missing ledger entry is refused", async () => {
+    const empty = await createPgFixture(pg, { tenants: false });
+    try {
+      const source = await verifierFor(empty.database);
+      for (const [tamper, expected] of [
+        ["DROP TRIGGER audit_events_append_guard ON audit_events", /APPEND_GUARD/],
+        ["DELETE FROM schema_migrations WHERE version = 10", /pending migrations/],
+      ] as const) {
+        const restored = await backupAndRestore(empty.database);
+        const target = await verifierFor(restored.name);
+        await expect(verifyRestoredDatabaseComplete(source, target)).resolves.toMatchObject({ tenantCount: 0 });
+        await restored.admin(tamper);
+        await expect(verifyRestoredDatabaseComplete(source, target), tamper).rejects.toThrow(expected);
+      }
+    } finally {
+      await empty.close();
+    }
+  });
+
+  it("C-03: completeness verification refuses a superuser or a verifier with write rights (read-only role required)", async () => {
+    const superuser = createPostgresDatabase({ connectionString: pg.url(fx.database), tlsMode: "require", maxConnections: 1 });
+    opened.push(superuser);
+    await expect(captureCompleteRestoreManifest(superuser)).rejects.toThrow(/read-only verifier role \(no superuser/);
+    const verifier = await verifierFor(fx.database);
+    await fx.admin("GRANT UPDATE ON tenant_runtime_bindings TO lus_restore_verifier");
+    try {
+      await expect(captureCompleteRestoreManifest(verifier)).rejects.toThrow(/read-only verifier role \(no superuser/);
+    } finally {
+      await fx.admin("REVOKE UPDATE ON tenant_runtime_bindings FROM lus_restore_verifier");
+    }
   });
 });

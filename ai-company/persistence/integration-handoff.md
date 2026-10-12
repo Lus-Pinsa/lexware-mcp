@@ -138,7 +138,10 @@ Prüfer: Codex (OpenAI, schreibgeschützt, andere Modellfamilie als der Erstelle
 | C-08 | INFO | Die Testinstanz läuft mit `fsync=off`. **Korrektur:** Der Queue-Test belegt die Commit-Reihenfolge und die Sichtbarkeit über Verbindungen hinweg, **nicht** die Dauerhaftigkeit nach einem Absturz. „Dauerhafter Commit“ ist keine getestete Eigenschaft | nur Doku | — |
 | C-02, C-04, C-05, C-06 | MEDIUM/LOW | entsprechen D-2, D-3, O-2 und R4-F3 | unverändert offen (Owner-Entscheidungen) | — |
 
-Betriebsfolge: Nach Migration 010 muss der Operator die Runtime-Rolle einmal binden (`bindRuntimeRoleToTenant`), sonst startet die Persistence nicht (fail closed). Für Restore-Drills braucht es eine eigene lesende Prüfrolle mit BYPASSRLS (siehe `backup-restore-runbook.md`).
+Betriebsfolge nach Migration 010, in dieser Reihenfolge:
+1. `GRANT SELECT ON public.tenant_runtime_bindings TO <runtime-rolle>`. Nur SELECT; jedes Schreib- oder Spaltenrecht bricht den Start ab.
+2. Die Runtime-Rolle über den Operator-Pfad `bindRuntimeRoleToTenant` an genau den konfigurierten Tenant binden. Das erzeugt einen Audit-Eintrag.
+3. Starten. Fehlt Schritt 1 oder 2, startet die Persistence nicht (fail closed). Für Restore-Drills braucht es eine eigene lesende Prüfrolle mit BYPASSRLS (siehe `backup-restore-runbook.md`).
 
 ## 4. Nachweise je SHA
 

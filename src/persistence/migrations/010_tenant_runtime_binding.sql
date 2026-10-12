@@ -6,7 +6,8 @@
 --   * a RESTRICTIVE policy on every tenant table admits a row only for the table owner or a role bound to its tenant.
 -- Restrictive policies are AND-ed with the existing permissive isolation policies, so access can only narrow.
 -- A role without any binding sees and writes nothing (fail closed). Start-up additionally requires the runtime role to
--- be bound to exactly the configured tenant. Existing installations need one operator binding after this migration.
+-- be bound to exactly the configured tenant. Existing installations, after this migration: (1) GRANT SELECT (only) on
+-- tenant_runtime_bindings to the runtime role, (2) bind it with the audited operator path, (3) start (fail closed).
 CREATE TABLE public.tenant_runtime_bindings (
   role_name name NOT NULL,
   tenant_id uuid NOT NULL REFERENCES public.tenants (tenant_id) ON DELETE CASCADE,

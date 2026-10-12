@@ -180,6 +180,7 @@ export async function verifyRestoredDatabase(
  */
 export interface CompleteRestoreManifest {
   readonly version: 3;
+  readonly schemaMigrationDigest: string;
   readonly tenantCount: number;
   readonly tenantSetDigest: string;
   readonly runtimeBindingDigest: string;
@@ -191,6 +192,16 @@ export async function captureCompleteRestoreManifest(
   db: PersistenceDatabase,
 ): Promise<CompleteRestoreManifest> {
   const scope = await db.transaction((tx) => readRestoreCompletenessScope(tx));
+
+  // Ledger and structural safety once, unconditionally: with zero tenants the per-tenant pass below never runs, and a
+  // structurally tampered empty restore must not compare equal.
+  const migrations = await db.transaction((tx) => listAppliedSchemaMigrations(tx));
+  assertMigrationStateCurrent(migrations);
+  await db.transaction((tx) => verifySchemaSafety(tx));
+  const schemaMigrationDigest = digest(
+    "schema-migrations",
+    migrations.map((row) => [String(row.version), row.name, row.checksum]),
+  );
 
   const tenants: RestoreVerificationManifest[] = [];
   for (const tenantId of scope.tenantIds) {
@@ -206,6 +217,7 @@ export async function captureCompleteRestoreManifest(
 
   return Object.freeze({
     version: 3 as const,
+    schemaMigrationDigest,
     tenantCount: scope.tenantIds.length,
     tenantSetDigest: digest("tenant-set", scope.tenantIds.map((id) => [id])),
     runtimeBindingDigest: digest("runtime-bindings", scope.bindings.map(([role, tenant]) => [role, tenant])),
@@ -214,7 +226,7 @@ export async function captureCompleteRestoreManifest(
   });
 }
 
-const COMPLETE_MANIFEST_FIELDS = ["version", "tenantCount", "tenantSetDigest", "runtimeBindingDigest", "tableRowCountsDigest"] as const;
+const COMPLETE_MANIFEST_FIELDS = ["version", "schemaMigrationDigest", "tenantCount", "tenantSetDigest", "runtimeBindingDigest", "tableRowCountsDigest"] as const;
 
 export function assertCompleteRestoreManifestMatches(
   expected: CompleteRestoreManifest,

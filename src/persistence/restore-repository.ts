@@ -195,8 +195,15 @@ export interface RestoreCompletenessScope {
   readonly counts: readonly string[];
 }
 
-const SQL_VERIFIER_SEES_ALL_ROWS =
-  "SELECT (r.rolsuper OR r.rolbypassrls) AS sees_all FROM pg_roles r WHERE r.rolname = current_user";
+const PERSISTENCE_TABLES = "'schema_migrations', 'tenants', 'webhook_events', 'audit_events', 'audit_retention_anchors', 'tenant_runtime_bindings'";
+const SQL_VERIFIER_ROLE =
+  "SELECT r.rolbypassrls AS sees_all, " +
+  // Read-only verifier: no superuser, no ownership of and no mutation right on any persistence table.
+  "(NOT r.rolsuper AND NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace " +
+  "WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname IN (" + PERSISTENCE_TABLES + ") AND (c.relowner = r.oid " +
+  "OR has_table_privilege(r.oid, c.oid, 'INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER,REFERENCES') " +
+  "OR has_any_column_privilege(r.oid, c.oid, 'INSERT,UPDATE,REFERENCES')))) AS read_only " +
+  "FROM pg_roles r WHERE r.rolname = current_user";
 
 /**
  * Database-wide restore scope (C-03): every tenant, every runtime binding and the total row count of every tenant
@@ -204,10 +211,15 @@ const SQL_VERIFIER_SEES_ALL_ROWS =
  * read fails closed instead.
  */
 export async function readRestoreCompletenessScope(tx: SqlExecutor): Promise<RestoreCompletenessScope> {
-  const role = await tx.query<{ sees_all: boolean }>({ text: SQL_VERIFIER_SEES_ALL_ROWS, values: [] });
+  const role = await tx.query<{ sees_all: boolean; read_only: boolean }>({ text: SQL_VERIFIER_ROLE, values: [] });
   if (role.rowCount !== 1 || role.rows[0]?.sees_all !== true) {
     throw new PersistenceValidationError(
       "Restore completeness verification requires a read-only verifier role that bypasses row-level security.",
+    );
+  }
+  if (role.rows[0].read_only !== true) {
+    throw new PersistenceValidationError(
+      "Restore completeness verification requires a read-only verifier role (no superuser, ownership or write rights).",
     );
   }
   const tenants = await tx.query<{ tenant_id: string }>({

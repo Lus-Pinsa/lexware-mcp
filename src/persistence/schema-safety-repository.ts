@@ -52,7 +52,7 @@ const SQL_SCHEMA_SAFETY =
   "), " +
   "audit AS (SELECT oid, relowner FROM t WHERE relname = 'audit_events'), " +
   "pol AS (SELECT p.*, t.relname FROM pg_policy p JOIN t ON t.oid = p.polrelid), " +
-  "bt AS (SELECT c.oid, c.relowner, c.relrowsecurity, c.relpersistence FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace " +
+  "bt AS (SELECT c.oid, c.relowner, c.relrowsecurity, c.relforcerowsecurity, c.relpersistence FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace " +
   "WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname = 'tenant_runtime_bindings') " +
   "SELECT " +
   "(SELECT count(*)::int FROM t) AS tables_present, " +
@@ -73,7 +73,20 @@ const SQL_SCHEMA_SAFETY =
   " AND pg_get_expr(polwithcheck, polrelid) = pg_get_expr(polqual, polrelid)) AS binding_policies_expected, " +
   // The binding table itself: owned like the tenant tables, RLS enabled, crash-safe, no rules/triggers/inheritance and
   // exactly the self-visibility policy (an extra permissive policy would reveal or admit other roles' bindings).
-  "(SELECT count(*)::int FROM bt JOIN audit a ON a.relowner = bt.relowner WHERE bt.relrowsecurity AND bt.relpersistence = 'p' " +
+  // Not FORCE: the owner must keep maintaining bindings. Exact columns, the (role_name, tenant_id) primary key and the
+  // ON DELETE CASCADE foreign key to tenants (a stale binding would re-activate if a tenant UUID were recreated).
+  "(SELECT count(*)::int FROM bt JOIN audit a ON a.relowner = bt.relowner WHERE bt.relrowsecurity AND NOT bt.relforcerowsecurity " +
+  " AND bt.relpersistence = 'p' " +
+  " AND (SELECT count(*) FROM pg_attribute x WHERE x.attrelid = bt.oid AND x.attnum > 0 AND NOT x.attisdropped) = 2 " +
+  " AND EXISTS (SELECT 1 FROM pg_attribute x WHERE x.attrelid = bt.oid AND x.attnum = 1 AND x.attname = 'role_name' " +
+  "  AND x.atttypid = 'name'::regtype AND x.attnotnull AND NOT x.attisdropped) " +
+  " AND EXISTS (SELECT 1 FROM pg_attribute x WHERE x.attrelid = bt.oid AND x.attnum = 2 AND x.attname = 'tenant_id' " +
+  "  AND x.atttypid = 'uuid'::regtype AND x.attnotnull AND NOT x.attisdropped) " +
+  " AND (SELECT count(*) FROM pg_constraint k WHERE k.conrelid = bt.oid AND k.contype IN ('p', 'f', 'u', 'c', 'x')) = 2 " +
+  " AND EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conrelid = bt.oid AND k.contype = 'p' AND k.conkey = '{1,2}'::int2[]) " +
+  " AND EXISTS (SELECT 1 FROM pg_constraint k JOIN t ON t.oid = k.confrelid AND t.relname = 'tenants' " +
+  "  WHERE k.conrelid = bt.oid AND k.contype = 'f' AND k.convalidated AND k.confdeltype = 'c' AND k.conkey = '{2}'::int2[] " +
+  "  AND k.confkey = ARRAY[(SELECT x.attnum FROM pg_attribute x WHERE x.attrelid = t.oid AND x.attname = 'tenant_id')]::int2[]) " +
   " AND NOT EXISTS (SELECT 1 FROM pg_rewrite w WHERE w.ev_class = bt.oid) " +
   " AND NOT EXISTS (SELECT 1 FROM pg_trigger g WHERE g.tgrelid = bt.oid AND NOT g.tgisinternal) " +
   " AND NOT EXISTS (SELECT 1 FROM pg_inherits h WHERE h.inhparent = bt.oid OR h.inhrelid = bt.oid) " +
@@ -89,7 +102,10 @@ const SQL_SCHEMA_SAFETY =
   " AND p.pronargs = 1 AND p.proargtypes[0] = 'uuid'::regtype AND p.prorettype = 'boolean'::regtype " +
   " AND p.proconfig = ARRAY['search_path=pg_catalog, pg_temp']::text[] " +
   " AND encode(sha256(convert_to(p.prosrc, 'UTF8')), 'hex') = $6) AS binding_function, " +
-  "(SELECT count(*)::int FROM pg_proc p WHERE p.proname = 'tenant_runtime_allowed') AS binding_function_total, " +
+  // Any other definition with that name in public (e.g. an overload) is rejected; same-named functions in other
+  // schemas are not reachable from the policies or the pinned search_path and are ignored.
+  "(SELECT count(*)::int FROM pg_proc p WHERE p.proname = 'tenant_runtime_allowed' AND p.pronamespace = 'public'::regnamespace) " +
+  "AS binding_function_total, " +
   // Enabled ALWAYS ('A'): fires in every session_replication_role mode. Function owned by the table owner,
   // not SECURITY DEFINER.
   // tgtype 7 = ROW | BEFORE | INSERT; no WHEN clause, arguments or column list; the function body and settings

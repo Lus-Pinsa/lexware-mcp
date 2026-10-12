@@ -17,6 +17,7 @@ const BASE_GRANTS = [
   "GRANT SELECT ON schema_migrations, tenants, audit_retention_anchors TO {r}",
   "GRANT SELECT, INSERT, UPDATE ON webhook_events TO {r}",
   "GRANT SELECT, INSERT ON audit_events TO {r}",
+  "GRANT SELECT ON tenant_runtime_bindings TO {r}",
 ];
 
 describe.skipIf(!postgresAvailable())("runtime privilege verification on real PostgreSQL", () => {
@@ -156,6 +157,7 @@ describe.skipIf(!postgresAvailable())("runtime privilege verification on real Po
         .map((s) => s.replaceAll("{r}", role))
         .join(";\n") + ";",
     );
+    await fx.bindRuntime(fx.tenantA, role);
     const db = fx.runtime(role);
     const counts = await db.transaction(async (tx) => {
       await tx.query({ text: "SELECT set_config('app.tenant_id', $1, true)", values: [fx.tenantA] });
@@ -182,6 +184,7 @@ describe.skipIf(!postgresAvailable())("runtime privilege verification on real Po
     const role = `lus_rt_impact_${n++}`;
     await pg.admin("postgres", `CREATE ROLE ${role} LOGIN`);
     await fx.admin([...BASE_GRANTS, "GRANT UPDATE (entry_hash) ON audit_events TO {r}"].map((s) => s.replaceAll("{r}", role)).join(";\n") + ";");
+    await fx.bindRuntime(fx.tenantA, role);
     const db = fx.runtime(role);
     const changed = await db.transaction(async (tx) => {
       await tx.query({ text: "SELECT set_config('app.tenant_id', $1, true)", values: [fx.tenantA] });

@@ -34,6 +34,7 @@ function database(options: {
     itemCount: 1,
     createdAt: "2026-10-09T08:00:00.000Z",
     previousHash: null,
+    chainSeq: 1,
   };
   const auditHash =
     options.auditEntryHashOverride ?? computeAuditEntryHash(auditInput);
@@ -86,7 +87,7 @@ function database(options: {
         rowCount: 1,
       };
     }
-    if (text.startsWith("SELECT previous_hash FROM audit_retention_anchors")) {
+    if (text.startsWith("SELECT previous_hash FROM audit_retention_anchors") || text.startsWith("SELECT previous_hash, last_pruned_seq FROM audit_retention_anchors")) {
       return { rows: [] as readonly Row[], rowCount: 0 };
     }
     if (text.startsWith("SELECT audit_id, tenant_id")) {
@@ -101,6 +102,8 @@ function database(options: {
           created_at: auditInput.createdAt,
           previous_hash: null,
           entry_hash: auditHash,
+          chain_seq: "1",
+          chain_version: 2,
         }] as unknown as readonly Row[],
         rowCount: 1,
       };

@@ -24,6 +24,7 @@ const EXPIRED_ENTRY = {
   itemCount: 1,
   createdAt: "2025-09-09T08:00:00.000Z",
   previousHash: null,
+  chainSeq: 1,
 };
 const ANCHOR = computeAuditEntryHash(EXPIRED_ENTRY);
 const EXPIRED_ROW = {
@@ -31,6 +32,7 @@ const EXPIRED_ROW = {
   actor_hash: EXPIRED_ENTRY.actorHash, action: EXPIRED_ENTRY.action,
   result: EXPIRED_ENTRY.result, item_count: EXPIRED_ENTRY.itemCount,
   created_at: EXPIRED_ENTRY.createdAt, previous_hash: null, entry_hash: ANCHOR,
+  chain_seq: "1", chain_version: 2,
 };
 
 describe("persistence retention runner", () => {
@@ -52,6 +54,7 @@ describe("persistence retention runner", () => {
   it("runs retention atomically for one tenant and appends a content-free count audit", async () => {
     const calls: Array<{ text: string; values: readonly unknown[] }> = [];
     let anchorWritten = false;
+    let auditRows: Array<typeof EXPIRED_ROW> = [EXPIRED_ROW];
 
     const query = vi.fn(async <Row = Record<string, unknown>>(statement: {
       readonly text: string;
@@ -71,31 +74,25 @@ describe("persistence retention runner", () => {
       if (statement.text.startsWith("DELETE FROM webhook_events")) {
         return { rows: [] as readonly Row[], rowCount: 2 };
       }
-      if (statement.text.startsWith("SELECT entry_hash FROM audit_events") && statement.text.includes("created_at <")) {
-        return {
-          rows: [{ entry_hash: ANCHOR }] as unknown as readonly Row[],
-          rowCount: 1,
-        };
-      }
       if (statement.text.startsWith("INSERT INTO audit_retention_anchors")) {
+        expect(statement.values.slice(1, 3)).toEqual([ANCHOR, 1]);
         anchorWritten = true;
         return { rows: [] as readonly Row[], rowCount: 1 };
       }
       if (statement.text.startsWith("SELECT audit_id, tenant_id")) {
-        return { rows: [EXPIRED_ROW] as unknown as readonly Row[], rowCount: 1 };
-      }
-      if (statement.text.startsWith("SELECT previous_hash FROM audit_events")) {
-        return { rows: [] as readonly Row[], rowCount: 0 };
+        return { rows: auditRows as unknown as readonly Row[], rowCount: auditRows.length };
       }
       if (statement.text.startsWith("DELETE FROM audit_events")) {
-        return { rows: [] as readonly Row[], rowCount: 1 };
+        const before = auditRows.length;
+        auditRows = auditRows.filter((r) => Number(r.chain_seq) > (statement.values[1] as number));
+        return { rows: [] as readonly Row[], rowCount: before - auditRows.length };
       }
-      if (statement.text.startsWith("SELECT entry_hash FROM audit_events")) {
+      if (statement.text.startsWith("SELECT entry_hash, chain_seq FROM audit_events")) {
         return { rows: [] as readonly Row[], rowCount: 0 };
       }
-      if (statement.text.startsWith("SELECT previous_hash FROM audit_retention_anchors")) {
+      if (statement.text.startsWith("SELECT previous_hash, last_pruned_seq FROM audit_retention_anchors")) {
         return anchorWritten
-          ? { rows: [{ previous_hash: ANCHOR }] as unknown as readonly Row[], rowCount: 1 }
+          ? { rows: [{ previous_hash: ANCHOR, last_pruned_seq: "1" }] as unknown as readonly Row[], rowCount: 1 }
           : { rows: [] as readonly Row[], rowCount: 0 };
       }
       if (statement.text.startsWith("INSERT INTO audit_events")) {
@@ -143,6 +140,10 @@ describe("persistence retention runner", () => {
     expect(auditInsert?.values[3]).toBe("retention.run");
     expect(auditInsert?.values[4]).toBe("SUCCESS");
     expect(auditInsert?.values[5]).toBe(3);
+    // The retention record continues the chain right after the pruned prefix.
+    expect(auditInsert?.values[7]).toBe(ANCHOR);
+    expect(auditInsert?.values[9]).toBe(2);
+    expect(auditInsert?.values[10]).toBe(2);
     expect(JSON.stringify(auditInsert?.values)).not.toContain("webhook");
   });
 

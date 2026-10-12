@@ -1,4 +1,4 @@
-import { type AuditEntryInput, computeAuditEntryHash, validateAuditEntry } from "./audit.js";
+import { AUDIT_CHAIN_VERSION, type AuditEntryInput, computeAuditEntryHash, validateAuditEntry } from "./audit.js";
 import { validateEncryptedValue } from "./crypto.js";
 import {
   type TenantStoragePolicy,
@@ -138,14 +138,24 @@ const SQL_TENANT_STORAGE =
 const SQL_LOCK_TENANT =
   "SELECT tenant_id, pg_advisory_xact_lock(1280659284, hashtext($1::uuid::text)) AS lock_token " +
   "FROM tenants WHERE tenant_id = $1::uuid";
+// The chain head is the highest append ordinal, never the latest event time (which may repeat or run backwards).
 const SQL_GET_LATEST_AUDIT =
-  "SELECT entry_hash FROM audit_events WHERE tenant_id = $1 ORDER BY created_at DESC, audit_id DESC LIMIT 1";
+  "SELECT entry_hash, chain_seq FROM audit_events WHERE tenant_id = $1 ORDER BY chain_seq DESC LIMIT 1";
 const SQL_GET_AUDIT_ANCHOR =
-  "SELECT previous_hash FROM audit_retention_anchors WHERE tenant_id = $1";
+  "SELECT previous_hash, last_pruned_seq FROM audit_retention_anchors WHERE tenant_id = $1";
 const SQL_INSERT_AUDIT =
   "INSERT INTO audit_events " +
-  "(audit_id, tenant_id, actor_hash, action, result, item_count, created_at, previous_hash, entry_hash) " +
-  "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)";
+  "(audit_id, tenant_id, actor_hash, action, result, item_count, created_at, previous_hash, entry_hash, chain_seq, chain_version) " +
+  "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)";
+
+/** bigint columns arrive as strings from the driver; accept only exact safe integers >= 1. */
+export function parseChainSeq(value: unknown, field: string): number {
+  const parsed = typeof value === "number" ? value : typeof value === "string" && /^[1-9][0-9]{0,15}$/.test(value) ? Number(value) : Number.NaN;
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new PersistenceValidationError("Invalid " + field + ".");
+  }
+  return parsed;
+}
 
 function assertIsoTimestamp(value: string, field: string): string {
   if (
@@ -528,33 +538,42 @@ export async function acknowledgeWebhookEvent(
 export async function appendAuditEvent(
   tenantId: TenantId,
   tx: SqlExecutor,
-  input: Omit<AuditEntryInput, "tenantId" | "previousHash">,
-): Promise<{ readonly entryHash: string; readonly previousHash: string | null }> {
+  input: Omit<AuditEntryInput, "tenantId" | "previousHash" | "chainSeq">,
+): Promise<{ readonly entryHash: string; readonly previousHash: string | null; readonly chainSeq: number }> {
   const checkedTenantId = parseTenantId(tenantId);
+  // Every writer of the tenant's chain holds the same transaction-scoped lock, so head read, ordinal allocation
+  // and insert are serialized; the unique indexes on (tenant_id, chain_seq) and (tenant_id, previous_hash) make a
+  // writer that skipped the lock fail instead of forking the chain.
   await lockTenantForUpdate(checkedTenantId, tx);
 
-  const latest = await tx.query<{ entry_hash: string }>({
+  const latest = await tx.query<{ entry_hash: string; chain_seq: unknown }>({
     text: SQL_GET_LATEST_AUDIT,
     values: [checkedTenantId],
   });
   let previousHash: string | null;
+  let previousSeq: number;
   if (latest.rows[0] !== undefined) {
     previousHash = assertSha256Hex(latest.rows[0].entry_hash, "previous audit hash");
+    previousSeq = parseChainSeq(latest.rows[0].chain_seq, "audit chain position");
   } else {
-    const anchor = await tx.query<{ previous_hash: string }>({
+    const anchor = await tx.query<{ previous_hash: string; last_pruned_seq: unknown }>({
       text: SQL_GET_AUDIT_ANCHOR,
       values: [checkedTenantId],
     });
-    previousHash =
-      anchor.rows[0] === undefined
-        ? null
-        : assertSha256Hex(anchor.rows[0].previous_hash, "audit retention anchor");
+    if (anchor.rows[0] === undefined) {
+      previousHash = null;
+      previousSeq = 0;
+    } else {
+      previousHash = assertSha256Hex(anchor.rows[0].previous_hash, "audit retention anchor");
+      previousSeq = parseChainSeq(anchor.rows[0].last_pruned_seq, "audit retention anchor position");
+    }
   }
 
   const entry = validateAuditEntry({
     ...input,
     tenantId: checkedTenantId,
     previousHash,
+    chainSeq: previousSeq + 1,
   });
   const entryHash = computeAuditEntryHash(entry);
 
@@ -570,6 +589,8 @@ export async function appendAuditEvent(
       entry.createdAt,
       entry.previousHash,
       entryHash,
+      entry.chainSeq,
+      AUDIT_CHAIN_VERSION,
     ],
   });
   if (inserted.rowCount !== 1) {
@@ -580,5 +601,5 @@ export async function appendAuditEvent(
   // Any excess throws inside the surrounding transaction and rolls the append back.
   await inspectTenantStorageCapacity(checkedTenantId, tx);
 
-  return Object.freeze({ entryHash, previousHash });
+  return Object.freeze({ entryHash, previousHash, chainSeq: entry.chainSeq });
 }

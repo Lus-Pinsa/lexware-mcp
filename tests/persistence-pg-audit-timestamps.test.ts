@@ -41,7 +41,7 @@ describe.skipIf(!postgresAvailable())("audit timestamps on real PostgreSQL", () 
   });
 
   it("stores one canonical instant: equal instants in different notations hash identically", () => {
-    const base = { auditId: randomUUID(), tenantId: fx.tenantA, actorHash: ACTOR, action: "x", result: "SUCCESS", itemCount: 0, previousHash: null };
+    const base = { auditId: randomUUID(), tenantId: fx.tenantA, actorHash: ACTOR, action: "x", result: "SUCCESS", itemCount: 0, previousHash: null, chainSeq: 1 };
     const h1 = computeAuditEntryHash({ ...base, createdAt: "2026-03-01T10:00:00.000Z" });
     const h2 = computeAuditEntryHash({ ...base, createdAt: "2026-03-01T11:00:00+01:00" });
     const h3 = computeAuditEntryHash({ ...base, createdAt: "2026-03-01T10:00:00.000000Z" });

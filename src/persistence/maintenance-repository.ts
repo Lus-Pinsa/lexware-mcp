@@ -1,4 +1,4 @@
-import { verifyAuditChainIntegrity } from "./integrity.js";
+import { verifyAuditChain } from "./integrity.js";
 import {
   lockTenantForUpdate,
   type SqlExecutor,
@@ -6,7 +6,6 @@ import {
 import {
   type TenantId,
   PersistenceValidationError,
-  assertSha256Hex,
   parseTenantId,
 } from "./types.js";
 
@@ -14,23 +13,15 @@ const SQL_DELETE_ACKNOWLEDGED_WEBHOOKS =
   "DELETE FROM webhook_events " +
   "WHERE tenant_id = $1 AND acknowledged_at IS NOT NULL AND acknowledged_at < $2";
 
-const SQL_LAST_EXPIRED_AUDIT =
-  "SELECT entry_hash FROM audit_events " +
-  "WHERE tenant_id = $1 AND created_at < $2 " +
-  "ORDER BY created_at DESC, audit_id DESC LIMIT 1";
-
-const SQL_FIRST_RETAINED_AUDIT =
-  "SELECT previous_hash FROM audit_events " +
-  "WHERE tenant_id = $1 AND created_at >= $2 " +
-  "ORDER BY created_at ASC, audit_id ASC LIMIT 1";
-
 const SQL_UPSERT_AUDIT_ANCHOR =
-  "INSERT INTO audit_retention_anchors (tenant_id, previous_hash, updated_at) " +
-  "VALUES ($1,$2,$3) " +
-  "ON CONFLICT (tenant_id) DO UPDATE SET previous_hash = EXCLUDED.previous_hash, updated_at = EXCLUDED.updated_at";
+  "INSERT INTO audit_retention_anchors (tenant_id, previous_hash, last_pruned_seq, updated_at) " +
+  "VALUES ($1,$2,$3,$4) " +
+  "ON CONFLICT (tenant_id) DO UPDATE SET previous_hash = EXCLUDED.previous_hash, " +
+  "last_pruned_seq = EXCLUDED.last_pruned_seq, updated_at = EXCLUDED.updated_at";
 
-const SQL_DELETE_EXPIRED_AUDIT =
-  "DELETE FROM audit_events WHERE tenant_id = $1 AND created_at < $2";
+// Deletes exactly the verified prefix by position; never a bare "created_at < cutoff" on the chain.
+const SQL_DELETE_AUDIT_PREFIX =
+  "DELETE FROM audit_events WHERE tenant_id = $1 AND chain_seq <= $2";
 
 const SQL_DELETE_TENANT =
   "DELETE FROM tenants WHERE tenant_id = $1";
@@ -66,6 +57,13 @@ export async function deleteExpiredAcknowledgedWebhookEvents(
   return result.rowCount;
 }
 
+/**
+ * Prune the expired PREFIX of a tenant's audit chain, in one tenant-locked transaction:
+ * verify the complete chain → take the longest prefix in append order whose entries are all older than the cutoff
+ * (stop at the first newer entry, even if later entries are older) → move the anchor to the last pruned entry
+ * (hash and position) → delete exactly that prefix → verify the remaining chain. Any mismatch throws and the caller's
+ * transaction rolls back without deletion.
+ */
 export async function deleteExpiredAuditEvents(
   tenantId: TenantId,
   tx: SqlExecutor,
@@ -74,54 +72,39 @@ export async function deleteExpiredAuditEvents(
 ): Promise<number> {
   const checkedTenantId = parseTenantId(tenantId);
   const cutoff = assertIsoTimestamp(before, "audit retention cutoff");
+  const cutoffMs = Date.parse(cutoff);
   const anchorUpdatedAt = assertIsoTimestamp(updatedAt, "audit retention timestamp");
   await lockTenantForUpdate(checkedTenantId, tx);
 
-  const anchorCandidate = await tx.query<{ entry_hash: string }>({
-    text: SQL_LAST_EXPIRED_AUDIT,
-    values: [checkedTenantId, cutoff],
-  });
-  const lastExpired = anchorCandidate.rows[0];
-  if (lastExpired === undefined) return 0;
-  const anchorHash = assertSha256Hex(lastExpired.entry_hash, "audit retention anchor");
-
-  // Pruning must not turn a corrupted or truncated chain into an apparently
-  // valid history. The caller holds the tenant lock in a pinned transaction.
-  const integrity = await verifyAuditChainIntegrity(checkedTenantId, tx);
-  if (integrity.count < 1) {
-    throw new PersistenceValidationError("Audit retention integrity verification found no source events.");
-  }
-
-  // A time-based deletion is safe only for a prefix of the hash chain.
-  // If any entry survives, its first previous_hash must match the anchor.
-  const boundary = await tx.query<{ previous_hash: string | null }>({
-    text: SQL_FIRST_RETAINED_AUDIT,
-    values: [checkedTenantId, cutoff],
-  });
-  if (boundary.rowCount > 1 || boundary.rows.length > 1) {
-    throw new PersistenceValidationError("Invalid audit retention boundary cardinality.");
-  }
-  const firstRetained = boundary.rows[0];
-  if (firstRetained !== undefined && firstRetained.previous_hash !== anchorHash) {
-    throw new PersistenceValidationError("Audit retention cutoff is not a chain prefix.");
-  }
+  // Pruning must not turn a corrupted or truncated chain into an apparently valid history.
+  const { entries } = await verifyAuditChain(checkedTenantId, tx);
+  let prefix = 0;
+  while (prefix < entries.length && Date.parse(entries[prefix].createdAt) < cutoffMs) prefix += 1;
+  if (prefix === 0) return 0;
+  const lastPruned = entries[prefix - 1];
 
   const anchor = await tx.query({
     text: SQL_UPSERT_AUDIT_ANCHOR,
-    values: [checkedTenantId, anchorHash, anchorUpdatedAt],
+    values: [checkedTenantId, lastPruned.entryHash, lastPruned.chainSeq, anchorUpdatedAt],
   });
   if (anchor.rowCount !== 1) {
     throw new PersistenceValidationError("Audit retention anchor update failed.");
   }
 
   const deleted = await tx.query({
-    text: SQL_DELETE_EXPIRED_AUDIT,
-    values: [checkedTenantId, cutoff],
+    text: SQL_DELETE_AUDIT_PREFIX,
+    values: [checkedTenantId, lastPruned.chainSeq],
   });
-  if (!Number.isSafeInteger(deleted.rowCount) || deleted.rowCount < 0) {
-    throw new PersistenceValidationError("Invalid audit retention delete count.");
+  if (deleted.rowCount !== prefix) {
+    throw new PersistenceValidationError("Audit retention deleted an unexpected number of entries.");
   }
-  return deleted.rowCount;
+
+  // The remaining chain must start exactly at the new anchor.
+  const after = await verifyAuditChain(checkedTenantId, tx);
+  if (after.result.count !== entries.length - prefix) {
+    throw new PersistenceValidationError("Audit chain integrity check failed after retention.");
+  }
+  return prefix;
 }
 
 /**

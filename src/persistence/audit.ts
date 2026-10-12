@@ -10,6 +10,9 @@ import {
 const ACTION_PATTERN = /^[a-z0-9_.-]{1,64}$/;
 const RESULT_PATTERN = /^[A-Z0-9_]{1,32}$/;
 
+/** Hash format of chain entries (v2 = append ordinal is part of the hashed material, schema v7). */
+export const AUDIT_CHAIN_VERSION = 2;
+
 export interface AuditEntryInput {
   readonly auditId: string;
   readonly tenantId: TenantId;
@@ -19,6 +22,15 @@ export interface AuditEntryInput {
   readonly itemCount: number;
   readonly createdAt: string;
   readonly previousHash: string | null;
+  /** Position in the tenant's append order (1-based, gap-free). Assigned under the tenant lock, never by time. */
+  readonly chainSeq: number;
+}
+
+export function assertAuditChainSeq(value: number): number {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new PersistenceValidationError("Invalid audit chain position.");
+  }
+  return value;
 }
 
 export function assertAuditAction(value: string): string {
@@ -90,6 +102,7 @@ export function validateAuditEntry(input: AuditEntryInput): AuditEntryInput {
     createdAt: assertAuditTimestamp(input.createdAt),
     previousHash:
       input.previousHash === null ? null : assertSha256Hex(input.previousHash, "previous audit hash"),
+    chainSeq: assertAuditChainSeq(input.chainSeq),
   });
   return normalized;
 }
@@ -97,7 +110,8 @@ export function validateAuditEntry(input: AuditEntryInput): AuditEntryInput {
 export function computeAuditEntryHash(input: AuditEntryInput): string {
   const validated = validateAuditEntry(input);
   const canonical = JSON.stringify({
-    v: 1,
+    v: AUDIT_CHAIN_VERSION,
+    chainSeq: validated.chainSeq,
     auditId: validated.auditId,
     tenantId: validated.tenantId,
     actorHash: validated.actorHash,

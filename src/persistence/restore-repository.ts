@@ -89,7 +89,7 @@ export async function readRestoreEvidenceRows(
   }>({
     text:
       "SELECT audit_id::text AS audit_id, entry_hash FROM audit_events " +
-      "WHERE tenant_id = $1 ORDER BY created_at ASC, audit_id ASC",
+      "WHERE tenant_id = $1 ORDER BY chain_seq ASC",
     values: [checkedTenantId],
   });
 

@@ -1,4 +1,5 @@
 import {
+  parseChainSeq,
   type SqlExecutor,
 } from "./repository.js";
 import { MAX_AUDIT_EVENTS_WITH_FULL_INTEGRITY } from "./capacity.js";
@@ -10,11 +11,12 @@ import {
 } from "./types.js";
 
 const SQL_GET_AUDIT_ANCHOR =
-  "SELECT previous_hash FROM audit_retention_anchors WHERE tenant_id = $1";
+  "SELECT previous_hash, last_pruned_seq FROM audit_retention_anchors WHERE tenant_id = $1";
 
+// Chain order is the append ordinal. Event time and UUID are data, not order.
 const SQL_LIST_AUDIT_CHAIN =
-  "SELECT audit_id, tenant_id, actor_hash, action, result, item_count, created_at, previous_hash, entry_hash " +
-  "FROM audit_events WHERE tenant_id = $1 ORDER BY created_at ASC, audit_id ASC LIMIT $2";
+  "SELECT audit_id, tenant_id, actor_hash, action, result, item_count, created_at, previous_hash, entry_hash, chain_seq, chain_version " +
+  "FROM audit_events WHERE tenant_id = $1 ORDER BY chain_seq ASC LIMIT $2";
 
 export interface StoredAuditEntry {
   readonly auditId: string;
@@ -26,6 +28,15 @@ export interface StoredAuditEntry {
   readonly createdAt: string;
   readonly previousHash: string | null;
   readonly entryHash: string;
+  readonly chainSeq: number;
+  readonly chainVersion: number;
+}
+
+export interface AuditRetentionAnchor {
+  /** entry_hash of the last pruned entry: the predecessor of the first retained entry. */
+  readonly hash: string;
+  /** chain_seq of the last pruned entry. */
+  readonly lastPrunedSeq: number;
 }
 
 function timestamp(value: string | Date): string {
@@ -43,18 +54,22 @@ function timestamp(value: string | Date): string {
 export async function getAuditRetentionAnchor(
   tenantId: TenantId,
   tx: SqlExecutor,
-): Promise<string | null> {
+): Promise<AuditRetentionAnchor | null> {
   const checkedTenantId = parseTenantId(tenantId);
-  const result = await tx.query<{ previous_hash: string }>({
+  const result = await tx.query<{ previous_hash: string; last_pruned_seq: unknown }>({
     text: SQL_GET_AUDIT_ANCHOR,
     values: [checkedTenantId],
   });
-  if (result.rowCount > 1) {
+  if (result.rowCount > 1 || result.rows.length > 1) {
     throw new PersistenceValidationError("Invalid audit retention anchor cardinality.");
   }
-  return result.rows[0] === undefined
+  const row = result.rows[0];
+  return row === undefined
     ? null
-    : assertSha256Hex(result.rows[0].previous_hash, "audit retention anchor");
+    : Object.freeze({
+        hash: assertSha256Hex(row.previous_hash, "audit retention anchor"),
+        lastPrunedSeq: parseChainSeq(row.last_pruned_seq, "audit retention anchor position"),
+      });
 }
 
 export async function listAuditChainEntries(
@@ -76,6 +91,8 @@ export async function listAuditChainEntries(
     created_at: string | Date;
     previous_hash: string | null;
     entry_hash: string;
+    chain_seq: unknown;
+    chain_version: unknown;
   }>({
     text: SQL_LIST_AUDIT_CHAIN,
     // Request one sentinel beyond the maximum: a truncated hash chain must
@@ -108,6 +125,8 @@ export async function listAuditChainEntries(
             ? null
             : assertSha256Hex(row.previous_hash, "audit previous hash"),
         entryHash: assertSha256Hex(row.entry_hash, "audit entry hash"),
+        chainSeq: parseChainSeq(row.chain_seq, "audit chain position"),
+        chainVersion: Number(row.chain_version),
       });
     }),
   );

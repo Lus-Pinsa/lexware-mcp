@@ -1,6 +1,6 @@
 import { PersistenceValidationError, type PersistenceState } from "./types.js";
 
-export const CURRENT_SCHEMA_VERSION = 6;
+export const CURRENT_SCHEMA_VERSION = 7;
 
 export class PersistenceVersionError extends Error {
   constructor(message: string) {

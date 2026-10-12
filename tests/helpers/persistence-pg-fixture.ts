@@ -36,6 +36,8 @@ export interface PgFixture {
   readonly tenantB: TenantId;
   owner(): ManagedMigrationDatabase;
   runtime(role?: string): ManagedPersistenceDatabase;
+  /** Maintenance/retention connection: the table owner (RLS is FORCE-enabled, so it is still tenant-bound). */
+  runtimeMaintenance(): ManagedPersistenceDatabase;
   /** Superuser SQL inside the test database (setup/tamper steps only). */
   admin(sql: string): Promise<void>;
   close(): Promise<void>;
@@ -93,6 +95,7 @@ export async function createPgFixture(pg: EphemeralPostgres, opts: { migrate?: b
     tenantB,
     owner,
     runtime,
+    runtimeMaintenance: () => runtime("lus_owner"),
     admin: (sql) => pg.admin(database, sql),
     async close() {
       for (const db of opened.splice(0)) await db.close().catch(() => undefined);

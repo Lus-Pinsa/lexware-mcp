@@ -260,7 +260,7 @@ describe("tenant-scoped persistence repository", () => {
     const query = vi
       .fn()
       .mockResolvedValueOnce({ rows: [{ tenant_id: TENANT }], rowCount: 1 })
-      .mockResolvedValueOnce({ rows: [{ entry_hash: previousHash }], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [{ entry_hash: previousHash, chain_seq: "41" }], rowCount: 1 })
       .mockResolvedValueOnce({ rows: [], rowCount: 1 })
       .mockResolvedValueOnce({
         rows: [{
@@ -286,8 +286,12 @@ describe("tenant-scoped persistence repository", () => {
 
     const result = await appendAuditEvent(TENANT, tx, input);
     expect(result.previousHash).toBe(previousHash);
+    expect(result.chainSeq).toBe(42);
     expect(result.entryHash).toBe(
-      computeAuditEntryHash({ ...input, tenantId: TENANT, previousHash }),
+      computeAuditEntryHash({ ...input, tenantId: TENANT, previousHash, chainSeq: 42 }),
+    );
+    expect(query.mock.calls[1][0].text).toBe(
+      "SELECT entry_hash, chain_seq FROM audit_events WHERE tenant_id = $1 ORDER BY chain_seq DESC LIMIT 1",
     );
 
     expect(query).toHaveBeenCalledTimes(4);
@@ -299,6 +303,8 @@ describe("tenant-scoped persistence repository", () => {
     expect(query.mock.calls[2][0].values[1]).toBe(TENANT);
     expect(query.mock.calls[2][0].values[7]).toBe(previousHash);
     expect(query.mock.calls[2][0].values[8]).toBe(result.entryHash);
+    expect(query.mock.calls[2][0].values[9]).toBe(42);
+    expect(query.mock.calls[2][0].values[10]).toBe(2);
   });
 
   it("continues the audit chain from the retention anchor when no retained rows remain", async () => {
@@ -307,7 +313,7 @@ describe("tenant-scoped persistence repository", () => {
       .fn()
       .mockResolvedValueOnce({ rows: [{ tenant_id: TENANT }], rowCount: 1 })
       .mockResolvedValueOnce({ rows: [], rowCount: 0 })
-      .mockResolvedValueOnce({ rows: [{ previous_hash: anchorHash }], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [{ previous_hash: anchorHash, last_pruned_seq: "7" }], rowCount: 1 })
       .mockResolvedValueOnce({ rows: [], rowCount: 1 })
       .mockResolvedValueOnce({
         rows: [{
@@ -336,6 +342,8 @@ describe("tenant-scoped persistence repository", () => {
     expect(query).toHaveBeenCalledTimes(5);
     expect(query.mock.calls[2][0].text).toContain("audit_retention_anchors");
     expect(query.mock.calls[3][0].values[7]).toBe(anchorHash);
+    expect(query.mock.calls[3][0].values[9]).toBe(8);
+    expect(result.chainSeq).toBe(8);
   });
 
   it("fails closed when the tenant cannot be locked for an audit append", async () => {

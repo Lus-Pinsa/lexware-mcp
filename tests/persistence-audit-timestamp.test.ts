@@ -17,6 +17,7 @@ const INPUT = {
   result: "SUCCESS",
   itemCount: 1,
   previousHash: null,
+  chainSeq: 1,
 };
 
 describe("audit timestamp canonicalization before hashing", () => {
@@ -77,7 +78,7 @@ describe("audit timestamp canonicalization before hashing", () => {
       if (statement.text.includes("FROM audit_events") && statement.text.includes("LIMIT 1")) {
         return { rows: [] as readonly Row[], rowCount: 0 };
       }
-      if (statement.text.startsWith("SELECT previous_hash FROM audit_retention_anchors")) {
+      if (statement.text.startsWith("SELECT previous_hash, last_pruned_seq FROM audit_retention_anchors")) {
         return { rows: [] as readonly Row[], rowCount: 0 };
       }
       if (statement.text.startsWith("INSERT INTO audit_events")) {
@@ -115,6 +116,7 @@ describe("audit timestamp canonicalization before hashing", () => {
       tenantId: TENANT,
       previousHash: null,
       createdAt: "2026-10-09T12:34:56.123Z",
+      chainSeq: 1,
     }));
     expect(insert?.values[8]).toBe(result.entryHash);
   });

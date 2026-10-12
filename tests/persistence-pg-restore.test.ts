@@ -9,7 +9,12 @@ import { verifyAuditChainIntegrity } from "../src/persistence/integrity.js";
 import { createDurablePendingVoucherEventStore } from "../src/persistence/pending-voucher-store.js";
 import { createPostgresDatabase } from "../src/persistence/postgres-driver.js";
 import { appendAuditEvent, withTenantTransaction, type PersistenceDatabase } from "../src/persistence/repository.js";
-import { captureRestoreVerificationManifest, verifyRestoredDatabase } from "../src/persistence/restore-verification.js";
+import {
+  captureCompleteRestoreManifest,
+  captureRestoreVerificationManifest,
+  verifyRestoredDatabase,
+  verifyRestoredDatabaseComplete,
+} from "../src/persistence/restore-verification.js";
 import { runTenantRetention } from "../src/persistence/retention.js";
 import type { TenantId } from "../src/persistence/types.js";
 import { postgresAvailable, type EphemeralPostgres } from "./helpers/ephemeral-postgres.js";
@@ -146,7 +151,53 @@ describe.skipIf(!postgresAvailable())("backup/restore verification on real Postg
 
   it("a restore with an incomplete migration ledger is refused", async () => {
     const restored = await backupAndRestore();
-    await restored.admin("DELETE FROM schema_migrations WHERE version = 9");
+    await restored.admin("DELETE FROM schema_migrations WHERE version = 10");
     await expect(verifyRestoredDatabase(fx.runtime(), restored.runtime, fx.tenantA)).rejects.toThrow(/pending migrations/);
+  });
+  /**
+   * C-03: database-wide verification through a dedicated read-only verifier role that bypasses row-level security
+   * (provisioned like an operator would: LOGIN, BYPASSRLS, SELECT only, no ownership).
+   */
+  const verifierFor = async (database: string) => {
+    await pg.admin(
+      "postgres",
+      "DO $$BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'lus_restore_verifier') THEN CREATE ROLE lus_restore_verifier LOGIN BYPASSRLS; END IF; END$$",
+    );
+    await pg.admin(database, "GRANT USAGE ON SCHEMA public TO lus_restore_verifier; GRANT SELECT ON ALL TABLES IN SCHEMA public TO lus_restore_verifier");
+    const db = createPostgresDatabase({ connectionString: pg.url(database, "lus_restore_verifier"), tlsMode: "require", maxConnections: 1 });
+    opened.push(db);
+    return db;
+  };
+
+  it("C-03: a faithful restore passes the database-wide verification (all tenants, bindings, row counts)", async () => {
+    const source = await verifierFor(fx.database);
+    const restored = await backupAndRestore();
+    const target = await verifierFor(restored.name);
+    const manifest = await verifyRestoredDatabaseComplete(source, target);
+    expect(manifest.tenantCount).toBe(2);
+    expect(manifest.tenants.map((t) => t.tenantId).sort()).toEqual([fx.tenantA, fx.tenantB].sort());
+  });
+
+  it.each([
+    ["tenant B deleted (cascading its rows)", () => `DELETE FROM tenants WHERE tenant_id = '${fx.tenantB}'`, /completeness verification failed: .*tenantCount.*tenantSetDigest/],
+    ["an additional, unauthorised tenant", () => `INSERT INTO tenants (tenant_id, organization_id_hash, status) VALUES ('${randomUUID()}', '${"6".repeat(64)}', 'active')`, /completeness verification failed: .*tenantSetDigest/],
+    ["tenant B's organisation binding changed", () => `UPDATE tenants SET organization_id_hash = '${"7".repeat(64)}' WHERE tenant_id = '${fx.tenantB}'`, /Restore verification failed: tenantBindingDigest/],
+    ["tenant B's audit entry altered", () => `UPDATE audit_events SET item_count = item_count + 1 WHERE tenant_id = '${fx.tenantB}'`, /integrity/i],
+    ["a runtime binding removed", () => `DELETE FROM tenant_runtime_bindings WHERE tenant_id = '${fx.tenantB}'`, /completeness verification failed: .*runtimeBindingDigest/],
+    ["a runtime binding added for another role", () => `INSERT INTO tenant_runtime_bindings (role_name, tenant_id) VALUES ('lus_intruder', '${fx.tenantA}')`, /completeness verification failed: .*runtimeBindingDigest/],
+  ])("C-03: a restore with %s is detected although the tenant-A manifest still matches", async (_label, tamper, expected) => {
+    const source = await verifierFor(fx.database);
+    const restored = await backupAndRestore();
+    await restored.admin(tamper());
+    // The old tenant-scoped check alone does not notice (this is the gap C-03 describes) ...
+    await expect(verifyRestoredDatabase(fx.runtime(), restored.runtime, fx.tenantA)).resolves.toMatchObject({ tenantId: fx.tenantA });
+    // ... the database-wide verification does.
+    const target = await verifierFor(restored.name);
+    await expect(verifyRestoredDatabaseComplete(source, target)).rejects.toThrow(expected);
+  });
+
+  it("C-03: completeness verification refuses a role that cannot see every tenant (no partial view reported as complete)", async () => {
+    await expect(captureCompleteRestoreManifest(fx.runtime())).rejects.toThrow(/bypasses row-level security/);
+    await expect(captureCompleteRestoreManifest(fx.runtimeMaintenance())).rejects.toThrow(/bypasses row-level security/);
   });
 });

@@ -72,6 +72,7 @@ export function loadKnownMigrations(): readonly MigrationDefinition[] {
     loadMigration(7, "audit_append_ordinal", "007_audit_append_ordinal.sql"),
     loadMigration(8, "audit_append_guard", "008_audit_append_guard.sql"),
     loadMigration(9, "audit_append_guard_always", "009_audit_append_guard_always.sql"),
+    loadMigration(10, "tenant_runtime_binding", "010_tenant_runtime_binding.sql"),
   ]);
 }
 

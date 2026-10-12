@@ -36,6 +36,8 @@ export function assertLeastPrivilegeRuntimeRole(
   if (snapshot.auditMutate) violations.push("AUDIT_MUTATION");
   if (!snapshot.auditAnchorSelect) violations.push("AUDIT_ANCHOR_READ_MISSING");
   if (snapshot.auditAnchorMutate) violations.push("AUDIT_ANCHOR_MUTATION");
+  if (!snapshot.bindingsSelect) violations.push("TENANT_BINDING_READ_MISSING");
+  if (snapshot.bindingsMutate) violations.push("TENANT_BINDING_MUTATION");
   if (snapshot.roleMemberships !== 0) violations.push("ROLE_MEMBERSHIP");
 
   if (violations.length > 0) {

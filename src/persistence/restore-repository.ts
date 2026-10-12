@@ -187,3 +187,58 @@ export async function readRestoreEvidenceRows(
         : parseChainSeq(anchor.rows[0].last_pruned_seq, "restore audit retention anchor position"),
   });
 }
+
+export interface RestoreCompletenessScope {
+  readonly tenantIds: readonly TenantId[];
+  readonly bindings: readonly (readonly [roleName: string, tenantId: TenantId])[];
+  /** Total rows of tenants, webhook_events, audit_events, audit_retention_anchors, tenant_runtime_bindings. */
+  readonly counts: readonly string[];
+}
+
+const SQL_VERIFIER_SEES_ALL_ROWS =
+  "SELECT (r.rolsuper OR r.rolbypassrls) AS sees_all FROM pg_roles r WHERE r.rolname = current_user";
+
+/**
+ * Database-wide restore scope (C-03): every tenant, every runtime binding and the total row count of every tenant
+ * table. Only meaningful for a role that bypasses row-level security; any other role sees a partial view, so the
+ * read fails closed instead.
+ */
+export async function readRestoreCompletenessScope(tx: SqlExecutor): Promise<RestoreCompletenessScope> {
+  const role = await tx.query<{ sees_all: boolean }>({ text: SQL_VERIFIER_SEES_ALL_ROWS, values: [] });
+  if (role.rowCount !== 1 || role.rows[0]?.sees_all !== true) {
+    throw new PersistenceValidationError(
+      "Restore completeness verification requires a read-only verifier role that bypasses row-level security.",
+    );
+  }
+  const tenants = await tx.query<{ tenant_id: string }>({
+    text: "SELECT tenant_id::text AS tenant_id FROM tenants ORDER BY tenant_id ASC",
+    values: [],
+  });
+  const bindings = await tx.query<{ role_name: string; tenant_id: string }>({
+    text: "SELECT role_name::text AS role_name, tenant_id::text AS tenant_id FROM tenant_runtime_bindings ORDER BY role_name ASC, tenant_id ASC",
+    values: [],
+  });
+  const counts = await tx.query<{ t: number; w: number; a: number; h: number; b: number }>({
+    text:
+      "SELECT (SELECT count(*)::int FROM tenants) AS t, (SELECT count(*)::int FROM webhook_events) AS w, " +
+      "(SELECT count(*)::int FROM audit_events) AS a, (SELECT count(*)::int FROM audit_retention_anchors) AS h, " +
+      "(SELECT count(*)::int FROM tenant_runtime_bindings) AS b",
+    values: [],
+  });
+  const c = counts.rows[0];
+  if (counts.rowCount !== 1 || c === undefined) {
+    throw new PersistenceValidationError("Restore completeness counts unavailable.");
+  }
+  return Object.freeze({
+    tenantIds: Object.freeze(tenants.rows.map((row) => parseTenantId(row.tenant_id))),
+    bindings: Object.freeze(
+      bindings.rows.map((row) => {
+        if (!/^[A-Za-z0-9_-]{1,63}$/.test(row.role_name)) {
+          throw new PersistenceValidationError("Invalid restore runtime binding role.");
+        }
+        return Object.freeze([row.role_name, parseTenantId(row.tenant_id)] as const);
+      }),
+    ),
+    counts: Object.freeze([c.t, c.w, c.a, c.h, c.b].map(String)),
+  });
+}

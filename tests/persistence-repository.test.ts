@@ -76,6 +76,8 @@ describe("tenant-scoped persistence repository", () => {
       audit_mutate: false,
       audit_anchor_select: true,
       audit_anchor_mutate: false,
+      bindings_select: true,
+      bindings_mutate: false,
       role_memberships: 0,
     };
     const tx = executor([row]);
@@ -104,6 +106,8 @@ describe("tenant-scoped persistence repository", () => {
       auditMutate: false,
       auditAnchorSelect: true,
       auditAnchorMutate: false,
+      bindingsSelect: true,
+      bindingsMutate: false,
       roleMemberships: 0,
     });
     expect(tx.query.mock.calls[0][0].values).toEqual([]);

@@ -9,6 +9,7 @@ import { verifyAuditChainIntegrity } from "../src/persistence/integrity.js";
 import { applyPendingMigrations, loadKnownMigrations } from "../src/persistence/migration-runner.js";
 import { createPostgresMigrationDatabase } from "../src/persistence/postgres-driver.js";
 import { runTenantRetention } from "../src/persistence/retention.js";
+import { bindRuntimeRoleToTenant } from "../src/persistence/operator-repository.js";
 import { appendAuditEvent, withTenantTransaction } from "../src/persistence/repository.js";
 import { type TenantId, parseTenantId } from "../src/persistence/types.js";
 import { postgresAvailable, type EphemeralPostgres } from "./helpers/ephemeral-postgres.js";
@@ -208,7 +209,7 @@ describe.skipIf(!postgresAvailable())("audit guards on real PostgreSQL", () => {
     }
   });
 
-  it("a fresh database migrates v0 → v9 and starts with an empty, verifiable chain", async () => {
+  it("a fresh database migrates v0 → v10 and starts with an empty, verifiable chain", async () => {
     const fx = await createPgFixture(pg, { tenants: false });
     try {
       // createPgFixture applied all migrations through the production runner on an empty database.
@@ -218,7 +219,7 @@ describe.skipIf(!postgresAvailable())("audit guards on real PostgreSQL", () => {
     }
   });
 
-  it("an existing v6 installation with a tenant but no audit history upgrades to v9 and the chain starts at position 1", async () => {
+  it("an existing v6 installation with a tenant but no audit history upgrades to v10 and, once the runtime role is bound, the chain starts at position 1", async () => {
     const fx = await createPgFixture(pg, { migrate: false });
     try {
       const v6 = loadKnownMigrations().filter((m) => m.version <= 6);
@@ -232,14 +233,19 @@ describe.skipIf(!postgresAvailable())("audit guards on real PostgreSQL", () => {
         await tx.query({ text: "SELECT set_config('app.tenant_id', $1, true)", values: [fx.tenantA] });
         await tx.query({ text: "INSERT INTO tenants (tenant_id, organization_id_hash, status) VALUES ($1,$2,'active')", values: [fx.tenantA, "5".repeat(64)] });
       });
-      await expect(applyPendingMigrations(fx.owner())).resolves.toEqual({ appliedVersions: [7, 8, 9] });
+      await expect(applyPendingMigrations(fx.owner())).resolves.toEqual({ appliedVersions: [7, 8, 9, 10] });
       await ownerDb.transaction(async (tx) => {
         for (const grant of RUNTIME_GRANTS) await tx.executeStatic(grant);
       });
       await ownerDb.close();
-      const first = await append(fx, fx.tenantA, "2026-06-01T00:00:00.000Z");
-      expect(first).toMatchObject({ chainSeq: 1, previousHash: null });
-      await expect(verify(fx, fx.tenantA)).resolves.toMatchObject({ count: 1, headSeq: 1 });
+      // Migration 010 leaves an existing runtime role unbound: it must not see or write the tenant until the operator
+      // binds it (fail closed), then it works as before.
+      await expect(append(fx, fx.tenantA, "2026-06-01T00:00:00.000Z")).rejects.toThrow();
+      await bindRuntimeRoleToTenant(fx.owner(), { tenantId: fx.tenantA, roleName: "lus_runtime", auditId: randomUUID(), actorHash: ACTOR, createdAt: "2026-05-31T00:00:00.000Z" });
+      // The binding itself is the first audited event of the tenant's chain.
+      const second = await append(fx, fx.tenantA, "2026-06-01T00:00:00.000Z");
+      expect(second).toMatchObject({ chainSeq: 2 });
+      await expect(verify(fx, fx.tenantA)).resolves.toMatchObject({ count: 2, headSeq: 2 });
     } finally {
       await fx.close();
     }
@@ -303,6 +309,7 @@ describe.skipIf(!postgresAvailable())("audit guards on real PostgreSQL", () => {
         await tx.query({ text: "SELECT set_config('app.tenant_id', $1, true)", values: [tenant] });
         await tx.query({ text: "INSERT INTO tenants (tenant_id, organization_id_hash, status) VALUES ($1,$2,'active')", values: [tenant, "4".repeat(64)] });
       });
+      await fx.bindRuntime(tenant);
       // Build a valid 100 001-entry chain in memory and bulk-insert it as the owner (bypassing the capacity check).
       const ids: string[] = [];
       const prevs: Array<string | null> = [];

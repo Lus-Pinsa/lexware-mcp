@@ -27,6 +27,7 @@ export const RUNTIME_GRANTS = [
   "GRANT SELECT ON schema_migrations, tenants, audit_retention_anchors TO lus_runtime",
   "GRANT SELECT, INSERT, UPDATE ON webhook_events TO lus_runtime",
   "GRANT SELECT, INSERT ON audit_events TO lus_runtime",
+  "GRANT SELECT ON tenant_runtime_bindings TO lus_runtime",
 ];
 
 export interface PgFixture {
@@ -40,6 +41,9 @@ export interface PgFixture {
   runtimeMaintenance(): ManagedPersistenceDatabase;
   /** Superuser SQL inside the test database (setup/tamper steps only). */
   admin(sql: string): Promise<void>;
+  /** Provisioning (migration 010): allow / disallow a database role to act on a tenant. */
+  bindRuntime(tenantId: TenantId, role?: string): Promise<void>;
+  unbindRuntime(tenantId: TenantId, role?: string): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -85,6 +89,10 @@ export async function createPgFixture(pg: EphemeralPostgres, opts: { migrate?: b
       for (const [tenantId, org] of [[tenantA, ORG_A], [tenantB, ORG_B]] as const) {
         await bootstrapTenant(owner(), { tenantId, organizationIdHash: org, auditId: randomUUID(), actorHash: ACTOR, createdAt: "2026-01-01T00:00:00.000Z" });
       }
+      // Provisioning (migration 010): the shared test runtime role is bound to both tenants so multi-tenant suites can
+      // exercise RLS through app.tenant_id. Production start-up requires exactly one binding; suites that model a
+      // production runtime use bindRuntime()/unbindRuntime() or a role bound to a single tenant.
+      await pg.admin(database, `INSERT INTO tenant_runtime_bindings (role_name, tenant_id) VALUES ('lus_runtime', '${tenantA}'), ('lus_runtime', '${tenantB}')`);
     }
   }
 
@@ -97,6 +105,10 @@ export async function createPgFixture(pg: EphemeralPostgres, opts: { migrate?: b
     runtime,
     runtimeMaintenance: () => runtime("lus_owner"),
     admin: (sql) => pg.admin(database, sql),
+    bindRuntime: (tenantId, role = "lus_runtime") =>
+      pg.admin(database, `INSERT INTO tenant_runtime_bindings (role_name, tenant_id) VALUES ('${role}', '${parseTenantId(tenantId)}') ON CONFLICT DO NOTHING`),
+    unbindRuntime: (tenantId, role = "lus_runtime") =>
+      pg.admin(database, `DELETE FROM tenant_runtime_bindings WHERE role_name = '${role}' AND tenant_id = '${parseTenantId(tenantId)}'`),
     async close() {
       for (const db of opened.splice(0)) await db.close().catch(() => undefined);
     },

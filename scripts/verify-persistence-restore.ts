@@ -1,6 +1,5 @@
 import { createPostgresDatabase } from "../src/persistence/postgres-driver.js";
-import { verifyRestoredDatabase } from "../src/persistence/restore-verification.js";
-import { parseTenantId } from "../src/persistence/types.js";
+import { verifyRestoredDatabaseComplete } from "../src/persistence/restore-verification.js";
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -21,7 +20,8 @@ async function main(): Promise<void> {
   const restoreUrl = required("PERSISTENCE_RESTORE_DATABASE_URL");
   if (sourceUrl === restoreUrl) throw new Error("SOURCE_EQUALS_RESTORE");
 
-  const tenantId = parseTenantId(required("LUS_TENANT_ID"));
+  // Database-wide verification (every tenant, runtime bindings, total row counts). Both URLs must use a dedicated
+  // read-only verifier role that bypasses row-level security; any other role fails closed (C-03).
   const tls = tlsMode();
 
   const source = createPostgresDatabase({
@@ -38,17 +38,18 @@ async function main(): Promise<void> {
   });
 
   try {
-    const manifest = await verifyRestoredDatabase(source, restored, tenantId);
+    const manifest = await verifyRestoredDatabaseComplete(source, restored);
+    const sum = (field: "webhookCount" | "auditCount") => manifest.tenants.reduce((n, t) => n + t[field], 0);
     console.error(
       "[restore-verifier] PASS " +
         "schemaMigrations=" +
-        manifest.schemaMigrationCount +
-        " tenantRows=" +
-        manifest.tenantRowCount +
+        (manifest.tenants[0]?.schemaMigrationCount ?? 0) +
+        " tenants=" +
+        manifest.tenantCount +
         " webhookRows=" +
-        manifest.webhookCount +
+        sum("webhookCount") +
         " auditRows=" +
-        manifest.auditCount,
+        sum("auditCount"),
     );
   } finally {
     await Promise.allSettled([source.close(), restored.close()]);

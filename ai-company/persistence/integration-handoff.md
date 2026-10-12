@@ -126,6 +126,20 @@ Offene, nicht blockierende Punkte (keine weitere automatische Runde, Grenze 3 er
 | R4-F6/C4-3 | INFO | Die SECURITY-DEFINER-Prüfung berücksichtigt keine Schema-USAGE; mögliche Falsch-Positive bei Managed-PostgreSQL (fail closed) | vor Produktion die Abfrage aus dem Review auf der Ziel-DB ausführen |
 | C4-5 | INFO | Ein künftiges Redefinieren des Guards muss die Hash-Quelle (Migration 008) mitziehen | im ADR vermerken, sobald relevant |
 
+### 3e. Unabhängiger Cross-Model-Review (Codex) auf #38 `c56db5f` und Fix-Runde C (Branch `claude/persistence-c01-c03-c07`)
+
+Prüfer: Codex (OpenAI, schreibgeschützt, andere Modellfamilie als der Ersteller). Owner-Auftrag: zuerst C-01, C-03 und C-07; höchstens drei Fix-/Review-Runden.
+
+| ID | Schwere | Befund | Fix (diese Runde) | Regressionstest |
+|---|---|---|---|---|
+| C-01 | MEDIUM | RLS vertraut nur dem frei setzbaren `app.tenant_id`. Wer die Runtime-Zugangsdaten hat, kann sich auf jeden Tenant umbinden. **Korrektur:** Der Cross-Tenant-Test aus Runde 2 belegte nur, dass A unsichtbar ist, solange B gebunden ist; dass B unerreichbar bleibt, belegte er nicht. | Migration 010: Die Tabelle `tenant_runtime_bindings` legt fest, welche Rolle welchen Tenant bearbeiten darf; nur der Owner pflegt sie. Dazu kommt je Tenant-Tabelle eine RESTRICTIVE-Policy mit `tenant_runtime_allowed(tenant_id)`. Eine Rolle ohne Bindung sieht nichts. Der Start verlangt, dass die Runtime-Rolle genau an den konfigurierten Tenant gebunden ist. Die Schema-Prüfung pinnt Policies, Funktion (Rumpf-Hash aus Migration 010, SECURITY INVOKER, keine Überladung) und Bindungstabelle. Laut Rechteprüfung darf die Runtime Bindungen lesen, aber nie ändern. Operator-Pfad `bindRuntimeRoleToTenant` mit Audit-Eintrag | `persistence-pg-runtime-startup`: Rolle nur an A gebunden, setzt `app.tenant_id = B` → Lesen leer, INSERT 42501, UPDATE wirkungslos, Selbstbindung 42501. Start mit 0, 2 oder einer fremden Bindung → Abbruch. 9 Schema-Manipulationen → Abbruch. 4 Rechtefälle → Abbruch |
+| C-03 | MEDIUM | Die Restore-Prüfung war tenant-bezogen. Gelöschte, geänderte oder zusätzliche andere Tenants bestanden sie | `verifyRestoredDatabaseComplete` mit Manifest v3: Tenant-Menge, Bindungen, Gesamtzeilenzahlen je Tabelle und das Manifest jedes Tenants. Das geht nur mit einer lesenden Prüfrolle mit BYPASSRLS, sonst Abbruch. `persistence:verify-restore` nutzt jetzt diesen Modus | `persistence-pg-restore`: 6 Manipulationen (Tenant gelöscht, zusätzlich, Organisation geändert, Audit von B geändert, Bindung entfernt bzw. hinzugefügt). Die alte tenant-bezogene Prüfung besteht jeweils, die neue schlägt fehl. Rolle ohne BYPASSRLS → Abbruch |
+| C-07 | LOW | Der Starttest bildete `server.ts` nach | `runPersistenceStartupGates` in `src/persistence/startup-gates.ts` wird von `server.ts` **und** den Tests genutzt | `persistence-startup-gates` (lokal, ohne DB): Reihenfolge, Abbruch je Gate, `server.ts` ruft die Funktion vor dem Store-Aufbau auf und enthält keine eigene Kopie. Mutationsprobe „Schema-Gate entfernt“: 4 rot |
+| C-08 | INFO | Die Testinstanz läuft mit `fsync=off`. **Korrektur:** Der Queue-Test belegt die Commit-Reihenfolge und die Sichtbarkeit über Verbindungen hinweg, **nicht** die Dauerhaftigkeit nach einem Absturz. „Dauerhafter Commit“ ist keine getestete Eigenschaft | nur Doku | — |
+| C-02, C-04, C-05, C-06 | MEDIUM/LOW | entsprechen D-2, D-3, O-2 und R4-F3 | unverändert offen (Owner-Entscheidungen) | — |
+
+Betriebsfolge: Nach Migration 010 muss der Operator die Runtime-Rolle einmal binden (`bindRuntimeRoleToTenant`), sonst startet die Persistence nicht (fail closed). Für Restore-Drills braucht es eine eigene lesende Prüfrolle mit BYPASSRLS (siehe `backup-restore-runbook.md`).
+
 ## 4. Nachweise je SHA
 
 Alle lokalen Läufe: Node v22.22.0, PostgreSQL 16.15 (kurzlebige Instanz, TLS, nur Loopback), synthetische Daten.

@@ -27,14 +27,7 @@ import {
   type ManagedPersistenceDatabase,
 } from "./persistence/postgres-driver.js";
 import { loadPersistenceRuntimeConfig } from "./persistence/runtime-config.js";
-import { verifyConfiguredTenantBinding } from "./persistence/tenant-binding.js";
-import { assertMigrationStateCurrent } from "./persistence/migration-runner.js";
-import { verifySchemaSafety, verifySessionSettings } from "./persistence/schema-safety-repository.js";
-import {
-  inspectRuntimePrivileges,
-  listAppliedSchemaMigrations,
-} from "./persistence/repository.js";
-import { assertLeastPrivilegeRuntimeRole } from "./persistence/runtime-privileges.js";
+import { runPersistenceStartupGates } from "./persistence/startup-gates.js";
 /**
  * Base64 file uploads
  * (upload-file / upload-voucher-file)
@@ -171,35 +164,11 @@ if (persistenceConfig.enabled) {
     });
 
   // Persistence is fail-closed. When explicitly enabled there is no RAM fallback.
-  const appliedMigrations =
-    await persistenceDb.transaction(
-      (tx) => listAppliedSchemaMigrations(tx),
-    );
-  assertMigrationStateCurrent(
-    appliedMigrations,
-  );
-
-  // The ledger proves which scripts ran, not that their effects are intact: verify the pinned session settings,
-  // row-level security, policies, the append guard and the guard indexes before accepting any traffic.
-  await persistenceDb.transaction(
-    async (tx) => {
-      await verifySessionSettings(tx);
-      await verifySchemaSafety(tx);
-    },
-  );
-
-  const runtimePrivileges =
-    await persistenceDb.transaction(
-      (tx) => inspectRuntimePrivileges(tx),
-    );
-  assertLeastPrivilegeRuntimeRole(
-    runtimePrivileges,
-    persistenceConfig.expectedRuntimeRole,
-  );
-
-  await verifyConfiguredTenantBinding(
-    persistenceConfig,
+  // All gates (migrations, session settings, schema safety, runtime privileges, runtime/tenant binding) run in one
+  // shared function that the real-PostgreSQL start-up tests call as well.
+  await runPersistenceStartupGates(
     persistenceDb,
+    persistenceConfig,
     config.capabilities,
   );
 

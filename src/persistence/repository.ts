@@ -127,6 +127,11 @@ const SQL_RUNTIME_PRIVILEGES =
   "has_table_privilege(current_user, 'public.audit_retention_anchors', 'SELECT') AS audit_anchor_select, " +
   "(has_table_privilege(current_user, 'public.audit_retention_anchors', 'INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER,REFERENCES') OR " +
   "has_any_column_privilege(current_user, 'public.audit_retention_anchors', 'INSERT,UPDATE,REFERENCES')) AS audit_anchor_mutate, " +
+  // Migration 010: the runtime reads its own tenant bindings (row-level security limits it to its own rows) and must
+  // never be able to add, change or remove one; otherwise it could bind itself to any tenant.
+  "has_table_privilege(current_user, 'public.tenant_runtime_bindings', 'SELECT') AS bindings_select, " +
+  "(has_table_privilege(current_user, 'public.tenant_runtime_bindings', 'INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER,REFERENCES') OR " +
+  "has_any_column_privilege(current_user, 'public.tenant_runtime_bindings', 'INSERT,UPDATE,REFERENCES')) AS bindings_mutate, " +
   "(SELECT count(*)::int FROM pg_auth_members m JOIN pg_roles me ON me.oid = m.member WHERE me.rolname = current_user) AS role_memberships " +
   "FROM pg_roles r WHERE r.rolname = current_user";
 const SQL_SET_TENANT = "SELECT set_config('app.tenant_id', $1, true) AS tenant_id";
@@ -252,6 +257,8 @@ export interface RuntimePrivilegeSnapshot {
   readonly auditMutate: boolean;
   readonly auditAnchorSelect: boolean;
   readonly auditAnchorMutate: boolean;
+  readonly bindingsSelect: boolean;
+  readonly bindingsMutate: boolean;
   readonly roleMemberships: number;
 }
 
@@ -283,6 +290,8 @@ export async function inspectRuntimePrivileges(
     audit_mutate: boolean;
     audit_anchor_select: boolean;
     audit_anchor_mutate: boolean;
+    bindings_select: boolean;
+    bindings_mutate: boolean;
     role_memberships: number;
   }>({ text: SQL_RUNTIME_PRIVILEGES, values: [] });
 
@@ -322,6 +331,8 @@ export async function inspectRuntimePrivileges(
     auditMutate: row.audit_mutate,
     auditAnchorSelect: row.audit_anchor_select,
     auditAnchorMutate: row.audit_anchor_mutate,
+    bindingsSelect: row.bindings_select,
+    bindingsMutate: row.bindings_mutate,
     roleMemberships: row.role_memberships,
   });
 }
@@ -409,6 +420,18 @@ export async function getTenantBinding(
     status: assertTenantStatus(row.status),
     capabilityTier: assertTenantCapabilityTier(row.capability_tier),
   });
+}
+
+/**
+ * Tenants the connected role is bound to (migration 010). Row-level security on the binding table limits the result to
+ * the current role's own bindings; the query filters on current_user as well so the intent does not depend on it.
+ */
+export async function listRuntimeTenantBindings(tx: SqlExecutor): Promise<readonly TenantId[]> {
+  const result = await tx.query<{ tenant_id: string }>({
+    text: "SELECT tenant_id::text AS tenant_id FROM tenant_runtime_bindings WHERE role_name = current_user ORDER BY tenant_id ASC",
+    values: [],
+  });
+  return Object.freeze(result.rows.map((row) => parseTenantId(row.tenant_id)));
 }
 
 export async function insertWebhookEvent(

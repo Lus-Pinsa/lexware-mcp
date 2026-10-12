@@ -161,13 +161,16 @@ describe("persistence runtime configuration", () => {
 });
 
 describe("configured tenant binding", () => {
-  function databaseFor(row: Record<string, unknown> | null): PersistenceDatabase {
+  function databaseFor(row: Record<string, unknown> | null, bindings: readonly string[] = [TENANT]): PersistenceDatabase {
     return {
       transaction: async <T>(work: (tx: SqlExecutor) => Promise<T>): Promise<T> => {
         const tx: SqlExecutor = {
           query: vi.fn(async (statement) => {
             if (statement.text.includes("set_config")) {
               return { rows: [], rowCount: 1 };
+            }
+            if (statement.text.includes("FROM tenant_runtime_bindings")) {
+              return { rows: bindings.map((tenant_id) => ({ tenant_id })), rowCount: bindings.length };
             }
             if (statement.text.includes("FROM tenants")) {
               return {
@@ -236,6 +239,19 @@ describe("configured tenant binding", () => {
         { drafts: false, finalize: false },
       ),
     ).rejects.toThrow(/organization mismatch/);
+  });
+
+  it("fails closed unless the runtime role is bound to exactly the configured tenant (C-01)", async () => {
+    const config = loadPersistenceRuntimeConfig(enabledEnv(), ORG);
+    if (!config.enabled) throw new Error("expected enabled config");
+    const active = { tenant_id: TENANT, organization_id_hash: sha256Hex(ORG), status: "active", capability_tier: "read_only" };
+    const OTHER = "3f2b6c1e-8d4a-4b7e-9c2d-1a2b3c4d5e6f";
+    for (const bindings of [[], [OTHER], [TENANT, OTHER], [OTHER, TENANT]]) {
+      await expect(
+        verifyConfiguredTenantBinding(config, databaseFor(active, bindings), { drafts: false, finalize: false }),
+        JSON.stringify(bindings),
+      ).rejects.toThrow(/not bound to exactly the configured tenant/);
+    }
   });
 
   it("fails closed when runtime write capabilities exceed this tenant's persisted policy", async () => {

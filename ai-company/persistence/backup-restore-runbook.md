@@ -47,7 +47,7 @@ A backup is not reported as **VERIFIED** merely because Render says a backup/rec
 - Source and restore database are separate instances.
 - Restore target was created from the backup/recovery point being tested.
 - The exact application commit under test is known.
-- LUS_TENANT_ID is supplied from the secure runtime configuration.
+- Both URLs use a dedicated **read-only verifier role** with `BYPASSRLS` (LOGIN, `USAGE` on schema `public`, `SELECT` on the persistence tables, no ownership, no other rights). Row-level security hides other tenants from every other role, including the table owner; without this role the verifier fails closed instead of reporting a partial view as complete (review finding C-03).
 - The chosen TLS mode matches the approved deployment path.
 
 ### Verification command
@@ -56,7 +56,6 @@ Run from a trusted environment that can reach **both** database endpoints:
 
     PERSISTENCE_SOURCE_DATABASE_URL=... \
     PERSISTENCE_RESTORE_DATABASE_URL=... \
-    LUS_TENANT_ID=... \
     PERSISTENCE_TLS_MODE=verify-full \
     npm run persistence:verify-restore
 
@@ -66,7 +65,13 @@ The command intentionally never prints either database URL or any database conte
 
 ## 4. PASS criteria
 
-The verifier fails closed unless source and restore match on:
+The verifier fails closed unless source and restore match on the **database-wide** evidence (since schema v10):
+
+- exact tenant set (count + SHA-256 digest of all tenant IDs),
+- runtime-role bindings (`tenant_runtime_bindings`, digest),
+- total row counts of every persistence table, which must equal the per-tenant evidence,
+
+and, for **every** tenant, on:
 
 - complete migration ledger count + SHA-256 digest,
 - explicit tenant row presence and hashed organization binding,

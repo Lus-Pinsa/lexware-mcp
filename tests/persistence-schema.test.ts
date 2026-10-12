@@ -149,8 +149,9 @@ describe("persistence structural policy", () => {
 
 describe("schema version fail-closed helpers", () => {
   it("accepts only the exact known schema version", () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(9);
-    expect(assessSchemaVersion(9)).toBe("AVAILABLE");
+    expect(CURRENT_SCHEMA_VERSION).toBe(10);
+    expect(assessSchemaVersion(10)).toBe("AVAILABLE");
+    expect(assessSchemaVersion(9)).toBe("VERSION_MISMATCH");
     expect(assessSchemaVersion(8)).toBe("VERSION_MISMATCH");
     expect(assessSchemaVersion(7)).toBe("VERSION_MISMATCH");
     expect(assessSchemaVersion(6)).toBe("VERSION_MISMATCH");
@@ -158,7 +159,7 @@ describe("schema version fail-closed helpers", () => {
     expect(assessSchemaVersion(null)).toBe("UNAVAILABLE");
     expect(assessSchemaVersion(0)).toBe("INTEGRITY_FAILED");
     expect(assessSchemaVersion(1)).toBe("VERSION_MISMATCH");
-    expect(assessSchemaVersion(10)).toBe("VERSION_MISMATCH");
+    expect(assessSchemaVersion(11)).toBe("VERSION_MISMATCH");
     expect(() => requireKnownSchemaVersion(1)).toThrow(/VERSION_MISMATCH/);
   });
 });

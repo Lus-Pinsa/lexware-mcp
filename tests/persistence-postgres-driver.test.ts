@@ -4,7 +4,7 @@ import {
   createPostgresMigrationDatabase,
   PersistenceDatabaseError,
 } from "../src/persistence/postgres-driver.js";
-import { parseTenantId } from "../src/persistence/types.js";
+import { PersistenceValidationError, parseTenantId } from "../src/persistence/types.js";
 import { withTenantTransaction } from "../src/persistence/repository.js";
 
 function fakeFactory() {
@@ -196,4 +196,24 @@ describe("Postgres persistence driver", () => {
       message: "Persistence database close failed.",
     });
   });
+
+  it("keeps fixed-message validation errors (e.g. integrity failures) instead of hiding them as TRANSACTION_FAILED", async () => {
+    const factory = () => ({
+      unsafe: vi.fn(),
+      begin: async (work: (tx: unknown) => Promise<unknown>) => work({ unsafe: vi.fn() }),
+      end: async () => undefined,
+    });
+    const db = createPostgresDatabase({ connectionString: "postgres://db.example.test/lus" }, factory as never);
+    await expect(
+      db.transaction(async () => {
+        throw new PersistenceValidationError("Audit chain integrity check failed.");
+      }),
+    ).rejects.toThrow(/^Audit chain integrity check failed\.$/);
+    await expect(
+      db.transaction(async () => {
+        throw new Error("raw detail with secret");
+      }),
+    ).rejects.toMatchObject({ kind: "TRANSACTION_FAILED", message: "Persistence transaction failed." });
+  });
 });
+

@@ -209,7 +209,10 @@ export function createPostgresDatabase(
       try {
         return await client.begin(async (tx) => work(createExecutor(tx)));
       } catch (error) {
-        if (error instanceof PersistenceDatabaseError) throw error;
+        // Validation errors carry fixed, secret-free messages (e.g. "Audit chain integrity check failed.").
+        // Keep them, like the migration database does, so an integrity failure is never reported as a generic
+        // database failure. Anything else stays opaque.
+        if (error instanceof PersistenceDatabaseError || error instanceof PersistenceValidationError) throw error;
         throw new PersistenceDatabaseError("TRANSACTION_FAILED");
       }
     },

@@ -17,8 +17,10 @@ describe("tenant transaction-scoped advisory lock", () => {
     expect(query).toHaveBeenCalledTimes(1);
     const statement = query.mock.calls[0][0] as { text: string; values: readonly unknown[] };
     expect(statement.text).toContain("pg_advisory_xact_lock");
-    expect(statement.text).toContain("hashtext($1::text)");
-    expect(statement.text).toContain("FROM tenants WHERE tenant_id = $1");
+    // Both parameter uses carry an explicit cast; an uncast "tenant_id = $1" beside "$1::text" fails on real
+    // PostgreSQL with "operator does not exist: uuid = text" (see tests/persistence-pg-locks.test.ts).
+    expect(statement.text).toContain("hashtext($1::uuid::text)");
+    expect(statement.text).toContain("FROM tenants WHERE tenant_id = $1::uuid");
     expect(statement.text).not.toMatch(/FOR UPDATE|FOR SHARE|UPDATE tenants/);
     expect(statement.values).toEqual([TENANT]);
   });

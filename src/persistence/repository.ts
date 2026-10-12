@@ -117,9 +117,11 @@ const SQL_TENANT_STORAGE =
 // Runtime needs SELECT but must not acquire UPDATE on the tenant table.
 // Transaction-scoped advisory locks serialize cooperating tenant writers.
 // Hash collisions only over-serialize unrelated tenants; they never mix rows.
+// Both uses of $1 are cast explicitly: PostgreSQL infers one type per parameter, and an
+// uncast "tenant_id = $1" next to "$1::text" is resolved as uuid = text and fails.
 const SQL_LOCK_TENANT =
-  "SELECT tenant_id, pg_advisory_xact_lock(1280659284, hashtext($1::text)) AS lock_token " +
-  "FROM tenants WHERE tenant_id = $1";
+  "SELECT tenant_id, pg_advisory_xact_lock(1280659284, hashtext($1::uuid::text)) AS lock_token " +
+  "FROM tenants WHERE tenant_id = $1::uuid";
 const SQL_GET_LATEST_AUDIT =
   "SELECT entry_hash FROM audit_events WHERE tenant_id = $1 ORDER BY created_at DESC, audit_id DESC LIMIT 1";
 const SQL_GET_AUDIT_ANCHOR =

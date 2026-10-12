@@ -13,7 +13,7 @@ describe("AgenticOS / Claude Code stage-0 integration contract", () => {
     expect(skill).toMatch(/^---\nname: agenticos\n/);
     expect(skill).toMatch(/\ndisable-model-invocation: true\n---\n/);
     expect(skill).toContain("/agenticos");
-    expect(skill).toContain("not installed".replace("not installed", "not the AgenticOS runtime"));
+    expect(skill).toContain("**not** the AgenticOS runtime");
   });
 
   it("does not mistake the runtime for a Claude Code MCP server", () => {

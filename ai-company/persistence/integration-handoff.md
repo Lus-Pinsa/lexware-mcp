@@ -144,7 +144,9 @@ Unabhängige Fix-Reviews (Codex, schreibgeschützt), Grenze: 3 Runden:
 |---|---|---|---|
 | 1 | `bdb99b5` | Request changes. C-01 und C-07 geschlossen, C-03 teilweise | Leere Datenbank übersprang die Ledger- und Schema-Prüfung (MEDIUM); Bindungstabelle unvollständig gepinnt; GRANT fehlte in der Doku; zwei PG-Tests mit falschen Erwartungen; Prüfrolle nicht als lesend erzwungen; Überladungen global gezählt → alles behoben in `dab3a2b` |
 | 2 | `dab3a2b` | Request changes. Befunde aus Runde 1 bestätigt behoben | Prüfrolle hatte noch indirekte Schreibwege (SECURITY DEFINER, View, Mitgliedschaft; MEDIUM); Metadaten (`applied_at`, `updated_at`) nicht verglichen; Verdrahtung in `server.ts` nur per Text geprüft; Operator konnte eine nicht existierende Rolle binden; Ausgabe `schemaMigrations=0` → behoben in Fix-Runde 3: `openDurablePersistence`, verhaltensbasiert getestet, volles Rechteprofil der Prüfrolle, Metadaten-Digest, nur Login-Rollen bindbar |
-| 3 | siehe Abschnitt 4 | abschließende Verifikation | — |
+| 3 | `5c62bfc` | Request changes. C-01 **geschlossen**, C-07 **geschlossen**, C-03 **teilweise** | Grenze von 3 Runden erreicht, **BLOCKED**, Owner-Entscheidung nötig. Offen: V-1 (MEDIUM, laut Codex blockierend): Eine **SECURITY-DEFINER-Aggregatfunktion** des Owners gibt der Prüfrolle einen Schreibweg, gleiche Klasse wie R4-F1 und damit an D-3 gebunden. V-2 (LOW): Quell- und Ziel-URL nur als Text verglichen; zwei Schreibweisen derselben DB ergeben ein falsches PASS. V-3 (LOW): Das Manifest stammt aus mehreren Read-committed-Snapshots; Bindungen und Metadaten können zwischen Erfassung und Abschluss veralten. V-4 (INFO): Die Policy-Funktion kann nicht inline ausgeführt werden (Skalierung bei 100 000 Einträgen); ein Index auf `tenant_id` für das CASCADE fehlt |
+
+**Echtes PostgreSQL:** Für `5c62bfc` noch **nicht** ausgeführt (lokal fehlt PostgreSQL, CI wartet auf Push und Draft-PR). Bis dahin ist der Stand nicht GREEN.
 
 Betriebsfolge nach Migration 010, in dieser Reihenfolge:
 1. `GRANT SELECT ON public.tenant_runtime_bindings TO <runtime-rolle>`. Nur SELECT; jedes Schreib- oder Spaltenrecht bricht den Start ab.

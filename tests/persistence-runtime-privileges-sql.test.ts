@@ -31,17 +31,24 @@ describe("runtime privilege SQL semantics", () => {
     expect(sql).not.toContain("'SELECT,INSERT') AS audit_append");
   });
 
-  it("treats any single forbidden privilege as a violation, including column-level grants and TRIGGER", async () => {
+  it("treats any single forbidden privilege as a violation, including column-level grants, TRIGGER and REFERENCES", async () => {
     const sql = await capturedSql();
-    expect(sql).toContain("'public.webhook_events', 'DELETE,TRUNCATE,TRIGGER') AS webhook_delete");
+    expect(sql).toContain("'public.webhook_events', 'DELETE,TRUNCATE,TRIGGER,REFERENCES') AS webhook_delete");
     for (const [table, flag, columns] of [
-      ["audit_events", "audit_mutate", "UPDATE"],
-      ["audit_retention_anchors", "audit_anchor_mutate", "INSERT,UPDATE"],
-      ["tenants", "tenants_mutate", "INSERT,UPDATE"],
-      ["schema_migrations", "migrations_mutate", "INSERT,UPDATE"],
+      ["audit_events", "audit_mutate", "UPDATE,REFERENCES"],
+      ["audit_retention_anchors", "audit_anchor_mutate", "INSERT,UPDATE,REFERENCES"],
+      ["tenants", "tenants_mutate", "INSERT,UPDATE,REFERENCES"],
+      ["schema_migrations", "migrations_mutate", "INSERT,UPDATE,REFERENCES"],
     ] as const) {
-      expect(sql, flag).toMatch(new RegExp(`has_table_privilege\\(current_user, 'public\\.${table}', '[A-Z,]*TRIGGER'\\) OR`));
+      expect(sql, flag).toMatch(new RegExp(`has_table_privilege\\(current_user, 'public\\.${table}', '[A-Z,]*TRIGGER,REFERENCES'\\) OR`));
       expect(sql, flag).toContain(`has_any_column_privilege(current_user, 'public.${table}', '${columns}')) AS ${flag}`);
     }
+  });
+
+  it("checks CREATE on every schema, schema ownership and the replication attribute (search_path shadowing)", async () => {
+    const sql = await capturedSql();
+    expect(sql).toContain("EXISTS (SELECT 1 FROM pg_namespace n WHERE has_schema_privilege(current_user, n.oid, 'CREATE')) AS can_create_in_any_schema");
+    expect(sql).toContain("EXISTS (SELECT 1 FROM pg_namespace n WHERE n.nspowner = r.oid) AS owns_schema");
+    expect(sql).toContain("r.rolreplication AS is_replication");
   });
 });

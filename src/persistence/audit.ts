@@ -54,6 +54,9 @@ export function assertAuditItemCount(value: number): number {
   return value;
 }
 
+const MIN_AUDIT_YEAR = 1970;
+const MAX_AUDIT_YEAR = 9999;
+
 /**
  * PostgreSQL timestamptz round-trips to UTC with millisecond precision in
  * our JS driver. Hash the same canonical representation before INSERT.
@@ -88,7 +91,19 @@ export function assertAuditTimestamp(value: string): string {
   if (!Number.isFinite(date.getTime())) {
     throw new PersistenceValidationError("Invalid audit timestamp.");
   }
-  return date.toISOString();
+  // The stored value must read back as the same instant. PostgreSQL prints years below 1000 and historic local-mean-time
+  // offsets in forms the JS driver parses differently (e.g. year 0050 → 1950), which would make the chain permanently
+  // unverifiable. Only the canonical UTC form within 1970–9999 is accepted.
+  const canonical = date.toISOString();
+  const canonicalMatch = /^(\d{4})-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.exec(canonical);
+  if (
+    year < MIN_AUDIT_YEAR || year > MAX_AUDIT_YEAR ||
+    canonicalMatch === null ||
+    Number(canonicalMatch[1]) < MIN_AUDIT_YEAR || Number(canonicalMatch[1]) > MAX_AUDIT_YEAR
+  ) {
+    throw new PersistenceValidationError("Invalid audit timestamp.");
+  }
+  return canonical;
 }
 
 export function validateAuditEntry(input: AuditEntryInput): AuditEntryInput {

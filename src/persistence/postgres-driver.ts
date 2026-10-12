@@ -186,7 +186,17 @@ function createDriver(
     fetch_types: false,
     onnotice: false,
     debug: false,
-    connection: { application_name: applicationName },
+    // Session parameters sent at connect time take precedence over role/database defaults (ALTER ROLE … SET):
+    // - search_path: unqualified table names resolve to public only; pg_temp is listed last so a temporary or
+    //   role-owned table can never shadow a persistence table.
+    // - TimeZone UTC: timestamptz is printed in a form the driver parses back to the same instant.
+    // - read committed: appends serialize on the tenant advisory lock and must see the latest committed head.
+    connection: {
+      application_name: applicationName,
+      search_path: "public, pg_temp",
+      TimeZone: "UTC",
+      default_transaction_isolation: "read committed",
+    },
   });
 }
 

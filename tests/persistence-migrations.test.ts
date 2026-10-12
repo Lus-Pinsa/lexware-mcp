@@ -86,8 +86,8 @@ function migrationDb(
 describe("persistence migration runner", () => {
   it("loads the checked-in migration with a deterministic SHA-256 checksum", () => {
     const known = loadKnownMigrations();
-    expect(known).toHaveLength(7);
-    expect(known.map((item) => item.version)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(known).toHaveLength(8);
+    expect(known.map((item) => item.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     expect(known[0].name).toBe("foundation");
     expect(known[1].name).toBe("webhook_event_date");
     expect(known[2].name).toBe("audit_retention_anchor");
@@ -97,6 +97,8 @@ describe("persistence migration runner", () => {
     expect(known[6].name).toBe("audit_append_ordinal");
     expect(known[6].sql).toContain("ADD COLUMN chain_seq bigint NOT NULL");
     expect(known[6].sql).toContain("NULLS NOT DISTINCT");
+    expect(known[7].name).toBe("audit_append_guard");
+    expect(known[7].sql).toContain("BEFORE INSERT ON public.audit_events");
     for (const migration of known) expect(migration.checksum).toMatch(/^[0-9a-f]{64}$/);
     expect(known[0].sql).toContain("CREATE TABLE IF NOT EXISTS tenants");
     expect(known[1].sql).toContain("ADD COLUMN IF NOT EXISTS event_date");
@@ -127,7 +129,7 @@ describe("persistence migration runner", () => {
     const { db, state } = migrationDb();
     const result = await inspectMigrationState(db);
     expect(result.applied).toEqual([]);
-    expect(result.pending.map((item) => item.version)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(result.pending.map((item) => item.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     expect(state.staticScripts[0]).toContain("CREATE TABLE IF NOT EXISTS schema_migrations");
   });
 
@@ -135,8 +137,8 @@ describe("persistence migration runner", () => {
     const { db, state } = migrationDb();
     const result = await applyPendingMigrations(db);
 
-    expect(result.appliedVersions).toEqual([1, 2, 3, 4, 5, 6, 7]);
-    expect(state.applied).toHaveLength(7);
+    expect(result.appliedVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(state.applied).toHaveLength(8);
     expect(state.applied[0]).toMatchObject({ version: 1, name: "foundation" });
     expect(state.applied[1]).toMatchObject({ version: 2, name: "webhook_event_date" });
     expect(state.applied[2]).toMatchObject({ version: 3, name: "audit_retention_anchor" });
@@ -144,14 +146,15 @@ describe("persistence migration runner", () => {
     expect(state.applied[4]).toMatchObject({ version: 5, name: "tenant_storage_limits" });
     expect(state.applied[5]).toMatchObject({ version: 6, name: "tenant_audit_integrity_ceiling" });
     expect(state.applied[6]).toMatchObject({ version: 7, name: "audit_append_ordinal" });
+    expect(state.applied[7]).toMatchObject({ version: 8, name: "audit_append_guard" });
     expect(state.applied[0].checksum).toMatch(/^[0-9a-f]{64}$/);
     expect(state.staticScripts.some((script) => script === "LOCK TABLE schema_migrations IN EXCLUSIVE MODE")).toBe(true);
     expect(state.staticScripts.some((script) => script.includes("CREATE TABLE IF NOT EXISTS tenants"))).toBe(true);
-    expect(state.inserts).toHaveLength(7);
+    expect(state.inserts).toHaveLength(8);
 
     const after = await inspectMigrationState(db);
     expect(after.pending).toEqual([]);
-    expect(after.applied).toHaveLength(7);
+    expect(after.applied).toHaveLength(8);
   });
 
   it("accepts only the exact current migration ledger for runtime startup", () => {
@@ -179,6 +182,7 @@ describe("persistence migration runner", () => {
       { version: 5, name: "tenant_storage_limits", checksum: known[4].checksum },
       { version: 6, name: "tenant_audit_integrity_ceiling", checksum: known[5].checksum },
       { version: 7, name: "audit_append_ordinal", checksum: known[6].checksum },
+      { version: 8, name: "audit_append_guard", checksum: known[7].checksum },
     ]);
     const result = await applyPendingMigrations(db);
     expect(result.appliedVersions).toEqual([]);
@@ -216,7 +220,8 @@ describe("persistence migration runner", () => {
           { version: 5, name: "tenant_storage_limits", checksum: known[4].checksum },
           { version: 6, name: "tenant_audit_integrity_ceiling", checksum: known[5].checksum },
           { version: 7, name: "audit_append_ordinal", checksum: known[6].checksum },
-          { version: 8, name: "future", checksum: "b".repeat(64) },
+          { version: 8, name: "audit_append_guard", checksum: known[7].checksum },
+          { version: 9, name: "future", checksum: "b".repeat(64) },
         ]).db,
       ),
     ).rejects.toThrow(/newer or unknown/);

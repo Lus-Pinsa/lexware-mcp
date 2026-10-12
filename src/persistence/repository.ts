@@ -76,32 +76,38 @@ const SQL_RUNTIME_PRIVILEGES =
   "r.rolcreaterole AS can_create_role, " +
   "has_database_privilege(current_user, current_database(), 'CREATE') AS can_create_in_database, " +
   "has_schema_privilege(current_user, 'public', 'CREATE') AS can_create_in_public_schema, " +
+  // CREATE on any schema, or owning one, would let the runtime create a table that shadows a persistence table
+  // through search_path ("$user" schema first by default). The driver pins search_path, and this check fails closed
+  // on mis-provisioned roles regardless.
+  "EXISTS (SELECT 1 FROM pg_namespace n WHERE has_schema_privilege(current_user, n.oid, 'CREATE')) AS can_create_in_any_schema, " +
+  "EXISTS (SELECT 1 FROM pg_namespace n WHERE n.nspowner = r.oid) AS owns_schema, " +
+  "r.rolreplication AS is_replication, " +
   // Required privileges: every listed privilege must be held. has_table_privilege(..., 'A,B') is ANY-OF in
   // PostgreSQL, so each required privilege is checked on its own and combined with AND.
   // Forbidden privileges: holding any one of them is a violation. Column-level grants are invisible to
   // has_table_privilege, so mutation rights are also checked with has_any_column_privilege; TRIGGER would let the
-  // runtime attach code to the table and is forbidden everywhere.
+  // runtime attach code to the table and is forbidden everywhere. REFERENCES would let it block parent-row deletes.
   "has_table_privilege(current_user, 'public.schema_migrations', 'SELECT') AS migrations_select, " +
-  "(has_table_privilege(current_user, 'public.schema_migrations', 'INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER') OR " +
-  "has_any_column_privilege(current_user, 'public.schema_migrations', 'INSERT,UPDATE')) AS migrations_mutate, " +
+  "(has_table_privilege(current_user, 'public.schema_migrations', 'INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER,REFERENCES') OR " +
+  "has_any_column_privilege(current_user, 'public.schema_migrations', 'INSERT,UPDATE,REFERENCES')) AS migrations_mutate, " +
   "has_table_privilege(current_user, 'public.tenants', 'SELECT') AS tenants_select, " +
-  "(has_table_privilege(current_user, 'public.tenants', 'INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER') OR " +
-  "has_any_column_privilege(current_user, 'public.tenants', 'INSERT,UPDATE')) AS tenants_mutate, " +
+  "(has_table_privilege(current_user, 'public.tenants', 'INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER,REFERENCES') OR " +
+  "has_any_column_privilege(current_user, 'public.tenants', 'INSERT,UPDATE,REFERENCES')) AS tenants_mutate, " +
   "(" +
   "has_table_privilege(current_user, 'public.webhook_events', 'SELECT') AND " +
   "has_table_privilege(current_user, 'public.webhook_events', 'INSERT') AND " +
   "has_table_privilege(current_user, 'public.webhook_events', 'UPDATE')" +
   ") AS webhook_dml, " +
-  "has_table_privilege(current_user, 'public.webhook_events', 'DELETE,TRUNCATE,TRIGGER') AS webhook_delete, " +
+  "has_table_privilege(current_user, 'public.webhook_events', 'DELETE,TRUNCATE,TRIGGER,REFERENCES') AS webhook_delete, " +
   "(" +
   "has_table_privilege(current_user, 'public.audit_events', 'SELECT') AND " +
   "has_table_privilege(current_user, 'public.audit_events', 'INSERT')" +
   ") AS audit_append, " +
-  "(has_table_privilege(current_user, 'public.audit_events', 'UPDATE,DELETE,TRUNCATE,TRIGGER') OR " +
-  "has_any_column_privilege(current_user, 'public.audit_events', 'UPDATE')) AS audit_mutate, " +
+  "(has_table_privilege(current_user, 'public.audit_events', 'UPDATE,DELETE,TRUNCATE,TRIGGER,REFERENCES') OR " +
+  "has_any_column_privilege(current_user, 'public.audit_events', 'UPDATE,REFERENCES')) AS audit_mutate, " +
   "has_table_privilege(current_user, 'public.audit_retention_anchors', 'SELECT') AS audit_anchor_select, " +
-  "(has_table_privilege(current_user, 'public.audit_retention_anchors', 'INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER') OR " +
-  "has_any_column_privilege(current_user, 'public.audit_retention_anchors', 'INSERT,UPDATE')) AS audit_anchor_mutate, " +
+  "(has_table_privilege(current_user, 'public.audit_retention_anchors', 'INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER,REFERENCES') OR " +
+  "has_any_column_privilege(current_user, 'public.audit_retention_anchors', 'INSERT,UPDATE,REFERENCES')) AS audit_anchor_mutate, " +
   "(SELECT count(*)::int FROM pg_auth_members m JOIN pg_roles me ON me.oid = m.member WHERE me.rolname = current_user) AS role_memberships " +
   "FROM pg_roles r WHERE r.rolname = current_user";
 const SQL_SET_TENANT = "SELECT set_config('app.tenant_id', $1, true) AS tenant_id";
@@ -210,6 +216,9 @@ export interface RuntimePrivilegeSnapshot {
   readonly canCreateRole: boolean;
   readonly canCreateInDatabase: boolean;
   readonly canCreateInPublicSchema: boolean;
+  readonly canCreateInAnySchema: boolean;
+  readonly ownsSchema: boolean;
+  readonly isReplication: boolean;
   readonly migrationsSelect: boolean;
   readonly migrationsMutate: boolean;
   readonly tenantsSelect: boolean;
@@ -234,6 +243,9 @@ export async function inspectRuntimePrivileges(
     can_create_role: boolean;
     can_create_in_database: boolean;
     can_create_in_public_schema: boolean;
+    can_create_in_any_schema: boolean;
+    owns_schema: boolean;
+    is_replication: boolean;
     migrations_select: boolean;
     migrations_mutate: boolean;
     tenants_select: boolean;
@@ -266,6 +278,9 @@ export async function inspectRuntimePrivileges(
     canCreateRole: row.can_create_role,
     canCreateInDatabase: row.can_create_in_database,
     canCreateInPublicSchema: row.can_create_in_public_schema,
+    canCreateInAnySchema: row.can_create_in_any_schema,
+    ownsSchema: row.owns_schema,
+    isReplication: row.is_replication,
     migrationsSelect: row.migrations_select,
     migrationsMutate: row.migrations_mutate,
     tenantsSelect: row.tenants_select,

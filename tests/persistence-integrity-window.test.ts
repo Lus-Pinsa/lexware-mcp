@@ -47,9 +47,6 @@ describe("audit chain verification completeness", () => {
       if (statement.text.includes("pg_advisory_xact_lock")) {
         return { rows: [{ tenant_id: TENANT }], rowCount: 1 };
       }
-      if (statement.text.includes("SELECT entry_hash FROM audit_events")) {
-        return { rows: [{ entry_hash: hash }], rowCount: 1 };
-      }
       if (statement.text.includes("SELECT previous_hash, last_pruned_seq FROM audit_retention_anchors")) {
         return { rows: [], rowCount: 0 };
       }

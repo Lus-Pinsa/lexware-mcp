@@ -42,7 +42,12 @@ describe("Postgres persistence driver", () => {
       fetch_types: false,
       onnotice: false,
       debug: false,
-      connection: { application_name: "lus-persistence" },
+      connection: {
+        application_name: "lus-persistence",
+        search_path: "public, pg_temp",
+        TimeZone: "UTC",
+        default_transaction_isolation: "read committed",
+      },
     });
 
     await db.close();

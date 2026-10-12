@@ -1,6 +1,7 @@
 # ADR: Audit append order and prefix-only retention (schema v7)
 
-Status: **IMPLEMENTED on branch `claude/pg-harness-privileges`, review pending — not approved, not merged, not deployed.**
+Status: **IMPLEMENTED — schema v7 on branch `claude/audit-append-ordinal` (commit `b41ab5f`, reviewed), database append
+guard v8 on branch `claude/pg-runtime-gates` (fix round 1, review pending). Not approved, not merged, not deployed.**
 Supersedes the draft `ai-company/persistence/audit-order-v6-adr.md` from branch `openai/audit-append-order-v6-adr`
 (commit `c16986e`, never merged). That draft's analysis and acceptance table are taken over here; the numbering
 changes to v7 because migration 006 is already used by PR #34.
@@ -25,10 +26,18 @@ caller-supplied event time and the random UUID, not the append order. On real Po
      (PR #31). Head read, allocation and insert run in one transaction.
    - Event time (`created_at`) stays data and may repeat or run backwards.
 2. **Database guards.**
-   - `UNIQUE (tenant_id, chain_seq)`: no two entries at one position.
-   - `UNIQUE (tenant_id, previous_hash) NULLS NOT DISTINCT`: no fork and no second root. This holds even for a writer
-     that bypasses the application or the lock; such a writer fails instead of corrupting the chain.
-   - Requires PostgreSQL ≥ 15.
+   - `UNIQUE (tenant_id, chain_seq)` (v7): no two entries at one position.
+   - `UNIQUE (tenant_id, previous_hash) NULLS NOT DISTINCT` (v7): no fork, and no second root while the original root
+     still exists. Requires PostgreSQL ≥ 15.
+   - The unique indexes alone do **not** stop a writer that bypasses the application from inserting at a gap
+     (`head + 10`) or a new root after the original root was pruned (independent security review, finding L1). Either
+     would leave the chain permanently unverifiable. Therefore migration 008 adds an owner-owned `BEFORE INSERT`
+     trigger (`audit_events_append_guard`): an event is accepted only at exactly `head + 1` (or anchor position + 1)
+     with `previous_hash` equal to the head hash (or the anchor hash). The runtime role holds no TRIGGER privilege
+     (checked at start-up). Migration 008 also asserts that both v7 indexes exist exactly as designed (v7 used
+     `IF NOT EXISTS`, finding L3).
+   - Not prevented by the database: a writer with INSERT that computes a correct hash for `head + 1`. The hash is not
+     keyed; the runtime role's INSERT right is the trust boundary.
 3. **Hash format v2.**
    - The canonical JSON hashed per entry is `{v: 2, chainSeq, auditId, tenantId, actorHash, action, result, itemCount,
      createdAt, previousHash}`.
@@ -62,6 +71,12 @@ caller-supplied event time and the random UUID, not the append order. On real Po
      quarantined legacy segment, or a new anchored epoch.
 7. **Restore digest** orders audit rows by `chain_seq`. Entry hashes cover the position.
 
+8. **Session hardening (fix round 1).** The production driver sends `search_path=public, pg_temp`, `TimeZone=UTC` and
+   `default_transaction_isolation=read committed` at connect time; these override role or database defaults. Audit
+   timestamps are accepted only within 1970–9999 UTC, because PostgreSQL prints years below 1000 and historic offsets in
+   forms the driver parses as a different instant (finding M1). The runtime privilege check also rejects CREATE on any
+   schema, owning a schema, REPLICATION and REFERENCES (finding M2, F5).
+
 ## Evidence (synthetic data, ephemeral PostgreSQL 16, TLS, real driver)
 
 | Scenario | Test | Result |
@@ -73,9 +88,14 @@ caller-supplied event time and the random UUID, not the append order. On real Po
 | Concurrent appends, two tenants | `persistence-pg-audit-order` | isolated, both verify |
 | Retention prefix stops at first retained entry | `persistence-pg-audit-order` | nothing pruned |
 | Retention prunes prefix, keeps later backdated entry | `persistence-pg-audit-order` | 2 pruned, rest verifies |
-| Direct INSERT at occupied position / fork / second root | `persistence-pg-audit-guards` | rejected by the database |
+| Direct INSERT at occupied position / fork / second root / gap / wrong link | `persistence-pg-audit-guards` | rejected by the guard trigger (SQLSTATE 23514) |
+| Same, with the trigger disabled by a superuser | `persistence-pg-audit-guards` | rejected by the unique indexes (23505, constraint named) |
+| New root after the original root was pruned | `persistence-pg-audit-guards` | rejected (23514) |
+| Guard index pre-empted by a same-named relation | `persistence-pg-audit-guards` | migration 008 fails, ledger stays v7 |
+| Role defaults TimeZone / isolation / search_path changed | `persistence-pg-audit-guards` | overridden; 8 concurrent appends all succeed |
+| v6 installation with a tenant, no audit history → v8 | `persistence-pg-audit-guards` | upgrades; chain starts at position 1 |
 | v6 → v7 with legacy row | `persistence-pg-audit-guards` | fails, ledger v6, data unchanged |
-| v6 → v7 on empty history | `persistence-pg-audit-guards` | succeeds |
+| fresh database v0 → v8 | `persistence-pg-audit-guards` | succeeds, empty chain verifies |
 | Capacity full, nothing expired | `persistence-pg-audit-guards` | retention fails, complete rollback |
 | Capacity full, expired prefix exists | `persistence-pg-audit-guards` | prunes, own record fits |
 | 100 000 entries / 100 001 entries | `persistence-pg-audit-guards` | verified / refused |
@@ -88,3 +108,13 @@ caller-supplied event time and the random UUID, not the append order. On real Po
 - The 100 000-entry window is a bounded V1 verifier, not proof of scalable verification. Incremental or checkpointed
   verification is future work.
 - Independent review of this design and code (creator ≠ reviewer). Release evidence on the final integrated SHA in CI.
+- Residuals from the independent reviews of fix round 1 (accepted for now, documented):
+  - A superuser or the table owner can disable the guard trigger; the runtime role cannot. Start-up does not yet assert
+    that the trigger is enabled.
+  - `MAINTAIN` (PostgreSQL 17+) is not in the forbidden privilege set; PostgreSQL 16 rejects the keyword. Add it before
+    moving to PostgreSQL 17.
+  - The runtime role keeps the default TEMPORARY privilege; with `pg_temp` last in `search_path` a temporary table
+    cannot shadow a persistence table (tested).
+  - A chain above 100 000 entries (reachable only by bypassing the application) can never be pruned, because retention
+    needs a full verification. That needs an operator remediation path.
+  - `applyPendingMigrations` reports a version error as a generic transaction failure (pre-existing).

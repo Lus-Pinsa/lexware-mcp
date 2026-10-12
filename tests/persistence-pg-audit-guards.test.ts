@@ -2,6 +2,7 @@
  * Database-level audit guards, migration v6 → v7 and capacity/retention edge cases on REAL PostgreSQL.
  */
 import { randomUUID } from "node:crypto";
+import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { computeAuditEntryHash } from "../src/persistence/audit.js";
 import { verifyAuditChainIntegrity } from "../src/persistence/integrity.js";
@@ -11,7 +12,7 @@ import { runTenantRetention } from "../src/persistence/retention.js";
 import { appendAuditEvent, withTenantTransaction } from "../src/persistence/repository.js";
 import { type TenantId, parseTenantId } from "../src/persistence/types.js";
 import { postgresAvailable, type EphemeralPostgres } from "./helpers/ephemeral-postgres.js";
-import { ACTOR, createPgFixture, maybeStartPostgres, type PgFixture } from "./helpers/persistence-pg-fixture.js";
+import { ACTOR, RUNTIME_GRANTS, createPgFixture, maybeStartPostgres, type PgFixture } from "./helpers/persistence-pg-fixture.js";
 
 describe.skipIf(!postgresAvailable())("audit guards on real PostgreSQL", () => {
   let pg: EphemeralPostgres;
@@ -28,6 +29,28 @@ describe.skipIf(!postgresAvailable())("audit guards on real PostgreSQL", () => {
       appendAuditEvent(tenant, tx, { auditId: randomUUID(), actorHash: ACTOR, action: "test.event", result: "SUCCESS", itemCount: 0, createdAt }),
     );
   const verify = (fx: PgFixture, tenant: TenantId) => withTenantTransaction(tenant, fx.runtime(), (tx) => verifyAuditChainIntegrity(tenant, tx));
+  /**
+   * Raw owner INSERT through a plain client (not the production driver, whose errors are deliberately opaque), so the
+   * exact SQLSTATE and constraint can be asserted. Simulates a writer that bypasses the application.
+   */
+  const rawInsertError = async (fx: PgFixture, tenant: TenantId, seq: number, previous: string | null) => {
+    const sql = postgres(pg.url(fx.database, "lus_owner"), { ssl: "require", max: 1, onnotice: () => undefined });
+    try {
+      await sql.begin(async (tx) => {
+        await tx.unsafe("SELECT set_config('app.tenant_id', $1, true)", [tenant]);
+        await tx.unsafe(
+          "INSERT INTO audit_events (audit_id, tenant_id, actor_hash, action, result, item_count, created_at, previous_hash, entry_hash, chain_seq, chain_version) VALUES ($1,$2,$3,'x','SUCCESS',0,'2026-05-02T00:00:00Z',$4,$5,$6,2)",
+          [randomUUID(), tenant, ACTOR, previous, "e".repeat(64), seq],
+        );
+      });
+      return null;
+    } catch (error) {
+      const e = error as { code?: string; constraint_name?: string; message?: string };
+      return { code: e.code, constraint: e.constraint_name, message: e.message };
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  };
   /** Owner-side raw SQL bound to a tenant (simulates a writer that bypasses the application). */
   const ownerSql = async (fx: PgFixture, tenant: TenantId, text: string, values: unknown[] = []) =>
     fx.owner().transaction(async (tx) => {
@@ -35,24 +58,73 @@ describe.skipIf(!postgresAvailable())("audit guards on real PostgreSQL", () => {
       return tx.query({ text, values });
     });
 
-  it("rejects a second entry at an occupied position or with an already used predecessor, even outside the app", async () => {
+  it("the append guard (v8) rejects every insert that is not exactly the next entry, even outside the app", async () => {
     const fx = await createPgFixture(pg);
     try {
       const head = await append(fx, fx.tenantA, "2026-05-01T00:00:00.000Z");
-      const insert = (seq: number, previous: string | null) =>
-        ownerSql(
-          fx,
-          fx.tenantA,
-          "INSERT INTO audit_events (audit_id, tenant_id, actor_hash, action, result, item_count, created_at, previous_hash, entry_hash, chain_seq, chain_version) VALUES ($1,$2,$3,'x','SUCCESS',0,'2026-05-02T00:00:00Z',$4,$5,$6,2)",
-          [randomUUID(), fx.tenantA, ACTOR, previous, "e".repeat(64), seq],
-        );
-      // Same position as the head:
-      await expect(insert(head.chainSeq, head.entryHash)).rejects.toThrow();
-      // Fork: a new position, but the same predecessor as the head:
-      await expect(insert(head.chainSeq + 1, head.previousHash)).rejects.toThrow();
-      // A second root:
-      await expect(insert(head.chainSeq + 1, null)).rejects.toThrow();
+      const guard = { code: "23514", message: "audit event is not the next chain entry" };
+      expect(await rawInsertError(fx, fx.tenantA, head.chainSeq, head.entryHash)).toMatchObject(guard); // occupied position
+      expect(await rawInsertError(fx, fx.tenantA, head.chainSeq + 1, head.previousHash)).toMatchObject(guard); // fork
+      expect(await rawInsertError(fx, fx.tenantA, head.chainSeq + 1, null)).toMatchObject(guard); // second root
+      expect(await rawInsertError(fx, fx.tenantA, head.chainSeq + 10, head.entryHash)).toMatchObject(guard); // gap
+      expect(await rawInsertError(fx, fx.tenantA, head.chainSeq + 1, "f".repeat(64))).toMatchObject(guard); // wrong link
       await expect(verify(fx, fx.tenantA)).resolves.toMatchObject({ count: 2, headSeq: 2 });
+    } finally {
+      await fx.close();
+    }
+  });
+
+  it("after the root was pruned, a new root or a restart at position 1 is rejected", async () => {
+    const fx = await createPgFixture(pg);
+    try {
+      await append(fx, fx.tenantA, "2026-01-02T00:00:00.000Z");
+      await runTenantRetention({ db: fx.runtimeMaintenance(), tenantId: fx.tenantA, actorHash: ACTOR, now: () => new Date("2027-06-01T00:00:00.000Z") });
+      const state = await verify(fx, fx.tenantA);
+      expect(state).toMatchObject({ count: 1, headSeq: 3 });
+      expect(await rawInsertError(fx, fx.tenantA, 1, null)).toMatchObject({ code: "23514" });
+      expect(await rawInsertError(fx, fx.tenantA, state.headSeq + 1, null)).toMatchObject({ code: "23514" });
+      await expect(verify(fx, fx.tenantA)).resolves.toMatchObject({ count: 1, headSeq: 3 });
+    } finally {
+      await fx.close();
+    }
+  });
+
+  it("defence in depth: with the guard trigger disabled by a superuser, the unique indexes still reject position reuse, fork and second root", async () => {
+    const fx = await createPgFixture(pg);
+    try {
+      const head = await append(fx, fx.tenantA, "2026-05-01T00:00:00.000Z");
+      await fx.admin("ALTER TABLE audit_events DISABLE TRIGGER audit_events_append_guard");
+      expect(await rawInsertError(fx, fx.tenantA, head.chainSeq, "f".repeat(64))).toMatchObject({ code: "23505", constraint: "audit_events_tenant_chain_seq_uniq" });
+      expect(await rawInsertError(fx, fx.tenantA, head.chainSeq + 1, head.previousHash)).toMatchObject({ code: "23505", constraint: "audit_events_tenant_previous_hash_uniq" });
+      expect(await rawInsertError(fx, fx.tenantA, head.chainSeq + 1, null)).toMatchObject({ code: "23505", constraint: "audit_events_tenant_previous_hash_uniq" });
+      await fx.admin("ALTER TABLE audit_events ENABLE TRIGGER audit_events_append_guard");
+      await expect(verify(fx, fx.tenantA)).resolves.toMatchObject({ count: 2, headSeq: 2 });
+    } finally {
+      await fx.close();
+    }
+  });
+
+  it("migration 008 fails closed when a guard index was pre-empted by another relation of the same name", async () => {
+    const fx = await createPgFixture(pg, { migrate: false });
+    try {
+      const v7 = loadKnownMigrations().filter((m) => m.version <= 7);
+      const ownerDb = createPostgresMigrationDatabase({ connectionString: pg.url(fx.database, "lus_owner"), tlsMode: "require", maxConnections: 1 });
+      await ownerDb.transaction(async (tx) => {
+        await tx.executeStatic("CREATE TABLE IF NOT EXISTS schema_migrations (version bigint PRIMARY KEY, name text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now(), checksum char(64) NOT NULL CHECK (checksum ~ '^[0-9a-f]{64}$'))");
+        for (const m of v7) {
+          // Simulate the IF NOT EXISTS hazard of 007: a non-unique index with the guard's name already exists.
+          if (m.version === 7) await tx.executeStatic("ALTER TABLE audit_events ADD COLUMN chain_seq bigint; CREATE INDEX audit_events_tenant_chain_seq_uniq ON audit_events (tenant_id); ALTER TABLE audit_events DROP COLUMN chain_seq;");
+          await tx.executeStatic(m.sql);
+          await tx.query({ text: "INSERT INTO schema_migrations (version, name, checksum) VALUES ($1,$2,$3)", values: [m.version, m.name, m.checksum] });
+        }
+      });
+      await expect(applyPendingMigrations(fx.owner())).rejects.toThrow();
+      let ledger: unknown[] = [];
+      await ownerDb.transaction(async (tx) => {
+        ledger = [...(await tx.query({ text: "SELECT max(version)::int AS v FROM schema_migrations", values: [] })).rows];
+      });
+      expect(ledger).toEqual([{ v: 7 }]);
+      await ownerDb.close();
     } finally {
       await fx.close();
     }
@@ -101,12 +173,60 @@ describe.skipIf(!postgresAvailable())("audit guards on real PostgreSQL", () => {
     }
   });
 
-  it("migration v6 → v7 succeeds on an empty audit history", async () => {
+  it("a fresh database migrates v0 → v8 and starts with an empty, verifiable chain", async () => {
     const fx = await createPgFixture(pg, { tenants: false });
     try {
-      // createPgFixture already applied all migrations through the production runner on an empty database.
-      const tenant = fx.tenantA;
-      await expect(verify(fx, tenant)).resolves.toMatchObject({ count: 0, headSeq: 0 });
+      // createPgFixture applied all migrations through the production runner on an empty database.
+      await expect(verify(fx, fx.tenantA)).resolves.toMatchObject({ count: 0, headSeq: 0 });
+    } finally {
+      await fx.close();
+    }
+  });
+
+  it("an existing v6 installation with a tenant but no audit history upgrades to v8 and the chain starts at position 1", async () => {
+    const fx = await createPgFixture(pg, { migrate: false });
+    try {
+      const v6 = loadKnownMigrations().filter((m) => m.version <= 6);
+      const ownerDb = createPostgresMigrationDatabase({ connectionString: pg.url(fx.database, "lus_owner"), tlsMode: "require", maxConnections: 1 });
+      await ownerDb.transaction(async (tx) => {
+        await tx.executeStatic("CREATE TABLE IF NOT EXISTS schema_migrations (version bigint PRIMARY KEY, name text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now(), checksum char(64) NOT NULL CHECK (checksum ~ '^[0-9a-f]{64}$'))");
+        for (const m of v6) {
+          await tx.executeStatic(m.sql);
+          await tx.query({ text: "INSERT INTO schema_migrations (version, name, checksum) VALUES ($1,$2,$3)", values: [m.version, m.name, m.checksum] });
+        }
+        await tx.query({ text: "SELECT set_config('app.tenant_id', $1, true)", values: [fx.tenantA] });
+        await tx.query({ text: "INSERT INTO tenants (tenant_id, organization_id_hash, status) VALUES ($1,$2,'active')", values: [fx.tenantA, "5".repeat(64)] });
+      });
+      await expect(applyPendingMigrations(fx.owner())).resolves.toEqual({ appliedVersions: [7, 8] });
+      await ownerDb.transaction(async (tx) => {
+        for (const grant of RUNTIME_GRANTS) await tx.executeStatic(grant);
+      });
+      await ownerDb.close();
+      const first = await append(fx, fx.tenantA, "2026-06-01T00:00:00.000Z");
+      expect(first).toMatchObject({ chainSeq: 1, previousHash: null });
+      await expect(verify(fx, fx.tenantA)).resolves.toMatchObject({ count: 1, headSeq: 1 });
+    } finally {
+      await fx.close();
+    }
+  });
+
+  it("role defaults (TimeZone, isolation, search_path) cannot change how the runtime reads or appends", async () => {
+    const fx = await createPgFixture(pg);
+    try {
+      await fx.admin(
+        `ALTER ROLE lus_runtime IN DATABASE ${fx.database} SET timezone = 'Europe/Berlin'; ` +
+          `ALTER ROLE lus_runtime IN DATABASE ${fx.database} SET default_transaction_isolation = 'repeatable read'; ` +
+          `ALTER ROLE lus_runtime IN DATABASE ${fx.database} SET search_path = '"$user", public';`,
+      );
+      const settings = await fx.runtime().transaction(async (tx) => (await tx.query<Record<string, string>>({
+        text: "SELECT current_setting('TimeZone') AS tz, current_setting('transaction_isolation') AS iso, current_setting('search_path') AS sp",
+        values: [],
+      })).rows[0]);
+      expect(settings).toEqual({ tz: "UTC", iso: "read committed", sp: "public, pg_temp" });
+      // Under repeatable read, concurrent appends would fail with unique violations (security review L2).
+      const results = await Promise.allSettled(Array.from({ length: 8 }, () => append(fx, fx.tenantA, "1970-01-01T00:00:00.000Z")));
+      expect(results.filter((r) => r.status === "rejected")).toHaveLength(0);
+      await expect(verify(fx, fx.tenantA)).resolves.toMatchObject({ count: 9, headSeq: 9 });
     } finally {
       await fx.close();
     }

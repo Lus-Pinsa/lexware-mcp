@@ -70,6 +70,7 @@ export function loadKnownMigrations(): readonly MigrationDefinition[] {
     loadMigration(5, "tenant_storage_limits", "005_tenant_storage_limits.sql"),
     loadMigration(6, "tenant_audit_integrity_ceiling", "006_tenant_audit_integrity_ceiling.sql"),
     loadMigration(7, "audit_append_ordinal", "007_audit_append_ordinal.sql"),
+    loadMigration(8, "audit_append_guard", "008_audit_append_guard.sql"),
   ]);
 }
 

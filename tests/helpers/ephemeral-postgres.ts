@@ -20,6 +20,8 @@ export interface EphemeralPostgres {
   /** Run SQL as superuser in a database (simple query protocol; synthetic setup only). */
   admin(database: string, sql: string): Promise<void>;
   createDatabase(name: string): Promise<void>;
+  /** Logical backup of `source` with pg_dump (custom format) restored into the existing empty database `target`. */
+  dumpRestore(source: string, target: string): void;
   stop(): Promise<void>;
 }
 
@@ -49,56 +51,110 @@ async function freePort(): Promise<number> {
   });
 }
 
+const EXEC_TIMEOUT_MS = 60_000;
+const asRoot = typeof process.getuid === "function" && process.getuid() === 0;
+
+/** uid/gid of the packaged `postgres` OS user (needed only when running as root), or null if there is none. */
+function postgresOsUser(): { uid: number; gid: number } | null {
+  const uid = spawnSync("id", ["-u", "postgres"], { encoding: "utf8" });
+  const gid = spawnSync("id", ["-g", "postgres"], { encoding: "utf8" });
+  if (uid.status !== 0 || gid.status !== 0) return null;
+  return { uid: Number(uid.stdout.trim()), gid: Number(gid.stdout.trim()) };
+}
+
+function prerequisitesPresent(): boolean {
+  return (
+    findBinDir() !== null &&
+    spawnSync("sh", ["-c", "command -v openssl"]).status === 0 &&
+    (!asRoot || postgresOsUser() !== null)
+  );
+}
+
+let skipWarned = false;
+
+/**
+ * Whether the real-PostgreSQL suites should run. With PERSISTENCE_REQUIRE_PG=1 this is always true, so a missing
+ * PostgreSQL makes the suites FAIL (startEphemeralPostgres throws) instead of being skipped.
+ */
 export function postgresAvailable(): boolean {
-  return findBinDir() !== null && spawnSync("sh", ["-c", "command -v openssl"]).status === 0;
+  if (process.env.PERSISTENCE_REQUIRE_PG === "1") return true;
+  const present = prerequisitesPresent();
+  if (!present && !skipWarned) {
+    skipWarned = true;
+    process.stderr.write("[persistence-pg] PostgreSQL server binaries, openssl or the postgres OS user not found — real-PostgreSQL integration tests SKIPPED.\n");
+  }
+  return present;
 }
 
 export async function startEphemeralPostgres(): Promise<EphemeralPostgres | null> {
   const bin = findBinDir();
-  if (bin === null || !postgresAvailable()) {
-    if (process.env.PERSISTENCE_REQUIRE_PG === "1") throw new Error("PostgreSQL binaries required but not found.");
+  if (bin === null || !prerequisitesPresent()) {
+    if (process.env.PERSISTENCE_REQUIRE_PG === "1") {
+      throw new Error("PERSISTENCE_REQUIRE_PG=1: PostgreSQL server binaries, openssl or the postgres OS user not found.");
+    }
     return null;
   }
-  const root = mkdtempSync(join(tmpdir(), "lus-pg-"));
-  const data = join(root, "data");
-  const asRoot = typeof process.getuid === "function" && process.getuid() === 0;
+  const pgUser = asRoot ? postgresOsUser() : null;
   // PostgreSQL refuses to run as root; in a root container run it as the packaged `postgres` user.
   const run = (cmd: string, args: string[]) =>
-    asRoot ? execFileSync("runuser", ["-u", "postgres", "--", cmd, ...args], { stdio: "pipe" }) : execFileSync(cmd, args, { stdio: "pipe" });
-  if (asRoot) {
-    const pgUid = Number(execFileSync("id", ["-u", "postgres"]).toString().trim());
-    const pgGid = Number(execFileSync("id", ["-g", "postgres"]).toString().trim());
-    chownSync(root, pgUid, pgGid);
-  }
-  chmodSync(root, 0o700);
+    asRoot
+      ? execFileSync("runuser", ["-u", "postgres", "--", cmd, ...args], { stdio: "pipe", timeout: EXEC_TIMEOUT_MS })
+      : execFileSync(cmd, args, { stdio: "pipe", timeout: EXEC_TIMEOUT_MS });
+  const own = (path: string) => {
+    if (pgUser !== null) chownSync(path, pgUser.uid, pgUser.gid);
+  };
 
-  run(join(bin, "initdb"), ["-D", data, "-U", "postgres", "-A", "trust", "--no-sync", "-E", "UTF8", "--locale=C"]);
-  // Self-signed server certificate: the production driver insists on TLS ("require" is used against this server).
-  run("openssl", [
-    "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-subj", "/CN=127.0.0.1",
-    "-keyout", join(data, "server.key"), "-out", join(data, "server.crt"),
-  ]);
-  run("chmod", ["600", join(data, "server.key")]);
-  const port = await freePort();
-  // hostssl only: a plain-TCP connection is rejected, like the production policy expects.
-  writeFileSync(join(root, "pg_hba.conf"), ["local all postgres trust", "hostssl all all 127.0.0.1/32 trust", ""].join("\n"));
-  if (asRoot) {
-    const pgUid = Number(execFileSync("id", ["-u", "postgres"]).toString().trim());
-    const pgGid = Number(execFileSync("id", ["-g", "postgres"]).toString().trim());
-    chownSync(join(root, "pg_hba.conf"), pgUid, pgGid);
+  const root = mkdtempSync(join(tmpdir(), "lus-pg-"));
+  const data = join(root, "data");
+  const stopQuietly = () => {
+    try {
+      run(join(bin, "pg_ctl"), ["-D", data, "-m", "immediate", "-w", "-t", "30", "stop"]);
+    } catch {
+      // not running
+    }
+  };
+  let port = 0;
+  try {
+    own(root);
+    chmodSync(root, 0o700);
+    run(join(bin, "initdb"), ["-D", data, "-U", "postgres", "-A", "trust", "--no-sync", "-E", "UTF8", "--locale=C"]);
+    // Self-signed server certificate: the production driver insists on TLS ("require" is used against this server).
+    run("openssl", [
+      "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1", "-subj", "/CN=127.0.0.1",
+      "-keyout", join(data, "server.key"), "-out", join(data, "server.crt"),
+    ]);
+    run("chmod", ["600", join(data, "server.key")]);
+    // hostssl only: a plain-TCP connection is rejected, like the production policy expects.
+    writeFileSync(join(root, "pg_hba.conf"), ["local all postgres trust", "hostssl all all 127.0.0.1/32 trust", ""].join("\n"));
+    own(join(root, "pg_hba.conf"));
+    // freePort() can race with parallel workers between probe and bind: retry the start on a new port.
+    for (let attempt = 1; ; attempt += 1) {
+      port = await freePort();
+      const options = [
+        `-c listen_addresses=127.0.0.1`,
+        `-c port=${port}`,
+        `-c unix_socket_directories=${root}`,
+        `-c ssl=on`,
+        `-c hba_file=${join(root, "pg_hba.conf")}`,
+        `-c fsync=off`,
+        `-c synchronous_commit=off`,
+        `-c full_page_writes=off`,
+        `-c max_connections=60`,
+      ].join(" ");
+      try {
+        run(join(bin, "pg_ctl"), ["-D", data, "-o", options, "-w", "-t", "30", "-l", join(root, "server.log"), "start"]);
+        break;
+      } catch (error) {
+        stopQuietly();
+        if (attempt >= 3) throw error;
+      }
+    }
+  } catch (error) {
+    // Never leak a half-started cluster or its temp directory.
+    stopQuietly();
+    rmSync(root, { recursive: true, force: true });
+    throw error;
   }
-  const options = [
-    `-c listen_addresses=127.0.0.1`,
-    `-c port=${port}`,
-    `-c unix_socket_directories=${root}`,
-    `-c ssl=on`,
-    `-c hba_file=${join(root, "pg_hba.conf")}`,
-    `-c fsync=off`,
-    `-c synchronous_commit=off`,
-    `-c full_page_writes=off`,
-    `-c max_connections=60`,
-  ].join(" ");
-  run(join(bin, "pg_ctl"), ["-D", data, "-o", options, "-w", "-t", "30", "-l", join(root, "server.log"), "start"]);
 
   const url = (database: string, role = "postgres") => `postgres://${role}@127.0.0.1:${port}/${database}`;
   const admin = async (database: string, sql: string) => {
@@ -118,9 +174,15 @@ export async function startEphemeralPostgres(): Promise<EphemeralPostgres | null
       if (!/^[a-z_][a-z0-9_]{0,40}$/.test(name)) throw new Error("bad test database name");
       await admin("postgres", `CREATE DATABASE ${name}`);
     },
+    dumpRestore(source: string, target: string) {
+      // Minimal environment: no inherited PG* variables (host, password, service file) can redirect the tools.
+      const env = { PATH: process.env.PATH ?? "/usr/bin:/bin", PGSSLMODE: "require" };
+      const dump = execFileSync(join(bin, "pg_dump"), ["--format=custom", "--dbname", url(source)], { env, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 256 * 1024 * 1024, timeout: EXEC_TIMEOUT_MS });
+      execFileSync(join(bin, "pg_restore"), ["--exit-on-error", "--single-transaction", "--dbname", url(target)], { env, input: dump, stdio: ["pipe", "pipe", "pipe"], timeout: EXEC_TIMEOUT_MS });
+    },
     async stop() {
       try {
-        run(join(bin, "pg_ctl"), ["-D", data, "-m", "immediate", "-w", "stop"]);
+        run(join(bin, "pg_ctl"), ["-D", data, "-m", "immediate", "-w", "-t", "30", "stop"]);
       } finally {
         rmSync(root, { recursive: true, force: true });
       }

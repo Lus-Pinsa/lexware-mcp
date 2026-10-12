@@ -109,6 +109,38 @@ describe.skipIf(!postgresAvailable())("runtime privilege verification on real Po
     expect(await check({ extra: [grant] })).toContain(code);
   });
 
+  it.each([
+    ["REFERENCES on tenants", ["GRANT REFERENCES ON tenants TO {r}"], "TENANT_MUTATION"],
+    ["REFERENCES (tenant_id) on audit_events", ["GRANT REFERENCES (tenant_id) ON audit_events TO {r}"], "AUDIT_MUTATION"],
+    ["CREATE on another schema", ["CREATE SCHEMA other_{r}", "GRANT USAGE, CREATE ON SCHEMA other_{r} TO {r}"], "ANY_SCHEMA_CREATE"],
+    ["an own schema (first in the default search_path)", ["CREATE SCHEMA {r} AUTHORIZATION {r}"], "SCHEMA_OWNER"],
+    ["the REPLICATION attribute", ["ALTER ROLE {r} REPLICATION"], "REPLICATION"],
+  ])("rejects a role with %s", async (_label, extra, code) => {
+    expect(await check({ extra })).toContain(code);
+  });
+
+  it("search_path is pinned: an own-schema or temporary table never shadows a persistence table", async () => {
+    const role = `lus_rt_shadow_${n++}`;
+    await pg.admin("postgres", `CREATE ROLE ${role} LOGIN`);
+    await fx.admin(
+      [...BASE_GRANTS, "CREATE SCHEMA {r} AUTHORIZATION {r}", "GRANT TEMPORARY ON DATABASE " + fx.database + " TO {r}"]
+        .map((s) => s.replaceAll("{r}", role))
+        .join(";\n") + ";",
+    );
+    const db = fx.runtime(role);
+    const counts = await db.transaction(async (tx) => {
+      await tx.query({ text: "SELECT set_config('app.tenant_id', $1, true)", values: [fx.tenantA] });
+      // Shadow candidates without a tenant_id column: if either one were resolved, the next query would fail.
+      await tx.query({ text: `CREATE TABLE ${role}.audit_events (x int)`, values: [] });
+      await tx.query({ text: "CREATE TEMPORARY TABLE audit_events (x int) ON COMMIT DROP", values: [] });
+      const path = await tx.query<{ p: string }>({ text: "SELECT current_setting('search_path') AS p", values: [] });
+      const rows = await tx.query<{ c: number }>({ text: "SELECT count(*)::int AS c FROM audit_events WHERE tenant_id = $1", values: [fx.tenantA] });
+      return { path: path.rows[0]!.p, count: rows.rows[0]!.c };
+    });
+    expect(counts.path).toBe("public, pg_temp");
+    expect(counts.count).toBeGreaterThanOrEqual(1);
+  });
+
   it("rejects privileges inherited through role membership", async () => {
     await pg.admin("postgres", "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'lus_rt_parent') THEN CREATE ROLE lus_rt_parent NOLOGIN; END IF; END $$;");
     await fx.admin("GRANT UPDATE ON audit_events TO lus_rt_parent");

@@ -55,6 +55,23 @@ describe("audit timestamp canonicalization before hashing", () => {
     expect(assertAuditTimestamp("2028-02-29T00:00:00Z")).toBe("2028-02-29T00:00:00.000Z");
   });
 
+  it("accepts only instants in 1970–9999 UTC, so every stored value reads back as the same instant (security review M1)", () => {
+    for (const invalid of [
+      "0050-01-01T00:00:00Z", // PostgreSQL prints "0050-…", the driver reads it as 1950
+      "0099-12-31T23:59:59Z",
+      "0000-01-01T00:00:00Z",
+      "1800-01-01T00:00:00Z", // historic local-mean-time offsets
+      "1969-12-31T23:59:59.999Z",
+      "1970-01-01T00:30:00+01:00", // 1969 in UTC
+      "9999-12-31T23:00:00-01:00", // year 10000 in UTC
+    ]) {
+      expect(() => assertAuditTimestamp(invalid), invalid).toThrow(/Invalid audit timestamp/);
+    }
+    expect(assertAuditTimestamp("1970-01-01T00:00:00Z")).toBe("1970-01-01T00:00:00.000Z");
+    expect(assertAuditTimestamp("1970-01-01T01:00:00+01:00")).toBe("1970-01-01T00:00:00.000Z");
+    expect(assertAuditTimestamp("9999-12-31T23:59:59.999Z")).toBe("9999-12-31T23:59:59.999Z");
+  });
+
   it("hashes the same instant identically regardless of the supplied ISO spelling", () => {
     const a = { ...INPUT, createdAt: "2026-10-09T12:34:56.123Z" };
     const b = { ...INPUT, createdAt: "2026-10-09T14:34:56.123000+02:00" };

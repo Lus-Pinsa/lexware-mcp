@@ -31,10 +31,26 @@ vi.mock("../src/persistence/repository.js", () => ({
   inspectRuntimePrivileges: async () => ({}),
 }));
 
-const { runPersistenceStartupGates } = await import("../src/persistence/startup-gates.js");
+const { openDurablePersistence, runPersistenceStartupGates } = await import("../src/persistence/startup-gates.js");
 
 const db = { transaction: async <T>(work: (tx: never) => Promise<T>) => work({} as never) };
-const config = { enabled: true, expectedRuntimeRole: "lus_runtime" } as never;
+const config = {
+  enabled: true,
+  expectedRuntimeRole: "lus_runtime",
+  tenantId: "t",
+  tlsMode: "verify-full",
+  secrets: { getDatabaseUrl: () => "postgres://synthetic", keyring: {} },
+} as never;
+const factories = () => ({
+  createDatabase: vi.fn(() => {
+    calls.push("connect");
+    return db as never;
+  }),
+  createStore: vi.fn(() => {
+    calls.push("store");
+    return { mode: "postgres" } as never;
+  }),
+});
 const READ_ONLY = { drafts: false, finalize: false };
 const ORDER = ["migrations", "session", "schema", "privileges", "binding"];
 
@@ -55,15 +71,33 @@ describe("persistence start-up gates (C-07)", () => {
     expect(calls).toEqual(ORDER.slice(0, ORDER.indexOf(gate) + 1));
   });
 
-  it("src/server.ts runs the shared gates before creating the durable store and has no private copy of them", () => {
+  it("openDurablePersistence connects, runs every gate, and only then builds the durable store", async () => {
+    const f = factories();
+    const opened = await openDurablePersistence(config, READ_ONLY, f);
+    expect(calls).toEqual(["connect", ...ORDER, "store"]);
+    expect(f.createStore).toHaveBeenCalledTimes(1);
+    expect(opened.store).toEqual({ mode: "postgres" });
+  });
+
+  it.each(ORDER)("openDurablePersistence never builds a store when the %s gate fails", async (gate) => {
+    fail.at = gate;
+    const f = factories();
+    await expect(openDurablePersistence(config, READ_ONLY, f)).rejects.toThrow(`gate failed: ${gate}`);
+    expect(f.createStore).not.toHaveBeenCalled();
+    expect(calls).not.toContain("store");
+  });
+
+  it("src/server.ts delegates the enabled-persistence start to openDurablePersistence and has no private copy", () => {
+    // Static wiring check (server.ts runs the whole server on import). The behaviour itself is tested above.
     const server = readFileSync(new URL("../src/server.ts", import.meta.url), "utf8");
-    const gates = server.indexOf("await runPersistenceStartupGates(");
-    const store = server.indexOf("createDurablePendingVoucherEventStore({");
-    const enabled = server.indexOf("if (persistenceConfig.enabled)");
-    expect(enabled).toBeGreaterThan(-1);
-    expect(gates).toBeGreaterThan(enabled);
-    expect(store).toBeGreaterThan(gates);
+    const branch = server.slice(server.indexOf("if (persistenceConfig.enabled) {"));
+    const body = branch.slice(0, branch.indexOf("\n}\n") + 3);
+    expect(body).toMatch(/^if \(persistenceConfig\.enabled\) \{\n(?:\s*\/\/.*\n)*\s*const durable = await openDurablePersistence\(/);
+    expect(body).toContain("pendingVoucherStore = durable.store;");
     for (const direct of [
+      "runPersistenceStartupGates",
+      "createDurablePendingVoucherEventStore",
+      "createPostgresDatabase",
       "assertMigrationStateCurrent",
       "verifySessionSettings",
       "verifySchemaSafety",

@@ -180,7 +180,9 @@ export async function verifyRestoredDatabase(
  */
 export interface CompleteRestoreManifest {
   readonly version: 3;
+  readonly schemaMigrationCount: number;
   readonly schemaMigrationDigest: string;
+  readonly metadataDigest: string;
   readonly tenantCount: number;
   readonly tenantSetDigest: string;
   readonly runtimeBindingDigest: string;
@@ -217,7 +219,9 @@ export async function captureCompleteRestoreManifest(
 
   return Object.freeze({
     version: 3 as const,
+    schemaMigrationCount: migrations.length,
     schemaMigrationDigest,
+    metadataDigest: digest("metadata", scope.metadata),
     tenantCount: scope.tenantIds.length,
     tenantSetDigest: digest("tenant-set", scope.tenantIds.map((id) => [id])),
     runtimeBindingDigest: digest("runtime-bindings", scope.bindings.map(([role, tenant]) => [role, tenant])),
@@ -226,7 +230,7 @@ export async function captureCompleteRestoreManifest(
   });
 }
 
-const COMPLETE_MANIFEST_FIELDS = ["version", "schemaMigrationDigest", "tenantCount", "tenantSetDigest", "runtimeBindingDigest", "tableRowCountsDigest"] as const;
+const COMPLETE_MANIFEST_FIELDS = ["version", "schemaMigrationCount", "schemaMigrationDigest", "metadataDigest", "tenantCount", "tenantSetDigest", "runtimeBindingDigest", "tableRowCountsDigest"] as const;
 
 export function assertCompleteRestoreManifestMatches(
   expected: CompleteRestoreManifest,

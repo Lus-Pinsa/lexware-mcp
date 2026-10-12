@@ -184,6 +184,8 @@ describe.skipIf(!postgresAvailable())("backup/restore verification on real Postg
     ["tenant B's organisation binding changed", () => `UPDATE tenants SET organization_id_hash = '${"7".repeat(64)}' WHERE tenant_id = '${fx.tenantB}'`, /Restore verification failed: tenantBindingDigest/],
     ["tenant B's audit entry altered", () => `UPDATE audit_events SET item_count = item_count + 1 WHERE tenant_id = '${fx.tenantB}'`, /integrity/i],
     ["a runtime binding removed", () => `DELETE FROM tenant_runtime_bindings WHERE tenant_id = '${fx.tenantB}'`, /completeness verification failed: .*runtimeBindingDigest/],
+    ["the anchor updated_at metadata shifted", () => `UPDATE audit_retention_anchors SET updated_at = updated_at + interval '1 day'`, /completeness verification failed: .*metadataDigest/],
+    ["the migration ledger applied_at shifted", () => `UPDATE schema_migrations SET applied_at = applied_at + interval '1 day' WHERE version = 1`, /completeness verification failed: .*metadataDigest/],
     ["a runtime binding added for another role", () => `INSERT INTO tenant_runtime_bindings (role_name, tenant_id) VALUES ('lus_intruder', '${fx.tenantA}')`, /completeness verification failed: .*runtimeBindingDigest/],
   ])("C-03: a restore with %s is detected although the tenant-A manifest still matches", async (_label, tamper, expected) => {
     const source = await verifierFor(fx.database);
@@ -224,11 +226,31 @@ describe.skipIf(!postgresAvailable())("backup/restore verification on real Postg
     opened.push(superuser);
     await expect(captureCompleteRestoreManifest(superuser)).rejects.toThrow(/read-only verifier role \(no superuser/);
     const verifier = await verifierFor(fx.database);
-    await fx.admin("GRANT UPDATE ON tenant_runtime_bindings TO lus_restore_verifier");
-    try {
-      await expect(captureCompleteRestoreManifest(verifier)).rejects.toThrow(/read-only verifier role \(no superuser/);
-    } finally {
-      await fx.admin("REVOKE UPDATE ON tenant_runtime_bindings FROM lus_restore_verifier");
+    await expect(captureCompleteRestoreManifest(verifier)).resolves.toMatchObject({ tenantCount: 2 });
+    for (const [grant, revoke] of [
+      ["GRANT UPDATE ON tenant_runtime_bindings TO lus_restore_verifier", "REVOKE UPDATE ON tenant_runtime_bindings FROM lus_restore_verifier"],
+      // Indirect write path 1: an owner-defined SECURITY DEFINER function the verifier may execute.
+      [
+        "CREATE FUNCTION public.verifier_write(uuid) RETURNS void LANGUAGE sql SECURITY DEFINER AS $$DELETE FROM public.tenant_runtime_bindings WHERE tenant_id = $1$$; " +
+          "ALTER FUNCTION public.verifier_write(uuid) OWNER TO lus_owner; REVOKE ALL ON FUNCTION public.verifier_write(uuid) FROM PUBLIC; " +
+          "GRANT EXECUTE ON FUNCTION public.verifier_write(uuid) TO lus_restore_verifier",
+        "DROP FUNCTION public.verifier_write(uuid)",
+      ],
+      // Indirect write path 2: an owner-backed, automatically updatable view.
+      [
+        "CREATE VIEW public.verifier_view AS SELECT * FROM public.tenant_runtime_bindings; ALTER VIEW public.verifier_view OWNER TO lus_owner; " +
+          "GRANT SELECT, DELETE ON public.verifier_view TO lus_restore_verifier",
+        "DROP VIEW public.verifier_view",
+      ],
+      // Indirect write path 3: membership in the owning role (SET ROLE).
+      ["GRANT lus_owner TO lus_restore_verifier", "REVOKE lus_owner FROM lus_restore_verifier"],
+    ] as const) {
+      await fx.admin(grant);
+      try {
+        await expect(captureCompleteRestoreManifest(verifier), grant).rejects.toThrow(/read-only verifier role \(no superuser/);
+      } finally {
+        await fx.admin(revoke);
+      }
     }
   });
 });

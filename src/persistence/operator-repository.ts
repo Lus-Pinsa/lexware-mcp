@@ -114,6 +114,15 @@ export async function bindRuntimeRoleToTenant(
       throw new PersistenceValidationError("Tenant for runtime binding is unavailable.");
     }
 
+    // Only an existing login role can serve as runtime; a typo or a group role would leave an unusable binding.
+    const role = await tx.query<{ ok: boolean }>({
+      text: "SELECT count(*) = 1 AS ok FROM pg_roles WHERE rolname = $1 AND rolcanlogin",
+      values: [input.roleName],
+    });
+    if (role.rows[0]?.ok !== true) {
+      throw new PersistenceValidationError("Runtime database role for binding does not exist or cannot log in.");
+    }
+
     const inserted = await tx.query({ text: SQL_BIND_RUNTIME_ROLE, values: [input.roleName, tenantId] });
     if (inserted.rowCount !== 0 && inserted.rowCount !== 1) {
       throw new PersistenceValidationError("Unexpected runtime binding result.");

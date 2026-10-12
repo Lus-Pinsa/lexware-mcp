@@ -241,6 +241,13 @@ describe.skipIf(!postgresAvailable())("audit guards on real PostgreSQL", () => {
       // Migration 010 leaves an existing runtime role unbound: it must not see or write the tenant until the operator
       // binds it (fail closed), then it works as before.
       await expect(append(fx, fx.tenantA, "2026-06-01T00:00:00.000Z")).rejects.toThrow();
+      // A typo or a non-login role cannot be bound (no unusable binding, no misleading audit entry).
+      for (const roleName of ["lus_runtime_typo", "pg_read_all_data"]) {
+        await expect(
+          bindRuntimeRoleToTenant(fx.owner(), { tenantId: fx.tenantA, roleName, auditId: randomUUID(), actorHash: ACTOR, createdAt: "2026-05-31T00:00:00.000Z" }),
+          roleName,
+        ).rejects.toThrow(/does not exist or cannot log in/);
+      }
       await bindRuntimeRoleToTenant(fx.owner(), { tenantId: fx.tenantA, roleName: "lus_runtime", auditId: randomUUID(), actorHash: ACTOR, createdAt: "2026-05-31T00:00:00.000Z" });
       // The binding itself is the first audited event of the tenant's chain.
       const second = await append(fx, fx.tenantA, "2026-06-01T00:00:00.000Z");

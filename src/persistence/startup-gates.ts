@@ -1,4 +1,7 @@
+import type { PendingVoucherEventStore } from "../pending-voucher-store.js";
 import { assertMigrationStateCurrent } from "./migration-runner.js";
+import { createDurablePendingVoucherEventStore } from "./pending-voucher-store.js";
+import { createPostgresDatabase, type ManagedPersistenceDatabase } from "./postgres-driver.js";
 import {
   inspectRuntimePrivileges,
   listAppliedSchemaMigrations,
@@ -35,4 +38,42 @@ export async function runPersistenceStartupGates(
   );
 
   await verifyConfiguredTenantBinding(config, db, capabilities);
+}
+
+export interface DurablePersistenceFactories {
+  readonly createDatabase: (settings: {
+    connectionString: string;
+    tlsMode: EnabledPersistenceRuntimeConfig["tlsMode"];
+    applicationName: string;
+  }) => ManagedPersistenceDatabase;
+  readonly createStore: (options: {
+    readonly db: PersistenceDatabase;
+    readonly tenantId: EnabledPersistenceRuntimeConfig["tenantId"];
+    readonly keyring: EnabledPersistenceRuntimeConfig["secrets"]["keyring"];
+  }) => PendingVoucherEventStore;
+}
+
+const PRODUCTION_FACTORIES: DurablePersistenceFactories = {
+  createDatabase: (settings) => createPostgresDatabase(settings),
+  createStore: (options) => createDurablePendingVoucherEventStore(options),
+};
+
+/**
+ * The complete enabled-persistence start used by src/server.ts: connect, run every start-up gate, and only then build
+ * the durable store. A failing gate throws before any store exists (no RAM fallback). Factories are injectable so the
+ * ordering is tested behaviourally (tests/persistence-startup-gates.test.ts).
+ */
+export async function openDurablePersistence(
+  config: EnabledPersistenceRuntimeConfig,
+  capabilities: EffectiveWriteCapabilities,
+  factories: DurablePersistenceFactories = PRODUCTION_FACTORIES,
+): Promise<{ readonly db: ManagedPersistenceDatabase; readonly store: PendingVoucherEventStore }> {
+  const db = factories.createDatabase({
+    connectionString: config.secrets.getDatabaseUrl(),
+    tlsMode: config.tlsMode,
+    applicationName: "lus-lexware-mcp",
+  });
+  await runPersistenceStartupGates(db, config, capabilities);
+  const store = factories.createStore({ db, tenantId: config.tenantId, keyring: config.secrets.keyring });
+  return Object.freeze({ db, store });
 }

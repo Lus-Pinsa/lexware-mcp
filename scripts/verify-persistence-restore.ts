@@ -43,7 +43,7 @@ async function main(): Promise<void> {
     console.error(
       "[restore-verifier] PASS " +
         "schemaMigrations=" +
-        (manifest.tenants[0]?.schemaMigrationCount ?? 0) +
+        manifest.schemaMigrationCount +
         " tenants=" +
         manifest.tenantCount +
         " webhookRows=" +

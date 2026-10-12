@@ -138,6 +138,14 @@ Prüfer: Codex (OpenAI, schreibgeschützt, andere Modellfamilie als der Erstelle
 | C-08 | INFO | Die Testinstanz läuft mit `fsync=off`. **Korrektur:** Der Queue-Test belegt die Commit-Reihenfolge und die Sichtbarkeit über Verbindungen hinweg, **nicht** die Dauerhaftigkeit nach einem Absturz. „Dauerhafter Commit“ ist keine getestete Eigenschaft | nur Doku | — |
 | C-02, C-04, C-05, C-06 | MEDIUM/LOW | entsprechen D-2, D-3, O-2 und R4-F3 | unverändert offen (Owner-Entscheidungen) | — |
 
+Unabhängige Fix-Reviews (Codex, schreibgeschützt), Grenze: 3 Runden:
+
+| Runde | Commit | Codex-Urteil | Befunde → Fix |
+|---|---|---|---|
+| 1 | `bdb99b5` | Request changes. C-01 und C-07 geschlossen, C-03 teilweise | Leere Datenbank übersprang die Ledger- und Schema-Prüfung (MEDIUM); Bindungstabelle unvollständig gepinnt; GRANT fehlte in der Doku; zwei PG-Tests mit falschen Erwartungen; Prüfrolle nicht als lesend erzwungen; Überladungen global gezählt → alles behoben in `dab3a2b` |
+| 2 | `dab3a2b` | Request changes. Befunde aus Runde 1 bestätigt behoben | Prüfrolle hatte noch indirekte Schreibwege (SECURITY DEFINER, View, Mitgliedschaft; MEDIUM); Metadaten (`applied_at`, `updated_at`) nicht verglichen; Verdrahtung in `server.ts` nur per Text geprüft; Operator konnte eine nicht existierende Rolle binden; Ausgabe `schemaMigrations=0` → behoben in Fix-Runde 3: `openDurablePersistence`, verhaltensbasiert getestet, volles Rechteprofil der Prüfrolle, Metadaten-Digest, nur Login-Rollen bindbar |
+| 3 | siehe Abschnitt 4 | abschließende Verifikation | — |
+
 Betriebsfolge nach Migration 010, in dieser Reihenfolge:
 1. `GRANT SELECT ON public.tenant_runtime_bindings TO <runtime-rolle>`. Nur SELECT; jedes Schreib- oder Spaltenrecht bricht den Start ab.
 2. Die Runtime-Rolle über den Operator-Pfad `bindRuntimeRoleToTenant` an genau den konfigurierten Tenant binden. Das erzeugt einen Audit-Eintrag.

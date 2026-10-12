@@ -47,7 +47,7 @@ A backup is not reported as **VERIFIED** merely because Render says a backup/rec
 - Source and restore database are separate instances.
 - Restore target was created from the backup/recovery point being tested.
 - The exact application commit under test is known.
-- Both URLs use a dedicated **read-only verifier role** with `BYPASSRLS` (LOGIN, `USAGE` on schema `public`, `SELECT` on the persistence tables, no ownership, no other rights). Row-level security hides other tenants from every other role, including the table owner; without this role the verifier fails closed instead of reporting a partial view as complete (review finding C-03).
+- Both URLs use a dedicated **read-only verifier role** with `BYPASSRLS` (LOGIN, `USAGE` on schema `public`, `SELECT` on the persistence tables, nothing else). The verifier enforces this profile and fails closed on: superuser, CREATEDB/CREATEROLE/REPLICATION, any role membership, CREATE on the database or any schema, owned objects, default or parameter privileges, any write right on a user table or view, and any executable SECURITY DEFINER function outside the system schemas. Row-level security hides other tenants from every other role, including the table owner; without this role the verifier fails closed instead of reporting a partial view as complete (review finding C-03).
 - The chosen TLS mode matches the approved deployment path.
 
 ### Verification command
@@ -67,6 +67,8 @@ The command intentionally never prints either database URL or any database conte
 
 The verifier fails closed unless source and restore match on the **database-wide** evidence (since schema v10):
 
+- complete migration ledger (count + digest) and structural schema safety, checked even when the database has no tenant,
+- persisted metadata: ledger `applied_at` and anchor `updated_at` (epoch digest),
 - exact tenant set (count + SHA-256 digest of all tenant IDs),
 - runtime-role bindings (`tenant_runtime_bindings`, digest),
 - total row counts of every persistence table, which must equal the per-tenant evidence,

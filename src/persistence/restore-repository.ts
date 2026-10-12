@@ -193,17 +193,34 @@ export interface RestoreCompletenessScope {
   readonly bindings: readonly (readonly [roleName: string, tenantId: TenantId])[];
   /** Total rows of tenants, webhook_events, audit_events, audit_retention_anchors, tenant_runtime_bindings. */
   readonly counts: readonly string[];
+  /** Persisted metadata outside the per-tenant evidence: ledger applied_at and anchor updated_at (epoch text). */
+  readonly metadata: readonly (readonly string[])[];
 }
 
-const PERSISTENCE_TABLES = "'schema_migrations', 'tenants', 'webhook_events', 'audit_events', 'audit_retention_anchors', 'tenant_runtime_bindings'";
 const SQL_VERIFIER_ROLE =
-  "SELECT r.rolbypassrls AS sees_all, " +
-  // Read-only verifier: no superuser, no ownership of and no mutation right on any persistence table.
-  "(NOT r.rolsuper AND NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace " +
-  "WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname IN (" + PERSISTENCE_TABLES + ") AND (c.relowner = r.oid " +
-  "OR has_table_privilege(r.oid, c.oid, 'INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER,REFERENCES') " +
-  "OR has_any_column_privilege(r.oid, c.oid, 'INSERT,UPDATE,REFERENCES')))) AS read_only " +
-  "FROM pg_roles r WHERE r.rolname = current_user";
+  "SELECT r.rolbypassrls AS sees_all, (" +
+  // Read-only verifier profile (BYPASSRLS is the one intended exception): no superuser or role-administration
+  // attributes, no role memberships (SET ROLE), no CREATE anywhere, no owned objects, no default privileges, no
+  // parameter privileges, no write right on any user relation (tables and views), and no executable SECURITY DEFINER
+  // function outside the system schemas (an owner-defined function could write on its behalf).
+  "NOT r.rolsuper AND NOT r.rolcreatedb AND NOT r.rolcreaterole AND NOT r.rolreplication " +
+  "AND NOT EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.member = r.oid) " +
+  "AND NOT has_database_privilege(r.oid, current_database(), 'CREATE') " +
+  "AND NOT EXISTS (SELECT 1 FROM pg_namespace n WHERE has_schema_privilege(r.oid, n.oid, 'CREATE') " +
+  " AND n.oid <> pg_my_temp_schema() AND NOT pg_is_other_temp_schema(n.oid) AND n.nspname !~ '^pg_toast_temp_') " +
+  "AND NOT EXISTS (SELECT 1 FROM pg_shdepend d WHERE d.refclassid = 'pg_authid'::regclass AND d.refobjid = r.oid " +
+  " AND d.deptype = 'o' AND d.dbid IN (0, (SELECT oid FROM pg_database WHERE datname = current_database()))) " +
+  "AND NOT EXISTS (SELECT 1 FROM pg_default_acl a CROSS JOIN LATERAL aclexplode(a.defaclacl) x WHERE x.grantee = r.oid) " +
+  "AND NOT EXISTS (SELECT 1 FROM pg_parameter_acl a WHERE has_parameter_privilege(r.oid, a.parname, 'SET') " +
+  " OR has_parameter_privilege(r.oid, a.parname, 'ALTER SYSTEM')) " +
+  "AND NOT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace " +
+  " WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f') AND n.nspname NOT IN ('pg_catalog', 'information_schema') " +
+  " AND n.nspname !~ '^pg_(toast|temp)' AND (c.relowner = r.oid " +
+  " OR has_table_privilege(r.oid, c.oid, 'INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER,REFERENCES') " +
+  " OR has_any_column_privilege(r.oid, c.oid, 'INSERT,UPDATE,REFERENCES'))) " +
+  "AND NOT EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace pn ON pn.oid = p.pronamespace WHERE p.prosecdef " +
+  " AND pn.nspname NOT IN ('pg_catalog', 'information_schema') AND has_function_privilege(r.oid, p.oid, 'EXECUTE'))" +
+  ") AS read_only FROM pg_roles r WHERE r.rolname = current_user";
 
 /**
  * Database-wide restore scope (C-03): every tenant, every runtime binding and the total row count of every tenant
@@ -219,7 +236,7 @@ export async function readRestoreCompletenessScope(tx: SqlExecutor): Promise<Res
   }
   if (role.rows[0].read_only !== true) {
     throw new PersistenceValidationError(
-      "Restore completeness verification requires a read-only verifier role (no superuser, ownership or write rights).",
+      "Restore completeness verification requires a read-only verifier role (no superuser, ownership, membership or write path).",
     );
   }
   const tenants = await tx.query<{ tenant_id: string }>({
@@ -241,6 +258,13 @@ export async function readRestoreCompletenessScope(tx: SqlExecutor): Promise<Res
   if (counts.rowCount !== 1 || c === undefined) {
     throw new PersistenceValidationError("Restore completeness counts unavailable.");
   }
+  const metadata = await tx.query<{ k: string; id: string; epoch: string }>({
+    text:
+      "SELECT 'ledger' AS k, version::text AS id, extract(epoch FROM applied_at)::text AS epoch FROM schema_migrations " +
+      "UNION ALL SELECT 'anchor', tenant_id::text, extract(epoch FROM updated_at)::text FROM audit_retention_anchors " +
+      "ORDER BY 1, 2",
+    values: [],
+  });
   return Object.freeze({
     tenantIds: Object.freeze(tenants.rows.map((row) => parseTenantId(row.tenant_id))),
     bindings: Object.freeze(
@@ -252,5 +276,6 @@ export async function readRestoreCompletenessScope(tx: SqlExecutor): Promise<Res
       }),
     ),
     counts: Object.freeze([c.t, c.w, c.a, c.h, c.b].map(String)),
+    metadata: Object.freeze(metadata.rows.map((row) => Object.freeze([row.k, row.id, row.epoch]))),
   });
 }

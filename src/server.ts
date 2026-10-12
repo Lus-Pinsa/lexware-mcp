@@ -21,13 +21,8 @@ import { registerTools } from "./tools/index.js";
 import { hardenApp, isLexwareWebhookPath, isMcpPath, preAuthDebugLine } from "./http-hardening.js";
 import { createLexwareWebhookHandler } from "./webhook-receiver.js";
 import { createMemoryPendingVoucherEventStore } from "./pending-voucher-store.js";
-import { createDurablePendingVoucherEventStore } from "./persistence/pending-voucher-store.js";
-import {
-  createPostgresDatabase,
-  type ManagedPersistenceDatabase,
-} from "./persistence/postgres-driver.js";
 import { loadPersistenceRuntimeConfig } from "./persistence/runtime-config.js";
-import { runPersistenceStartupGates } from "./persistence/startup-gates.js";
+import { openDurablePersistence } from "./persistence/startup-gates.js";
 /**
  * Base64 file uploads
  * (upload-file / upload-voucher-file)
@@ -144,42 +139,17 @@ const persistenceConfig =
     config.webhookOrganizationId,
   );
 
-let persistenceDb:
-  | ManagedPersistenceDatabase
-  | undefined;
-
 let pendingVoucherStore =
   createMemoryPendingVoucherEventStore();
 
 if (persistenceConfig.enabled) {
-  persistenceDb =
-    createPostgresDatabase({
-      connectionString:
-        persistenceConfig.secrets
-          .getDatabaseUrl(),
-      tlsMode:
-        persistenceConfig.tlsMode,
-      applicationName:
-        "lus-lexware-mcp",
-    });
-
-  // Persistence is fail-closed. When explicitly enabled there is no RAM fallback.
-  // All gates (migrations, session settings, schema safety, runtime privileges, runtime/tenant binding) run in one
-  // shared function that the real-PostgreSQL start-up tests call as well.
-  await runPersistenceStartupGates(
-    persistenceDb,
+  // Persistence is fail-closed. When explicitly enabled there is no RAM fallback: openDurablePersistence connects,
+  // runs every start-up gate (shared with the real-PostgreSQL tests) and only then builds the durable store.
+  const durable = await openDurablePersistence(
     persistenceConfig,
     config.capabilities,
   );
-
-  pendingVoucherStore =
-    createDurablePendingVoucherEventStore({
-      db: persistenceDb,
-      tenantId:
-        persistenceConfig.tenantId,
-      keyring:
-        persistenceConfig.secrets.keyring,
-    });
+  pendingVoucherStore = durable.store;
 }
 
 /* ============================================================

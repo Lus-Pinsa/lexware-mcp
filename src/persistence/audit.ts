@@ -42,16 +42,41 @@ export function assertAuditItemCount(value: number): number {
   return value;
 }
 
+/**
+ * PostgreSQL timestamptz round-trips to UTC with millisecond precision in
+ * our JS driver. Hash the same canonical representation before INSERT.
+ * A sub-millisecond digit that would be lost must fail closed.
+ */
 export function assertAuditTimestamp(value: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:?\d{2})$/.exec(value);
+  if (match === null) {
+    throw new PersistenceValidationError("Invalid audit timestamp.");
+  }
+  const [, yyyy, mm, dd, hh, minute, second, fraction = "", timezone] = match;
+  const year = Number(yyyy);
+  const month = Number(mm);
+  const day = Number(dd);
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const monthLengths = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  const maxDay = monthLengths[month - 1] ?? 0;
+  const offset = timezone === "Z" ? null : timezone.slice(1).replace(":", "");
+  const offsetHour = offset === null ? 0 : Number(offset.slice(0, 2));
+  const offsetMinute = offset === null ? 0 : Number(offset.slice(2));
+
   if (
-    value.length < 20 ||
-    value.length > 40 ||
-    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:?\d{2})$/.test(value) ||
-    Number.isNaN(Date.parse(value))
+    day < 1 || day > maxDay ||
+    Number(hh) > 23 || Number(minute) > 59 || Number(second) > 59 ||
+    offsetHour > 14 || offsetMinute > 59 ||
+    (offsetHour === 14 && offsetMinute !== 0) ||
+    (fraction.length > 3 && /[1-9]/.test(fraction.slice(3)))
   ) {
     throw new PersistenceValidationError("Invalid audit timestamp.");
   }
-  return value;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    throw new PersistenceValidationError("Invalid audit timestamp.");
+  }
+  return date.toISOString();
 }
 
 export function validateAuditEntry(input: AuditEntryInput): AuditEntryInput {

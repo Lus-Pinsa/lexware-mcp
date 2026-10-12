@@ -1,7 +1,7 @@
 # Persistence-Integration: zentraler Handoff
 
 Dies ist die **einzige** Statusdatei für die Persistence-Integration. Sie ersetzt keine Owner-Freigabe.
-Erstellt durch Claude Code am 2026-10-12, Audit und Integration ab 07:40 UTC. Stand des Dokuments: Head der Branch `claude/pg-runtime-gates` (Fix-Runden 1–3, Gate-Tests, 2026-10-12).
+Erstellt durch Claude Code am 2026-10-12, Audit und Integration ab 07:40 UTC. Stand des Dokuments: Head der Branch `claude/pg-runtime-gates` (Fix-Runden 1–3, Verifikation Runde 4, 2026-10-12). Automatische Fix-Runden für die Persistence-Befunde sind **abgeschlossen**; offene Punkte sind Owner-Entscheidungen.
 
 ## 1. Referenzen (verifiziert per `git fetch` und GitHub-API)
 
@@ -107,6 +107,25 @@ Damit ist der Aufrufpfad in `server.ts` nachgewiesen.
 | C3-F6 | NIT | Domänen-String noch `v1` | auf `v2` |
 | S3-F5, C3-F5, C3-F7 | INFO | Metadaten-Zeitstempel, PUBLIC-Default-ACL, `work_mem`-an-PUBLIC als mögliches Falsch-Positiv, Stacktrace beim Startabbruch, Spalten-UPDATE nicht zulässig | im ADR als Restrisiko |
 
+### 3d. Verifikation Runde 4 auf #38 (`c7b6fed`)
+
+| Review | Ergebnis | Blockierend? |
+|---|---|---|
+| Code Review | **APPROVE** (Nits nicht blockierend), YELLOW nur wegen PG 15/17 und Managed-PostgreSQL. Echter Start von `dist/server.js`: korrekt eingerichtet ok; geänderte `proconfig`, Trigger-Argument, `session_replication_role=replica`, Zusatz-Trigger und ausführbare SECURITY-DEFINER-Funktion → jeweils Exit 1. Keine Falsch-Positiven nach `pg_dump`/`pg_restore` in vier Varianten und mit allen 47 Contrib-Extensions. | nein |
+| Security-Audit | **PASS WITH RISKS**, YELLOW. S3-F1 ist geschlossen; alle Manipulationen aus Runde 3 und rund 20 neue Owner-Angriffe werden erkannt oder sind nur als Superuser möglich. | nein |
+
+Offene, nicht blockierende Punkte (keine weitere automatische Runde, Grenze 3 erreicht):
+
+| ID | Schwere | Punkt | Einordnung |
+|---|---|---|---|
+| R4-F1 | MEDIUM | Ein böswilliger Tabellen-Owner kann eine SECURITY-DEFINER-Funktion in ein Aggregat verpacken; die Runtime kann sie dann indirekt ausführen (z. B. Guard aus- und wieder einschalten) | Owner-Vertrauen → **D-3** |
+| R4-F2 | MEDIUM (schon vorher vorhanden) | Ein böswilliger Owner kann der Runtime über eine View UPDATE/DELETE auf Audit-Zeilen geben | Owner-Vertrauen → **D-3** |
+| R4-F3 | LOW | Session-Settings werden einmal beim Start auf einer Verbindung geprüft; ein Transaktions-Pooler (pgbouncer) ist nicht abgedeckt | Betriebsvorgabe: keinen Transaktions-Pooler verwenden, sonst Prüfung pro Verbindung nachrüsten |
+| C4-1 | LOW (Testlücke) | `proconfig`, `tgnargs`/`tgattr` und `lanname` sind nicht durch Tests abgesichert (end-to-end vom Reviewer nachgewiesen); `assertEpochText` ohne Negativtest | optionaler Folgeauftrag |
+| R4-F4/C4-4 | INFO | Keine `.gitattributes`; ein CRLF-Checkout ändert die Migrations-Checksummen (fail closed) | optional `*.sql text eol=lf` (kein Gate-File) |
+| R4-F6/C4-3 | INFO | Die SECURITY-DEFINER-Prüfung berücksichtigt keine Schema-USAGE; mögliche Falsch-Positive bei Managed-PostgreSQL (fail closed) | vor Produktion die Abfrage aus dem Review auf der Ziel-DB ausführen |
+| C4-5 | INFO | Ein künftiges Redefinieren des Guards muss die Hash-Quelle (Migration 008) mitziehen | im ADR vermerken, sobald relevant |
+
 ## 4. Nachweise je SHA
 
 Alle lokalen Läufe: Node v22.22.0, PostgreSQL 16.15 (kurzlebige Instanz, TLS, nur Loopback), synthetische Daten.
@@ -128,6 +147,7 @@ Alle lokalen Läufe: Node v22.22.0, PostgreSQL 16.15 (kurzlebige Instanz, TLS, n
 | Gegenproben Fix-Runde 3 | 14 Mutationen | alle erkannt (je 1–3 rote Tests): tgtype, WHEN, Rumpf-Hash, weitere Trigger, Rules, Vererbung, UNLOGGED, SECURITY DEFINER, `session_replication_role`, `received_at`-Epoch, Audit-Epoch, `synchronous_commit`, `auditAnchorSeq`, ALTER-SYSTEM-Zweig |
 | `server.ts`-Aufrufpfad | Code-Reviewer Runde 3: echtes `dist/server.js` gegen einen ephemeren Cluster | Start ok; Guard nicht ALWAYS → Exit 1 (APPEND_GUARD); URL-Parameter → Exit 1; Persistence aus unverändert |
 | CI `6afca6e` | GitHub-Runner (ubuntu-latest, kein Root) | 57 Dateien, 1056/1056; die PostgreSQL-Suites, auch `pg_dump`/`pg_restore`, liefen tatsächlich (Log des Jobs `build-test`) |
+| `c7b6fed` (#38, Fix-Runde 3) | lokal und CI (GitHub-Runner) | lokal: 57 Dateien, **1109/1109**, tsc/Governance/Secret-Scan sauber. CI: 7/7 grün; `build-test` 57 Dateien, 1109/1109, PostgreSQL-Suites inkl. 22 Restore-Fälle tatsächlich ausgeführt |
 | Gegenproben | neue Tests gegen den jeweiligen Vorher-Commit | Lock: Bootstrap scheitert. Rechte: 17 rot. Zeit: 12 rot (plus 1 Treiber). Reihenfolge: 7 von 7 rot. |
 | CI #35–#37 | GitHub Actions | siehe Checks der PRs. Ob der Runner die PostgreSQL-Tests ausführt (statt sie sichtbar zu überspringen), steht im Log des Jobs `build-test`. |
 
@@ -139,15 +159,15 @@ Alle lokalen Läufe: Node v22.22.0, PostgreSQL 16.15 (kurzlebige Instanz, TLS, n
 |---|---|---|---|---|---|---|
 | Advisory Lock (E1) | ✅ #35 | ✅ | ✅ (2 Verbindungen, Rollback, Abbruch) | ✅ Runde 1 | ❌ | ❌ |
 | Rechteprüfung (A/A2/A3) | ✅ #35 | ✅ | ✅ (echte Rollen je Fall) | ✅ Runde 1 (Funde M2/F5 → #38) | ❌ | ❌ |
-| Rechteprüfung, Schemata/`search_path` (M2, F5) | ✅ #38 | ✅ | ✅ (Schattentabelle, eigenes Schema, REPLICATION, REFERENCES) | Runde 2: bestätigt bzw. Funde behoben; ⏳ Runde 3 | ❌ | ❌ |
+| Rechteprüfung, Schemata/`search_path` (M2, F5) | ✅ #38 | ✅ | ✅ (Schattentabelle, eigenes Schema, REPLICATION, REFERENCES) | ✅ Runden 2–4 (letzte: APPROVE / PASS WITH RISKS) | ❌ | ❌ |
 | Zeitstempel (B) | ✅ #36 | ✅ | ✅ | ✅ Runde 1 (Fund M1 → #38) | ❌ | ❌ |
-| Zeitstempel-Grenzen, Session-Pinning (M1, L2) | ✅ #38 | ✅ | ✅ (Rollen-Defaults überschrieben) | Runde 2: bestätigt bzw. Funde behoben; ⏳ Runde 3 | ❌ | ❌ |
+| Zeitstempel-Grenzen, Session-Pinning (M1, L2) | ✅ #38 | ✅ | ✅ (Rollen-Defaults überschrieben) | ✅ Runden 2–4 (letzte: APPROVE / PASS WITH RISKS) | ❌ | ❌ |
 | Append-Ordinal, Retention (C/D) | ✅ #37 | ✅ | ✅ (Parallelität, 100 000/100 001, Rollback) | ✅ Runde 1 (Funde L1/L3 → #38) | ❌ | ❌ |
-| DB-Append-Guard, Migration 008 (L1, L3) | ✅ #38 | ✅ | ✅ (Lücke, Fork, Wurzel, Vorbelegung, 100 000 mit Trigger) | Runde 2: bestätigt bzw. Funde behoben; ⏳ Runde 3 | ❌ | ❌ |
-| RLS/FORCE RLS, Cross-Tenant | vorhanden (#9) | ✅ | ✅ #38: 6 Angriffe (Lesen, Schreiben mit Positivkontrolle, Umbinden, RLS abschalten, SET ROLE) | Runde 2: bestätigt bzw. Funde behoben; ⏳ Runde 3 | ❌ | ❌ |
+| DB-Append-Guard, Migration 008 (L1, L3) | ✅ #38 | ✅ | ✅ (Lücke, Fork, Wurzel, Vorbelegung, 100 000 mit Trigger) | ✅ Runden 2–4 (letzte: APPROVE / PASS WITH RISKS) | ❌ | ❌ |
+| RLS/FORCE RLS, Cross-Tenant | vorhanden (#9) | ✅ | ✅ #38: 6 Angriffe (Lesen, Schreiben mit Positivkontrolle, Umbinden, RLS abschalten, SET ROLE) | ✅ Runden 2–4 (letzte: APPROVE / PASS WITH RISKS) | ❌ | ❌ |
 | Durable Queue (#15) | vorhanden | ✅ | ✅ #38: 204 erst nach Commit (Reihenfolge seit Fix-Runde 2 bewiesen), Dedupe (8 parallel), Kapazität → 503 mit Rollback, DB weg → 503 ohne RAM-Fallback, Tenant-Isolation | ⏳ Runde 2 | ❌ | ❌ (kein echtes Queue-Ack) |
-| Restore-Verifikation (#22) | vorhanden; Reihenfolge in #37 angepasst; Manifest v2 in #38 | ✅ | ✅ #38: `pg_dump`/`pg_restore`, 17 Fälle. Hinweis: Ein Restore ohne den neuesten Eintrag verifiziert für sich allein noch; erkannt wird er nur durch den Manifest-Vergleich. | Runde 2: bestätigt bzw. Funde behoben; ⏳ Runde 3 | ❌ | ❌ |
-| Runtime-Verkabelung (`server.ts`, fail closed) | vorhanden (#12–#17); Schema- und Session-Prüfung in #38 ergänzt | ✅ | ✅ #38: 22 Startfälle mit der Startsequenz aus `server.ts` (nachgebildet, nicht der Prozess selbst) | Runde 2 mit Funden → Fix-Runde 2; ⏳ Runde 3 | ❌ | ❌ |
+| Restore-Verifikation (#22) | vorhanden; Reihenfolge in #37 angepasst; Manifest v2 in #38 | ✅ | ✅ #38: `pg_dump`/`pg_restore`, 17 Fälle. Hinweis: Ein Restore ohne den neuesten Eintrag verifiziert für sich allein noch; erkannt wird er nur durch den Manifest-Vergleich. | ✅ Runden 2–4 (letzte: APPROVE / PASS WITH RISKS) | ❌ | ❌ |
+| Runtime-Verkabelung (`server.ts`, fail closed) | vorhanden (#12–#17); Schema- und Session-Prüfung in #38 ergänzt | ✅ | ✅ #38: 22 Startfälle mit der Startsequenz aus `server.ts` (nachgebildet, nicht der Prozess selbst) | ✅ Runden 2–4; Aufrufpfad end-to-end vom Reviewer gestartet | ❌ | ❌ |
 | TLS-Policy (#17) | vorhanden | Mock | Tests nutzen `require` gegen ein selbstsigniertes Zertifikat; `verify-full` nicht real getestet | ❌ | Entscheidung offen (`render-internal-tls-decision.md`) | ❌ |
 | Handlebars-Fix (#19) | ✅ | CI grün auf `008fcba` | — | ✅ (Claude, unabhängig von ChatGPT) | ❌ (Owner-Merge) | ❌ |
 
@@ -159,11 +179,10 @@ Alle lokalen Läufe: Node v22.22.0, PostgreSQL 16.15 (kurzlebige Instanz, TLS, n
 
 ## 6. Offene Gates (Reihenfolge)
 
-1. **Unabhängiger Review Runde 4** (Verifikation) auf Fix-Runde 3. Für das Problem „Guard-Umgehung bei fehlerhafter Einrichtung“ war das die **dritte und letzte** automatische Fix-Runde. Bleibt ein blockierender Befund, ist der Status **BLOCKED** und wird an den Owner eskaliert; es folgt keine weitere automatische Runde.
-2. **CI-Nachweis** auf dem finalen SHA. Fehlt PostgreSQL auf dem Runner, werden die Tests übersprungen und gelten **nicht** als bestanden (O-2).
-3. Owner-Entscheidungen D-1 und D-2 sowie die Restrisiken im ADR (Superuser kann den Trigger abschalten; MAINTAIN ab PG 17; Managed-PostgreSQL ungetestet; Kette > 100 000).
-4. TLS-Entscheidung (`verify-full` gegen Render intern), separat und durch den Owner.
-5. Erst danach: Merge der Linie A durch den Owner. Die Reihenfolge der Stack-Merges legt der Owner fest.
+1. Owner-Entscheidungen **D-1, D-2, D-3** (Abschnitt 7).
+2. **O-2**: `PERSISTENCE_REQUIRE_PG=1` in CI. Bis dahin ist bei jedem Lauf im Log `build-test` zu prüfen, dass die `persistence-pg-*`-Suites gelaufen sind (bisher bei allen Läufen der Fall).
+3. Vor einer Produktion (separat, nicht Teil dieses Audits): die Ziel-DB (Render) auf Falsch-Positive prüfen (SECURITY-DEFINER-Abfrage, PostgreSQL-Version ≥ 15, kein Transaktions-Pooler); TLS `verify-full` entscheiden.
+4. Erst danach: Merge der Linie A (#6 … #34, #35–#38) durch den Owner. Die Reihenfolge legt der Owner fest. Ich merge nichts.
 
 ## 7. Owner-Aktionen und -Entscheidungen (nur neue)
 
@@ -175,8 +194,12 @@ Alle lokalen Läufe: Node v22.22.0, PostgreSQL 16.15 (kurzlebige Instanz, TLS, n
 
 | D-2 | Wie soll Hash-Fälschung durch Inhaber der Runtime-Zugangsdaten behandelt werden? Optionen: (a) akzeptieren und nur erkennen (Ist-Stand), (b) Hash im Trigger nachrechnen, (c) HMAC mit einem Schlüssel außerhalb der DB, (d) nach einer fehlgeschlagenen Verifikation auf read-only schalten | Security-Review Runde 2, F5: Wer die Runtime-Zugangsdaten hat, kann Einträge fälschen oder die Kette vergiften | Fälschung durch Insider bleibt möglich; Erkennung funktioniert (außer bei korrekt berechneten Fälschungen) | #38 | Runtime-Zugangsdaten nur dem Dienst geben; Persistence bleibt aus |
 
+| D-3 | Gilt der Tabellen-Owner (Migrationsrolle) als vertrauenswürdig? Wenn **ja**: R4-F1/R4-F2 und nicht geprüfte CHECK-/FK-Constraints bleiben dokumentiertes Restrisiko. Wenn **nein**: Folgeauftrag „Owner-Härtung“ (alle SECURITY-DEFINER-Funktionen und Aggregate verbieten, Rechte der Runtime auf alle Relationen prüfen, Constraints vergleichen) | Review Runde 4: beide Wege setzen bewusste Manipulation durch den Owner voraus | Ein böswilliger Owner kann Audit-Zeilen ändern; die Kettenprüfung erkennt das danach | #38 | Migrationsrolle getrennt von der Runtime halten; Zugangsdaten nur dem Deploy-Prozess geben |
+
 Bereits früher gemeldete und unveränderte Punkte werden hier nicht wiederholt, z. B. SUP-01 (Ruleset) und SAG-02 (Read-only-Standard) aus PR #6.
 
-## 8. Nächste Review-Aufträge
+## 8. Nächste Aufträge (nur nach Owner-Entscheidung)
 
-- **Runde 4 (Verifikation), Code Reviewer und Security:** Fix-Runde 3 auf #38: Guard-Struktur (tgtype, Rumpf-Hash, weitere Trigger, Rules, Vererbung, Persistenz), SECURITY-DEFINER-Prüfung, zusätzliche Pins, `session_replication_role`, Mikrosekunden im Manifest
+- Optional, klein: Tests für `proconfig`/`tgnargs`/`lanname`, Negativtest `assertEpochText`, `.gitattributes` für `*.sql`
+- Nur bei D-3 = „nicht vertrauenswürdig“: Owner-Härtung (R4-F1, R4-F2, Constraints), danach unabhängiger Review
+- Jede weitere Änderung braucht wieder einen unabhängigen Review (Ersteller ≠ Prüfer)

@@ -76,16 +76,32 @@ const SQL_RUNTIME_PRIVILEGES =
   "r.rolcreaterole AS can_create_role, " +
   "has_database_privilege(current_user, current_database(), 'CREATE') AS can_create_in_database, " +
   "has_schema_privilege(current_user, 'public', 'CREATE') AS can_create_in_public_schema, " +
+  // Required privileges: every listed privilege must be held. has_table_privilege(..., 'A,B') is ANY-OF in
+  // PostgreSQL, so each required privilege is checked on its own and combined with AND.
+  // Forbidden privileges: holding any one of them is a violation. Column-level grants are invisible to
+  // has_table_privilege, so mutation rights are also checked with has_any_column_privilege; TRIGGER would let the
+  // runtime attach code to the table and is forbidden everywhere.
   "has_table_privilege(current_user, 'public.schema_migrations', 'SELECT') AS migrations_select, " +
-  "has_table_privilege(current_user, 'public.schema_migrations', 'INSERT,UPDATE,DELETE,TRUNCATE') AS migrations_mutate, " +
+  "(has_table_privilege(current_user, 'public.schema_migrations', 'INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER') OR " +
+  "has_any_column_privilege(current_user, 'public.schema_migrations', 'INSERT,UPDATE')) AS migrations_mutate, " +
   "has_table_privilege(current_user, 'public.tenants', 'SELECT') AS tenants_select, " +
-  "has_table_privilege(current_user, 'public.tenants', 'INSERT,UPDATE,DELETE,TRUNCATE') AS tenants_mutate, " +
-  "has_table_privilege(current_user, 'public.webhook_events', 'SELECT,INSERT,UPDATE') AS webhook_dml, " +
-  "has_table_privilege(current_user, 'public.webhook_events', 'DELETE,TRUNCATE') AS webhook_delete, " +
-  "has_table_privilege(current_user, 'public.audit_events', 'SELECT,INSERT') AS audit_append, " +
-  "has_table_privilege(current_user, 'public.audit_events', 'UPDATE,DELETE,TRUNCATE') AS audit_mutate, " +
+  "(has_table_privilege(current_user, 'public.tenants', 'INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER') OR " +
+  "has_any_column_privilege(current_user, 'public.tenants', 'INSERT,UPDATE')) AS tenants_mutate, " +
+  "(" +
+  "has_table_privilege(current_user, 'public.webhook_events', 'SELECT') AND " +
+  "has_table_privilege(current_user, 'public.webhook_events', 'INSERT') AND " +
+  "has_table_privilege(current_user, 'public.webhook_events', 'UPDATE')" +
+  ") AS webhook_dml, " +
+  "has_table_privilege(current_user, 'public.webhook_events', 'DELETE,TRUNCATE,TRIGGER') AS webhook_delete, " +
+  "(" +
+  "has_table_privilege(current_user, 'public.audit_events', 'SELECT') AND " +
+  "has_table_privilege(current_user, 'public.audit_events', 'INSERT')" +
+  ") AS audit_append, " +
+  "(has_table_privilege(current_user, 'public.audit_events', 'UPDATE,DELETE,TRUNCATE,TRIGGER') OR " +
+  "has_any_column_privilege(current_user, 'public.audit_events', 'UPDATE')) AS audit_mutate, " +
   "has_table_privilege(current_user, 'public.audit_retention_anchors', 'SELECT') AS audit_anchor_select, " +
-  "has_table_privilege(current_user, 'public.audit_retention_anchors', 'INSERT,UPDATE,DELETE,TRUNCATE') AS audit_anchor_mutate, " +
+  "(has_table_privilege(current_user, 'public.audit_retention_anchors', 'INSERT,UPDATE,DELETE,TRUNCATE,TRIGGER') OR " +
+  "has_any_column_privilege(current_user, 'public.audit_retention_anchors', 'INSERT,UPDATE')) AS audit_anchor_mutate, " +
   "(SELECT count(*)::int FROM pg_auth_members m JOIN pg_roles me ON me.oid = m.member WHERE me.rolname = current_user) AS role_memberships " +
   "FROM pg_roles r WHERE r.rolname = current_user";
 const SQL_SET_TENANT = "SELECT set_config('app.tenant_id', $1, true) AS tenant_id";

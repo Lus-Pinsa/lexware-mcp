@@ -1,0 +1,132 @@
+/**
+ * Runtime least-privilege verification against REAL PostgreSQL roles (no mocks).
+ *
+ * Each case provisions a fresh role with the exact production runtime grants, removes one required privilege or
+ * adds one forbidden privilege, connects AS that role through the production driver and runs the production check.
+ * PostgreSQL semantics under test: has_table_privilege(..., 'A,B') is ANY-OF; table-level checks do not see
+ * column-level grants (has_any_column_privilege does).
+ */
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { inspectRuntimePrivileges } from "../src/persistence/repository.js";
+import { assertLeastPrivilegeRuntimeRole } from "../src/persistence/runtime-privileges.js";
+import { postgresAvailable, type EphemeralPostgres } from "./helpers/ephemeral-postgres.js";
+import { createPgFixture, maybeStartPostgres, type PgFixture } from "./helpers/persistence-pg-fixture.js";
+
+const BASE_GRANTS = [
+  "GRANT USAGE ON SCHEMA public TO {r}",
+  "GRANT SELECT ON schema_migrations, tenants, audit_retention_anchors TO {r}",
+  "GRANT SELECT, INSERT, UPDATE ON webhook_events TO {r}",
+  "GRANT SELECT, INSERT ON audit_events TO {r}",
+];
+
+describe.skipIf(!postgresAvailable())("runtime privilege verification on real PostgreSQL", () => {
+  let pg: EphemeralPostgres;
+  let fx: PgFixture;
+  let n = 0;
+
+  beforeAll(async () => {
+    pg = (await maybeStartPostgres())!;
+    fx = await createPgFixture(pg);
+  }, 120_000);
+
+  afterAll(async () => {
+    await fx?.close();
+    await pg?.stop();
+  });
+
+  /** Provision a role with the base grants plus `extra` SQL, minus `revoke` SQL, then run the production check. */
+  async function check(opts: { revoke?: string[]; extra?: string[] } = {}): Promise<string | null> {
+    const role = `lus_rt_case_${n++}`;
+    await pg.admin("postgres", `CREATE ROLE ${role} LOGIN`);
+    const sql = [...BASE_GRANTS, ...(opts.extra ?? []), ...(opts.revoke ?? [])].map((s) => s.replaceAll("{r}", role));
+    await fx.admin(sql.join(";\n") + ";");
+    const db = fx.runtime(role);
+    try {
+      const snapshot = await db.transaction((tx) => inspectRuntimePrivileges(tx));
+      assertLeastPrivilegeRuntimeRole(snapshot, role);
+      return null;
+    } catch (error) {
+      return (error as Error).message;
+    }
+  }
+
+  it("accepts exactly the provisioned least-privilege runtime role", async () => {
+    expect(await check()).toBeNull();
+  });
+
+  it.each([
+    ["webhook SELECT", "REVOKE SELECT ON webhook_events FROM {r}", "WEBHOOK_DML_MISSING"],
+    ["webhook INSERT", "REVOKE INSERT ON webhook_events FROM {r}", "WEBHOOK_DML_MISSING"],
+    ["webhook UPDATE", "REVOKE UPDATE ON webhook_events FROM {r}", "WEBHOOK_DML_MISSING"],
+    ["audit SELECT", "REVOKE SELECT ON audit_events FROM {r}", "AUDIT_APPEND_MISSING"],
+    ["audit INSERT", "REVOKE INSERT ON audit_events FROM {r}", "AUDIT_APPEND_MISSING"],
+    ["migrations SELECT", "REVOKE SELECT ON schema_migrations FROM {r}", "MIGRATION_READ_MISSING"],
+    ["tenants SELECT", "REVOKE SELECT ON tenants FROM {r}", "TENANT_READ_MISSING"],
+    ["anchor SELECT", "REVOKE SELECT ON audit_retention_anchors FROM {r}", "AUDIT_ANCHOR_READ_MISSING"],
+  ])("rejects a role missing the single required privilege %s", async (_label, revoke, code) => {
+    const message = await check({ revoke: [revoke] });
+    expect(message).toMatch(/Runtime database privilege verification failed/);
+    expect(message).toContain(code);
+  });
+
+  it.each([
+    ["webhook DELETE", "GRANT DELETE ON webhook_events TO {r}", "WEBHOOK_DELETE"],
+    ["webhook TRUNCATE", "GRANT TRUNCATE ON webhook_events TO {r}", "WEBHOOK_DELETE"],
+    ["audit UPDATE", "GRANT UPDATE ON audit_events TO {r}", "AUDIT_MUTATION"],
+    ["audit DELETE", "GRANT DELETE ON audit_events TO {r}", "AUDIT_MUTATION"],
+    ["audit TRUNCATE", "GRANT TRUNCATE ON audit_events TO {r}", "AUDIT_MUTATION"],
+    ["anchor INSERT", "GRANT INSERT ON audit_retention_anchors TO {r}", "AUDIT_ANCHOR_MUTATION"],
+    ["anchor UPDATE", "GRANT UPDATE ON audit_retention_anchors TO {r}", "AUDIT_ANCHOR_MUTATION"],
+    ["anchor DELETE", "GRANT DELETE ON audit_retention_anchors TO {r}", "AUDIT_ANCHOR_MUTATION"],
+    ["tenants INSERT", "GRANT INSERT ON tenants TO {r}", "TENANT_MUTATION"],
+    ["tenants UPDATE", "GRANT UPDATE ON tenants TO {r}", "TENANT_MUTATION"],
+    ["migrations INSERT", "GRANT INSERT ON schema_migrations TO {r}", "MIGRATION_MUTATION"],
+    ["schema CREATE", "GRANT CREATE ON SCHEMA public TO {r}", "SCHEMA_CREATE"],
+    ["PUBLIC audit UPDATE", "GRANT UPDATE ON audit_events TO PUBLIC", "AUDIT_MUTATION"],
+  ])("rejects a role with the single forbidden table privilege %s", async (_label, grant, code) => {
+    const message = await check({ extra: [grant] });
+    if (grant.includes("PUBLIC")) await fx.admin("REVOKE UPDATE ON audit_events FROM PUBLIC");
+    expect(message).toContain(code);
+  });
+
+  it.each([
+    ["audit UPDATE(entry_hash)", "GRANT UPDATE (entry_hash) ON audit_events TO {r}", "AUDIT_MUTATION"],
+    ["audit UPDATE(previous_hash)", "GRANT UPDATE (previous_hash) ON audit_events TO {r}", "AUDIT_MUTATION"],
+    ["anchor UPDATE(previous_hash)", "GRANT UPDATE (previous_hash) ON audit_retention_anchors TO {r}", "AUDIT_ANCHOR_MUTATION"],
+    ["anchor INSERT(columns)", "GRANT INSERT (tenant_id, previous_hash, updated_at) ON audit_retention_anchors TO {r}", "AUDIT_ANCHOR_MUTATION"],
+    ["tenants UPDATE(capability_tier)", "GRANT UPDATE (capability_tier) ON tenants TO {r}", "TENANT_MUTATION"],
+    ["tenants UPDATE(max_audit_events)", "GRANT UPDATE (max_audit_events) ON tenants TO {r}", "TENANT_MUTATION"],
+    ["migrations UPDATE(checksum)", "GRANT UPDATE (checksum) ON schema_migrations TO {r}", "MIGRATION_MUTATION"],
+  ])("rejects a role with the single forbidden COLUMN privilege %s", async (_label, grant, code) => {
+    expect(await check({ extra: [grant] })).toContain(code);
+  });
+
+  it.each([
+    ["TRIGGER on audit_events", "GRANT TRIGGER ON audit_events TO {r}", "AUDIT_MUTATION"],
+    ["TRIGGER on webhook_events", "GRANT TRIGGER ON webhook_events TO {r}", "WEBHOOK_DELETE"],
+    ["TRIGGER on tenants", "GRANT TRIGGER ON tenants TO {r}", "TENANT_MUTATION"],
+  ])("rejects a role that may attach triggers: %s", async (_label, grant, code) => {
+    expect(await check({ extra: [grant] })).toContain(code);
+  });
+
+  it("rejects privileges inherited through role membership", async () => {
+    await pg.admin("postgres", "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'lus_rt_parent') THEN CREATE ROLE lus_rt_parent NOLOGIN; END IF; END $$;");
+    await fx.admin("GRANT UPDATE ON audit_events TO lus_rt_parent");
+    const message = await check({ extra: ["GRANT lus_rt_parent TO {r}"] });
+    expect(message).toContain("ROLE_MEMBERSHIP");
+    expect(message).toContain("AUDIT_MUTATION");
+  });
+
+  it("proves the impact: a column-level UPDATE grant really lets the runtime rewrite an audit hash", async () => {
+    const role = `lus_rt_impact_${n++}`;
+    await pg.admin("postgres", `CREATE ROLE ${role} LOGIN`);
+    await fx.admin([...BASE_GRANTS, "GRANT UPDATE (entry_hash) ON audit_events TO {r}"].map((s) => s.replaceAll("{r}", role)).join(";\n") + ";");
+    const db = fx.runtime(role);
+    const changed = await db.transaction(async (tx) => {
+      await tx.query({ text: "SELECT set_config('app.tenant_id', $1, true)", values: [fx.tenantA] });
+      const result = await tx.query({ text: "UPDATE audit_events SET entry_hash = $1 WHERE tenant_id = $2", values: ["f".repeat(64), fx.tenantA] });
+      return result.rowCount;
+    });
+    expect(changed).toBe(1);
+  });
+});

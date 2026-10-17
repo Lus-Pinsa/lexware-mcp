@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 
 /**
@@ -30,7 +30,7 @@ export function bearerAuthMiddleware(
     if (!ok) {
       if (limiter.fail(client)) {
         console.error(
-          `[lexware-mcp] auth: client locked out after repeated invalid tokens (key=${sanitizeForLog(client)})`,
+          `[lexware-mcp] auth: client locked out after repeated invalid tokens (keyHash=${fingerprintForLog(client)})`,
         );
       }
       // RFC 9110 §11.6.1: a 401 MUST carry a WWW-Authenticate challenge so clients
@@ -45,6 +45,10 @@ export function bearerAuthMiddleware(
 
 function sanitizeForLog(value: string): string {
   return value.replace(/[\r\n\t\f\v\0\x00-\x1F\x7F]/g, " ");
+}
+
+function fingerprintForLog(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex").slice(0, 16);
 }
 
 /**

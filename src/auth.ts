@@ -43,10 +43,7 @@ export function bearerAuthMiddleware(
   };
 }
 
-function sanitizeForLog(value: string): string {
-  return value.replace(/[\r\n\t\f\v\0\x00-\x1F\x7F]/g, " ");
-}
-
+/** Log a client key only as a hash: it comes from a request header (log injection, PII). */
 function fingerprintForLog(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex").slice(0, 16);
 }

@@ -66,6 +66,14 @@ export interface Config {
   port: number;
   debugLogging: boolean;
   capabilities: Capabilities;
+  /**
+   * Optional allowlist of state-changing tools (`LEXWARE_WRITE_TOOLS`, comma-separated). When set, a write
+   * tool from an enabled tier is registered only if it is listed here; read tools are unaffected. `null` =
+   * unset (every write tool of the enabled tiers is registered).
+   */
+  writeToolAllowlist: string[] | null;
+  /** `update-voucher` refuses vouchers whose current status is not `unchecked` (already booked documents). */
+  updateVoucherUncheckedOnly: boolean;
   /** Non-fatal configuration notices to log at startup (e.g. a flag that was overridden). */
   warnings: string[];
 }
@@ -81,6 +89,25 @@ function parseBool(raw: string | undefined, fallback: boolean): boolean {
   if (["true", "1", "yes", "on"].includes(v)) return true;
   if (["false", "0", "no", "off"].includes(v)) return false;
   throw new ConfigError(`Invalid boolean value "${raw}" (expected true/false).`);
+}
+
+/**
+ * Parse a comma-separated tool list. Unset/blank → `null` (no restriction); `none` → `[]` (no write tool).
+ * Names are validated against the tool-name alphabet so a typo can't silently widen the list.
+ */
+function parseToolList(raw: string | undefined): string[] | null {
+  if (raw === undefined || raw.trim() === "") return null;
+  if (raw.trim().toLowerCase() === "none") return [];
+  const names = raw
+    .split(",")
+    .map((n) => n.trim())
+    .filter(Boolean);
+  for (const name of names) {
+    if (!/^[a-z0-9-]+$/.test(name)) {
+      throw new ConfigError(`Invalid tool name "${name}" in LEXWARE_WRITE_TOOLS (expected e.g. update-voucher).`);
+    }
+  }
+  return [...new Set(names)];
 }
 
 function parsePort(raw: string | undefined): number {
@@ -257,6 +284,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     );
   }
 
+  const writeToolAllowlist = parseToolList(env.LEXWARE_WRITE_TOOLS);
+  if (writeToolAllowlist === null && enableDrafts) {
+    warnings.push(
+      "LEXWARE_WRITE_TOOLS is not set — every write tool of the enabled tiers is exposed. Set it to the " +
+        "tools you need (e.g. LEXWARE_WRITE_TOOLS=update-voucher).",
+    );
+  }
+
   return {
     lexwareApiKey,
     lexwareApiBaseUrl: normalizeUrl(env.LEXWARE_API_BASE_URL, DEFAULT_BASE_URL, "LEXWARE_API_BASE_URL"),
@@ -269,6 +304,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port: parsePort(env.PORT),
     debugLogging: parseBool(env.LEXWARE_DEBUG_LOGGING, false),
     capabilities: { read: true, drafts: enableDrafts, finalize: enableFinalize },
+    writeToolAllowlist,
+    updateVoucherUncheckedOnly: parseBool(env.LEXWARE_UPDATE_VOUCHER_UNCHECKED_ONLY, false),
     warnings,
   };
 }
@@ -284,5 +321,9 @@ export function describeCapabilities(config: Config): string {
       : config.auth.mode === "static"
         ? "token-protected"
         : "UNAUTHENTICATED";
-  return `tiers=[${tiers.join(", ")}] auth=${auth} base=${config.lexwareApiBaseUrl}`;
+  const writes = config.writeToolAllowlist === null ? "all" : `[${config.writeToolAllowlist.join(", ")}]`;
+  return (
+    `tiers=[${tiers.join(", ")}] writeTools=${writes} updateVoucherUncheckedOnly=${config.updateVoucherUncheckedOnly} ` +
+    `auth=${auth} base=${config.lexwareApiBaseUrl}`
+  );
 }

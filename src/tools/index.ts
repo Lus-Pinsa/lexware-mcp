@@ -51,7 +51,9 @@ import {
   trackToolRegistrations,
 } from "./server-info.js";
 import { registerVoucherWriteTools } from "./vouchers.js";
+import { guardWriteTools } from "./write-guard.js";
 import { PROCESS_STARTED_AT } from "../build-info.js";
+import { WriteAuditLog } from "../write-audit.js";
 
 /**
  * Register MCP tools according to resolved capability tiers.
@@ -63,7 +65,8 @@ export function registerTools(
   client: LexwareClient,
   config: Config,
   runtime: ServerRuntime = { env: process.env, startedAt: PROCESS_STARTED_AT },
-): void {
+  audit: WriteAuditLog = new WriteAuditLog(),
+): { skippedWriteTools: string[] } {
   const { capabilities } = config;
 
   /*
@@ -72,6 +75,13 @@ export function registerTools(
    */
   const registered: RegisteredToolInfo[] = [];
   const server = trackToolRegistrations(mcpServer, registered);
+
+  /*
+   * Write tiers register through this guard: LEXWARE_WRITE_TOOLS filters which write tools exist at
+   * all, and every call of a remaining one is written to the audit trail (src/write-audit.ts).
+   */
+  const skippedWriteTools: string[] = [];
+  const writeServer = guardWriteTools(server, config, audit, skippedWriteTools);
 
   /*
    * ============================================================
@@ -141,17 +151,19 @@ export function registerTools(
    */
 
   if (capabilities.drafts) {
-    registerContactDraftTools(server, client);
-    registerArticleWriteTools(server, client);
-    registerDocumentDraftTools(server, client);
-    registerVoucherWriteTools(server, client);
-    registerFileWriteTools(server, client);
+    registerContactDraftTools(writeServer, client);
+    registerArticleWriteTools(writeServer, client);
+    registerDocumentDraftTools(writeServer, client);
+    registerVoucherWriteTools(writeServer, client, {
+      uncheckedOnly: config.updateVoucherUncheckedOnly,
+    });
+    registerFileWriteTools(writeServer, client);
 
     /*
      * LU'S fixed voucher webhook.
      */
     registerLusVoucherWebhookTools(
-      server,
+      writeServer,
       client,
     );
 
@@ -162,7 +174,7 @@ export function registerTools(
      * It does NOT modify the Lexware voucher.
      */
     registerPendingVoucherEventWriteTools(
-      server,
+      writeServer,
     );
   }
 
@@ -176,12 +188,12 @@ export function registerTools(
 
   if (capabilities.finalize) {
     registerDocumentFinalizeTools(
-      server,
+      writeServer,
       client,
     );
 
     registerArticleDeleteTools(
-      server,
+      writeServer,
       client,
     );
 
@@ -191,13 +203,15 @@ export function registerTools(
      * exfiltration-capable.
      */
     registerEventSubscriptionWriteTools(
-      server,
+      writeServer,
       client,
     );
 
     registerEventSubscriptionDeleteTools(
-      server,
+      writeServer,
       client,
     );
   }
+
+  return { skippedWriteTools };
 }

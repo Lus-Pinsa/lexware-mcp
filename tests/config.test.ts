@@ -129,7 +129,11 @@ describe("loadConfig", () => {
   });
 
   it("records no override warning when drafts is left at its default", () => {
-    const c = loadConfig({ ...base(), LEXWARE_ENABLE_FINALIZE: "true" } as NodeJS.ProcessEnv);
+    const c = loadConfig({
+      ...base(),
+      LEXWARE_ENABLE_FINALIZE: "true",
+      LEXWARE_WRITE_TOOLS: "update-voucher",
+    } as NodeJS.ProcessEnv);
     expect(c.warnings).toEqual([]);
   });
 

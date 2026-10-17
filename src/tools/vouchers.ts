@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { LexwareClient } from "../lexware/client.js";
 import { additionalFieldsParam, mergeBody, versionParam, voucherInputShape, voucherUpdateShape } from "./schemas.js";
 import { WRITE, decodeBase64Strict, deepMergePatch, text } from "./shared.js";
+import { WriteRefusedError, changedKeys, recordAuditDetail, voucherSnapshot } from "../write-audit.js";
 
 /** Voucher statuses lexoffice DERIVES from payments — re-sending them on PUT is rejected (invalid_value). */
 const DERIVED_VOUCHER_STATUSES = new Set(["paid", "paidoff", "voided", "transferred", "sepadebit"]);
@@ -12,7 +13,11 @@ const DERIVED_VOUCHER_STATUSES = new Set(["paid", "paidoff", "voided", "transfer
  * transactions). Reads live in documents.ts (get-voucher, get-voucherlist).
  * Registered with the drafts tier.
  */
-export function registerVoucherWriteTools(server: McpServer, client: LexwareClient): void {
+export function registerVoucherWriteTools(
+  server: McpServer,
+  client: LexwareClient,
+  opts: { uncheckedOnly?: boolean } = {},
+): void {
   server.registerTool(
     {
       name: "create-voucher",
@@ -60,6 +65,16 @@ export function registerVoucherWriteTools(server: McpServer, client: LexwareClie
       // Read-modify-write: lexoffice PUT replaces the whole resource, so load the
       // current voucher and merge the caller's fields over it (keeping files etc.).
       const current = await client.get<Record<string, unknown>>(`/v1/vouchers/${encodeURIComponent(id)}`);
+      const before = voucherSnapshot(current);
+      recordAuditDetail({ before });
+      // LEXWARE_UPDATE_VOUCHER_UNCHECKED_ONLY: only inbox (unchecked) vouchers may be booked; a voucher that
+      // is already booked is never changed through the API.
+      if (opts.uncheckedOnly && current.voucherStatus !== "unchecked") {
+        throw new WriteRefusedError(
+          `Voucher ${id} has status "${String(current.voucherStatus)}" — this server only updates vouchers with ` +
+            'status "unchecked" (LEXWARE_UPDATE_VOUCHER_UNCHECKED_ONLY). Change booked vouchers in the Lexware web app.',
+        );
+      }
       const body = deepMergePatch(current, {
         ...fields,
         version: version ?? (current.version as number),
@@ -87,6 +102,8 @@ export function registerVoucherWriteTools(server: McpServer, client: LexwareClie
         `/v1/vouchers/${encodeURIComponent(id)}`,
         { body, idempotent: false },
       );
+      const after = voucherSnapshot({ ...body, version: updated.version });
+      recordAuditDetail({ after, changed: changedKeys(before, after) });
       return {
         structuredContent: updated,
         content: text(`Updated voucher ${id} (now version ${updated.version}).`),

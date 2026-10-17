@@ -29,7 +29,9 @@ export function bearerAuthMiddleware(
       providedBuf.length === expected.length && timingSafeEqual(providedBuf, expected);
     if (!ok) {
       if (limiter.fail(client)) {
-        console.error(`[lexware-mcp] auth: client locked out after repeated invalid tokens (key=${client})`);
+        console.error(
+          `[lexware-mcp] auth: client locked out after repeated invalid tokens (key=${sanitizeForLog(client)})`,
+        );
       }
       // RFC 9110 §11.6.1: a 401 MUST carry a WWW-Authenticate challenge so clients
       // know a bearer token is expected (mirrors the OAuth path's behaviour).
@@ -39,6 +41,10 @@ export function bearerAuthMiddleware(
     }
     next();
   };
+}
+
+function sanitizeForLog(value: string): string {
+  return value.replace(/[\r\n\t\f\v\0\x00-\x1F\x7F]/g, " ");
 }
 
 /**

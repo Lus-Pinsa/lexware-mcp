@@ -6,6 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+- **Write allowlist** `LEXWARE_WRITE_TOOLS`: narrows the write surface below the capability tiers (e.g.
+  `update-voucher` only); it can never enable a tool of a disabled tier. Reported by `get-server-info` (`writePolicy`).
+- **`LEXWARE_UPDATE_VOUCHER_UNCHECKED_ONLY`**: `update-voucher` refuses vouchers that are no longer `unchecked`.
+- **Audit trail**: every write-tool call emits one hash-chained JSON line on stdout (`"audit":"lexware-write"`) with
+  actor (auth mode + fingerprint, no PII), timestamp, tool, target id, outcome and — for `update-voucher` — the
+  booking fields before/after plus the changed keys; contact names and remarks only as SHA-256 fingerprints.
+- **Failed-auth lockout** for the static bearer token: 10 invalid tokens in 15 min lock that client out for 15 min
+  (per client; the valid connector is never counted).
+- The per-request `/mcp` debug line is now only written with `LEXWARE_DEBUG_LOGGING=true`.
+
 ### Added
 - **Finance intelligence (Phase 2, PR 2)** — five READ-tier tools on pure, deterministic modules in `src/finance/`
   (no clock, no randomness, no LLM text; same input → byte-identical brief):

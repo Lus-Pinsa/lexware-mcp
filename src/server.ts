@@ -388,11 +388,12 @@ console.error(
 server.use(
   (req, _res, next) => {
     if (
-      req.path === "/mcp" ||
+      config.debugLogging &&
+      (req.path === "/mcp" ||
       req.path.startsWith("/mcp/") ||
       req.path.startsWith(
         "/.well-known/",
-      )
+      ))
     ) {
       console.error(
         `[debug] ${req.method} ${req.path} auth=${
@@ -480,7 +481,7 @@ if (bodyParsingConfigured) {
    MCP TOOLS
    ============================================================ */
 
-registerTools(
+const { skippedWriteTools } = registerTools(
   server,
   client,
   config,
@@ -505,6 +506,12 @@ console.error(
 console.error(
   "[lexware-webhook] endpoint=/webhooks/lexware event=voucher.created",
 );
+
+if (skippedWriteTools.length > 0) {
+  console.error(
+    `[lexware-mcp] LEXWARE_WRITE_TOOLS: not registered: ${skippedWriteTools.sort().join(", ")}`,
+  );
+}
 
 for (
   const warning of config.warnings

@@ -49,6 +49,13 @@ export interface ServerInfo {
     /** Registered tools NOT annotated read-only (empty in read-only mode). */
     readonly writeCapable: ReadonlyArray<string>;
   };
+  readonly writePolicy: {
+    /** LEXWARE_WRITE_TOOLS; null = unrestricted within the enabled tiers. */
+    readonly writeToolAllowlist: ReadonlyArray<string> | null;
+    readonly updateVoucherUncheckedOnly: boolean;
+    /** Every write-tool call is logged as a hash-chained JSON line on stdout. */
+    readonly auditTrail: "stdout-jsonl-hash-chain";
+  };
   readonly auth: {
     readonly mode: "oauth" | "static" | "none";
     /** Number of configured OAuth email-domain allowlist entries (values are not disclosed); null outside OAuth. */
@@ -77,6 +84,11 @@ export function buildServerInfo(
     build: resolveBuildInfo(runtime.env),
     capabilities: { tiers, effectiveReadOnly: !config.capabilities.drafts && !config.capabilities.finalize },
     tools: { registeredCount: names.length, names, writeCapable },
+    writePolicy: {
+      writeToolAllowlist: config.writeToolAllowlist,
+      updateVoucherUncheckedOnly: config.updateVoucherUncheckedOnly,
+      auditTrail: "stdout-jsonl-hash-chain",
+    },
     auth: {
       mode: config.auth.mode,
       oauthEmailDomainAllowlistEntries: config.auth.mode === "oauth" ? config.auth.allowedEmailDomains.length : null,

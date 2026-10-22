@@ -1,6 +1,8 @@
 # Persistence-Integration: zentraler Handoff
 
 Dies ist die **einzige** Statusdatei für die Persistence-Integration. Sie ersetzt keine Owner-Freigabe.
+
+> **Stand 2026-10-22 – ZURÜCKGESTELLT durch den Owner.** Am 2026-10-13 hat Luigi alle Persistence-PRs (#6–#40, auch #35–#38) geschlossen: „Fokus liegt auf der Buchhaltungsautomatik mit Lexware als einziger Datenquelle (Abgleich bei jedem Lauf statt eigener Datenbank). Branch bleibt erhalten, PR kann jederzeit wieder geöffnet werden.“ Seitdem auf `main` gemergt: #19 (Handlebars 4.7.10) und #41 (Schreib-Allowlist `LEXWARE_WRITE_TOOLS`, `update-voucher` nur für `unchecked`, JSON-Schreibprotokoll mit Hash-Kette, Auth-Sperre) – `main` = `883b572`. Die Branches `claude/pg-harness-privileges`, `claude/audit-timestamp-integration`, `claude/audit-append-ordinal` und `claude/pg-runtime-gates` basieren noch auf #34/`8f938aa` und müssten vor einer Wiederaufnahme auf `main` rebased werden. Offene Owner-Entscheidungen D-1 bis D-3 und O-2 (Abschnitt 7) sind unverändert. Keine weitere Arbeit ohne neuen Auftrag.
 Erstellt durch Claude Code am 2026-10-12, Audit und Integration ab 07:40 UTC. Stand des Dokuments: Head der Branch `claude/pg-runtime-gates` (Fix-Runden 1–3, Verifikation Runde 4, 2026-10-12). Automatische Fix-Runden für die Persistence-Befunde sind **abgeschlossen**; offene Punkte sind Owner-Entscheidungen.
 
 ## 1. Referenzen (verifiziert per `git fetch` und GitHub-API)

@@ -19,7 +19,8 @@ der Abgleich passiert bei jedem Lauf.
 2. `update-voucher` ändert nur Belege mit exaktem Status `unchecked` (`LEXWARE_UPDATE_VOUCHER_UNCHECKED_ONLY=true`);
    der Status wird im selben Aufruf unmittelbar vor dem PUT frisch gelesen. Gebuchte Belege werden nie per API geändert.
 3. Jeder Aufruf hinterlässt zwei HMAC-SHA256-verkettete Protokollzeilen (Versuch vor dem Lexware-Aufruf, Ergebnis
-   danach) auf stdout. Das Protokoll ist **pseudonymisiert**, nicht geschäftsdatenfrei: Beleg-ID, Datum und Beträge
+   danach) auf stdout – ab dem Deploy von #42; mit statischem Token oder `LEXWARE_AUDIT_KEY` geschlüsselt, sonst
+   SHA-256 mit Startwarnung. Das Protokoll ist **pseudonymisiert**, nicht geschäftsdatenfrei: Beleg-ID, Datum und Beträge
    stehen im Klartext, Freitext (Kontaktname, Bemerkung, Belegnummer) nur als HMAC-Fingerprint; Fehlertexte von
    Lexware werden nie kopiert.
 4. **Agenten** bleiben read-only: `settings.json` (deny), Guard-Hook und `governance.test.ts` sperren `update-voucher`

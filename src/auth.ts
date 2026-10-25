@@ -85,7 +85,9 @@ export function clientKey(req: Request, trustProxy = false): string {
 
 /** Unmap IPv4-mapped IPv6 (any spelling); collapse IPv6 to its /64. Non-IP strings are kept as is. */
 export function normalizeAddress(address: string): string {
-  const lower = address.toLowerCase().replace(/%.*$/, ""); // zone id is not part of the address
+  // Zone id ("%eth0") is not part of the address. No regex on this client-controlled header (CodeQL: polynomial).
+  const zone = address.indexOf("%");
+  const lower = (zone === -1 ? address : address.slice(0, zone)).toLowerCase();
   if (isIP(lower) !== 6) return lower === address.toLowerCase() ? address : lower;
   // Expand "::" so all eight hextets are known; a trailing dotted IPv4 counts as two hextets.
   const [head, tail = ""] = lower.split("::");
@@ -121,20 +123,29 @@ export function normalizeAddress(address: string): string {
  */
 export class FailedAuthLimiter {
   private readonly entries = new Map<string, { failures: number; windowStart: number; lockedUntil: number }>();
+  /** Failures from every client within the current global window (distributed guessing). */
+  private global = { failures: 0, windowStart: 0, lockedUntil: 0 };
 
+  /**
+   * @param globalMaxFailures wrong tokens from ALL clients within `windowMs` after which every wrong token is
+   *   answered 429 for `lockMs`, whatever its key. Stops a flood that rotates peers to dodge the per-client
+   *   lock (and the eviction games that come with it). A valid token is still never blocked.
+   */
   constructor(
     private readonly maxFailures = 10,
     private readonly windowMs = 15 * 60_000,
     private readonly lockMs = 15 * 60_000,
     private readonly maxClients = 10_000,
     private readonly now: () => number = Date.now,
+    private readonly globalMaxFailures = 1_000,
   ) {}
 
   /** Seconds the client is still locked out (0 = not locked). */
   blockedFor(client: string): number {
     const e = this.entries.get(client);
     const t = this.now();
-    return e && e.lockedUntil > t ? Math.ceil((e.lockedUntil - t) / 1000) : 0;
+    const until = Math.max(e?.lockedUntil ?? 0, this.global.lockedUntil);
+    return until > t ? Math.ceil((until - t) / 1000) : 0;
   }
 
   /** A valid token clears the client's failure window (an active lockout is kept until it expires). */
@@ -146,6 +157,13 @@ export class FailedAuthLimiter {
   /** Record a failure; returns true when this failure triggered a lockout. */
   fail(client: string): boolean {
     const t = this.now();
+    if (t - this.global.windowStart > this.windowMs) this.global = { failures: 0, windowStart: t, lockedUntil: this.global.lockedUntil };
+    this.global.failures += 1;
+    let globalLock = false;
+    if (this.global.failures >= this.globalMaxFailures && this.global.lockedUntil <= t) {
+      this.global = { failures: 0, windowStart: t, lockedUntil: t + this.lockMs };
+      globalLock = true;
+    }
     let e = this.entries.get(client);
     if (!e || t - e.windowStart > this.windowMs) {
       if (!e && this.entries.size >= this.maxClients) this.evict(t);
@@ -159,7 +177,7 @@ export class FailedAuthLimiter {
       e.windowStart = t;
       return true;
     }
-    return false;
+    return globalLock;
   }
 
   /** Number of tracked clients (for tests and diagnostics). */
@@ -167,14 +185,27 @@ export class FailedAuthLimiter {
     return this.entries.size;
   }
 
+  /**
+   * Amortised: one full scan frees at least 10 % of the capacity, so a flood of new keys pays the O(n) scan once
+   * per ~maxClients/10 failures, not on every request. Expired entries go first, then the first-inserted
+   * unlocked ones; an active lockout is never dropped. (Once the map is full of locks, the global budget above
+   * is what still throttles; per-client locks are then a soft bound.)
+   */
   private evict(t: number): void {
+    const target = Math.max(1, Math.floor(this.maxClients / 10));
+    let freed = 0;
     for (const [k, v] of this.entries) {
-      if (v.lockedUntil <= t && t - v.windowStart > this.windowMs) this.entries.delete(k);
+      if (v.lockedUntil <= t && t - v.windowStart > this.windowMs) {
+        this.entries.delete(k);
+        freed += 1;
+      }
     }
-    // Still full: drop the first-inserted unlocked windows (Map iteration is insertion order). Locked stay.
     for (const [k, v] of this.entries) {
-      if (this.entries.size < this.maxClients) break;
-      if (v.lockedUntil <= t) this.entries.delete(k);
+      if (freed >= target) break;
+      if (v.lockedUntil <= t) {
+        this.entries.delete(k);
+        freed += 1;
+      }
     }
   }
 }

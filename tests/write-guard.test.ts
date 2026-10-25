@@ -356,6 +356,10 @@ describe("update-voucher audit + unchecked-only", () => {
     expect(summarizeError(new WriteRefusedError("Voucher v1 has status \"open\""), null)).toBe('WriteRefusedError: Voucher v1 has status "open"');
     expect(summarizeError(new LexwareApiError(409, "conflict body with Some Person"), null)).toBe("LexwareApiError status=409 kind=validation");
     expect(summarizeError(new TypeError("Some Person"), null)).toMatch(/^TypeError msg#[0-9a-f]{16}$/);
+    const odd = new Error("x");
+    odd.name = "Error for Some Person";
+    expect(summarizeError(odd, null)).toMatch(/^Error\(name#[0-9a-f]{8}\) msg#[0-9a-f]{16}$/);
+    expect(summarizeError(odd, null)).not.toContain("Some Person");
     expect(summarizeError("raw string Some Person", null)).toMatch(/^string msg#[0-9a-f]{16}$/);
   });
 });
@@ -445,9 +449,31 @@ describe("failed-auth throttling", () => {
     expect(normalizeAddress("not-an-ip")).toBe("not-an-ip");
   });
 
+  it("a global failure budget throttles a flood that rotates client keys (valid token still passes)", () => {
+    let t = 0;
+    const limiter = new FailedAuthLimiter(3, 60_000, 60_000, 1000, () => t, 20);
+    const mw = bearerAuthMiddleware(TOKEN, { trustProxy: true, limiter });
+    for (let i = 0; i < 19; i++) expect(call(mw, "Bearer wrong", `203.0.113.${i}`).status).toHaveBeenCalledWith(401);
+    expect(call(mw, "Bearer wrong", "203.0.113.19").status).toHaveBeenCalledWith(401); // 20th trips the budget
+    expect(call(mw, "Bearer wrong", "198.51.100.1").status).toHaveBeenCalledWith(429); // fresh key, still 429
+    expect(call(mw, `Bearer ${TOKEN}`, "198.51.100.2").next).toHaveBeenCalled();
+    t = 61_000;
+    expect(call(mw, "Bearer wrong", "198.51.100.3").status).toHaveBeenCalledWith(401);
+  });
+
+  it("keeps the memory bound and the scan cost amortised under a flood of new keys", () => {
+    let t = 0;
+    const limiter = new FailedAuthLimiter(10, 60_000, 60_000, 1000, () => t, 1_000_000);
+    const started = performance.now();
+    for (let i = 0; i < 20_000; i++) limiter.fail(`peer-${i}`);
+    const ms = performance.now() - started;
+    expect(limiter.size).toBeLessThanOrEqual(1000);
+    expect(ms).toBeLessThan(2_000);
+  });
+
   it("evicts expired and unlocked entries when full but never an active lockout", () => {
     let t = 0;
-    const limiter = new FailedAuthLimiter(2, 60_000, 60_000, 3, () => t);
+    const limiter = new FailedAuthLimiter(2, 60_000, 60_000, 3, () => t, 1_000_000);
     limiter.fail("locked");
     limiter.fail("locked"); // locked now
     limiter.fail("a");

@@ -20,9 +20,10 @@ per `settings.json`, Guard-Hook und `governance.test.ts` gesperrt.
 
 **Stand 2026-10-22 (verifiziert per `get-server-info`, Build `883b572`):** read + drafts aktiv, finalize aus,
 `LEXWARE_WRITE_TOOLS=update-voucher`, `LEXWARE_UPDATE_VOUCHER_UNCHECKED_ONLY=true`. Erreichbar ist genau **ein**
-zustandsänderndes Tool: `update-voucher`, nur für Belege mit Status `unchecked`. Jeder Aufruf hinterlässt zwei
-HMAC-verkettete Protokollzeilen (Versuch, Ergebnis) in den Render-Logs. `tests/finance-policy.test.ts` friert dieses
-Profil ein („hardened production profile“).
+zustandsänderndes Tool: `update-voucher`, nur für Belege mit Status `unchecked`. Auf Build `883b572` hinterlässt
+jeder Aufruf eine SHA-256-verkettete Protokollzeile; nach dem Deploy des Härtungs-PR (#42) sind es zwei
+HMAC-verkettete Zeilen (Versuch, Ergebnis). `tests/finance-policy.test.ts` friert dieses Profil ein („hardened
+production profile“).
 
 Historischer Stand 06.10.2026 (vor #41): read + drafts aktiv, finalize aus, keine Allowlist. Damit waren
 **16 zustandsändernde Tools** auf dem Server erreichbar:

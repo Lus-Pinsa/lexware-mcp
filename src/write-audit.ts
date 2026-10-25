@@ -115,10 +115,14 @@ export function recordAuditDetail(detail: AuditDetail): void {
  * only status and kind; anything else only its class name plus a fingerprint of the message. Upstream
  * bodies can contain contact names and remarks and are therefore never copied.
  */
+const KNOWN_ERROR_NAMES = new Set(["Error", "TypeError", "RangeError", "SyntaxError", "ZodError", "AbortError", "TimeoutError", "ConfigError"]);
+
 export function summarizeError(err: unknown, key: Buffer | null): string {
   if (err instanceof WriteRefusedError) return `${err.name}: ${err.message}`.slice(0, 300);
   if (err instanceof LexwareApiError) return `LexwareApiError status=${err.status} kind=${err.kind}`;
-  const name = err instanceof Error ? err.name : typeof err;
+  // Only well-known class names in clear: an error name can carry data (anything else is hashed too).
+  const rawName = err instanceof Error ? err.name : typeof err;
+  const name = KNOWN_ERROR_NAMES.has(rawName) || !(err instanceof Error) ? rawName : `Error(name#${digest(key, rawName).slice(0, 8)})`;
   const message = err instanceof Error ? err.message : String(err);
   return `${name} msg#${digest(key, message).slice(0, 16)}`;
 }

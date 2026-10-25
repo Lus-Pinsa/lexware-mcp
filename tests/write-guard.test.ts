@@ -489,6 +489,10 @@ describe("failed-auth throttling", () => {
     // Non-IP values never become a Map key verbatim: hashed, bounded; empty → "unknown".
     const forged = { headers: { "x-forwarded-for": "x".repeat(100_000) } } as unknown as Request;
     expect(clientKey(forged, true)).toMatch(/^other#[0-9a-f]{16}$/);
+    const forgedSuffix = { headers: { "x-forwarded-for": "x".repeat(100_000) + "::/64" } } as unknown as Request;
+    expect(clientKey(forgedSuffix, true)).toMatch(/^other#[0-9a-f]{16}$/);
+    expect(clientKey({ headers: { "x-forwarded-for": "1.2.3.4/64" } } as unknown as Request, true)).toMatch(/^other#/);
+    expect(clientKey({ headers: { "x-forwarded-for": "2001:db8::1" } } as unknown as Request, true)).toBe("2001:0db8:0000:0000::/64");
     expect(clientKey({ headers: { "x-forwarded-for": "%" } } as unknown as Request, true)).toBe("unknown");
   });
 

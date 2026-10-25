@@ -77,6 +77,7 @@ export const KNOWN_VOUCHER_TYPES = new Set(["salesinvoice", "salescreditnote", "
 export const KNOWN_VOUCHER_STATUSES = new Set(["unchecked", "open", "overdue", "paid", "paidoff", "voided", "transferred", "sepadebit", "draft", "accepted", "rejected"]);
 export const KNOWN_TAX_TYPES = new Set(["net", "gross", "vatfree", "intraCommunitySupply", "thirdPartyCountry", "constructionService13b", "externalService13b", "photovoltaicEquipment"]);
 
+/** Note: an unknown→different-unknown transition collapses to "other"→"other" and is not listed in changedKeys. */
 function enumOrOther(value: unknown, known: Set<string>): string | null {
   if (value === undefined || value === null) return null;
   return typeof value === "string" && known.has(value) ? value : "other";

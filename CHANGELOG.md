@@ -19,7 +19,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   clients) answers every wrong token with 429 for 15 min once exhausted, so rotating addresses does not help; a
   valid token is never affected. A distinct stderr line reports a global trip.
   `X-Forwarded-For` is only trusted with `TRUST_PROXY=true` (set it on Render); IPv6 clients are keyed by /64; an
-  active lockout is never evicted; a valid token clears the client's failure window.
+  active lockout is never evicted; a valid token neither resets nor is affected by the failure window.
 - **`LEXWARE_WRITE_TOOLS`** now fails start-up on unknown tool names (a typo used to disable every write tool
   silently) and on `none` mixed with names. The write guard no longer trusts the `readOnlyHint` annotation:
   everything registered on the write path is filtered and audited.

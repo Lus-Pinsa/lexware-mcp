@@ -88,9 +88,10 @@ export function clientKey(req: Request, trustProxy = false): string {
   // A non-IP value can only come from a forged header without an appending proxy; never use it as a Map key
   // verbatim (unbounded length), key it by a hash instead.
   if (normalized === "") return "unknown";
-  return isIP(normalized.replace(/\/64$/, "").replace(/::$/, "::0")) !== 0 || normalized.endsWith("::/64")
-    ? normalized
-    : `other#${createHash("sha256").update(normalized, "utf8").digest("hex").slice(0, 16)}`;
+  // Legitimate keys are an IPv4 address or an IPv6 /64 ("xxxx:xxxx:xxxx:xxxx::/64"); everything else is hashed.
+  const isV4 = isIP(normalized) === 4;
+  const isV6Prefix = normalized.endsWith("::/64") && isIP(normalized.slice(0, -3)) === 6;
+  return isV4 || isV6Prefix ? normalized : `other#${createHash("sha256").update(normalized, "utf8").digest("hex").slice(0, 16)}`;
 }
 
 /** Unmap IPv4-mapped IPv6 (any spelling); collapse IPv6 to its /64. Non-IP strings are kept as is. */

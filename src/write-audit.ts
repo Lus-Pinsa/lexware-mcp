@@ -72,16 +72,26 @@ export function fingerprint(value: unknown, key: Buffer | null = store.getStore(
   return { sha256: digest(key, value).slice(0, 16), length: value.length };
 }
 
+/** Known enumerations; any other value is written as "other" (upstream/input text never in clear). */
+export const KNOWN_VOUCHER_TYPES = new Set(["salesinvoice", "salescreditnote", "purchaseinvoice", "purchasecreditnote", "invoice", "downpaymentinvoice", "creditnote", "orderconfirmation", "quotation", "deliverynote", "dunning"]);
+export const KNOWN_VOUCHER_STATUSES = new Set(["unchecked", "open", "overdue", "paid", "paidoff", "voided", "transferred", "sepadebit", "draft", "accepted", "rejected"]);
+export const KNOWN_TAX_TYPES = new Set(["net", "gross", "vatfree", "intraCommunitySupply", "thirdPartyCountry", "constructionService13b", "externalService13b", "photovoltaicEquipment"]);
+
+function enumOrOther(value: unknown, known: Set<string>): string | null {
+  if (value === undefined || value === null) return null;
+  return typeof value === "string" && known.has(value) ? value : "other";
+}
+
 /** Reduce a Lexware voucher to the fields that matter for a booking change. */
 export function voucherSnapshot(v: Record<string, unknown>): VoucherSnapshot {
   const items = Array.isArray(v.voucherItems) ? v.voucherItems : [];
   return {
     version: v.version ?? null,
-    type: v.type ?? null,
-    voucherStatus: v.voucherStatus ?? null,
+    type: enumOrOther(v.type, KNOWN_VOUCHER_TYPES),
+    voucherStatus: enumOrOther(v.voucherStatus, KNOWN_VOUCHER_STATUSES),
     voucherNumber: fingerprint(v.voucherNumber),
     voucherDate: v.voucherDate ?? null,
-    taxType: v.taxType ?? null,
+    taxType: enumOrOther(v.taxType, KNOWN_TAX_TYPES),
     totalGrossAmount: v.totalGrossAmount ?? null,
     totalTaxAmount: v.totalTaxAmount ?? null,
     contactId: v.contactId ?? null,

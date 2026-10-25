@@ -265,6 +265,24 @@ describe("update-voucher audit + unchecked-only", () => {
     expect(c.events().map((e) => e.outcome)).toEqual(["attempt", "refused"]);
   });
 
+  it("never writes an unknown status, type or tax type in clear (refusal text and snapshots)", async () => {
+    const client = voucherClient({ ...VOUCHER, voucherStatus: "weird Some Person status", type: "odd Some Person type", taxType: "tax Some Person" });
+    const c = capture(cfg(env), client as unknown as LexwareClient);
+    await expect(c.tools.get("update-voucher")!.handler({ id: "v1", remark: "x" }, extra)).rejects.toThrow(/status "unknown"/);
+    expect(c.lines.join("\n")).not.toContain("Some Person");
+    const [, refused] = c.events();
+    expect(refused.detail?.before).toMatchObject({ voucherStatus: "other", type: "other", taxType: "other" });
+  });
+
+  it("fingerprints a target that does not look like an id (free text, oversized)", async () => {
+    const client = voucherClient(VOUCHER);
+    const c = capture(cfg({ LEXWARE_WRITE_TOOLS: "update-voucher" }), client as unknown as LexwareClient);
+    await c.tools.get("update-voucher")!.handler({ id: "Some Person said hello ".repeat(10), remark: "x" }, extra).catch(() => undefined);
+    const [attempt] = c.events();
+    expect(attempt.target).toMatch(/^id#[0-9a-f]{16}$/);
+    expect(c.lines.join("\n")).not.toContain("Some Person");
+  });
+
   it("fails closed when the status read fails: no PUT, outcome error without the upstream text", async () => {
     const client = voucherClient(VOUCHER);
     client.get.mockRejectedValueOnce(new LexwareApiError(503, 'upstream said: contactName "Some Person"'));
@@ -399,7 +417,7 @@ describe("failed-auth throttling", () => {
     t = 16 * 60_000; // window expired: the 10th failure starts a new window, no lock
     expect(limiter.fail("c")).toBe(false);
     for (let i = 0; i < 8; i++) expect(limiter.fail("c")).toBe(false);
-    expect(limiter.fail("c")).toBe(true);
+    expect(limiter.fail("c")).toBe("client");
     expect(limiter.blockedFor("c")).toBe(15 * 60);
     t += 15 * 60_000 - 1;
     expect(limiter.blockedFor("c")).toBe(1);
@@ -407,17 +425,38 @@ describe("failed-auth throttling", () => {
     expect(limiter.blockedFor("c")).toBe(0);
   });
 
-  it("a valid token clears the client's failure window", () => {
+  it("a valid token does not reset the client's failure window (no recycling of the window via a shared egress)", () => {
     let t = 0;
     const limiter = new FailedAuthLimiter(3, 60_000, 60_000, 100, () => t);
     const mw = bearerAuthMiddleware(TOKEN, { trustProxy: true, limiter });
     call(mw, "Bearer wrong");
     call(mw, "Bearer wrong");
-    call(mw, `Bearer ${TOKEN}`);
-    call(mw, "Bearer wrong");
-    call(mw, "Bearer wrong");
-    expect(call(mw, "Bearer wrong").status).toHaveBeenCalledWith(401); // 3rd after reset → lock now
+    expect(call(mw, `Bearer ${TOKEN}`).next).toHaveBeenCalled();
+    expect(call(mw, "Bearer wrong").status).toHaveBeenCalledWith(401); // 3rd failure of the window → lock
     expect(call(mw, "Bearer wrong").status).toHaveBeenCalledWith(429);
+    expect(call(mw, `Bearer ${TOKEN}`).next).toHaveBeenCalled();
+  });
+
+  it("the global window resets after windowMs without a trip, and fail() reports which lock tripped", () => {
+    let t = 0;
+    const limiter = new FailedAuthLimiter(100, 60_000, 60_000, 1000, () => t, 20);
+    for (let i = 0; i < 19; i++) expect(limiter.fail(`p${i}`)).toBe(false);
+    t = 61_000;
+    expect(limiter.fail("p-late")).toBe(false); // new window: 1/20
+    for (let i = 0; i < 18; i++) expect(limiter.fail(`q${i}`)).toBe(false);
+    expect(limiter.fail("q-last")).toBe("global");
+    expect(limiter.globalTrips).toBe(1);
+    const per = new FailedAuthLimiter(2, 60_000, 60_000, 1000, () => t, 1_000_000);
+    expect(per.fail("c")).toBe(false);
+    expect(per.fail("c")).toBe("client");
+  });
+
+  it("logs a distinct line when the global budget trips", () => {
+    const stderr = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const mw = bearerAuthMiddleware(TOKEN, { trustProxy: true, limiter: new FailedAuthLimiter(100, 60_000, 60_000, 1000, () => 0, 3) });
+    for (let i = 0; i < 3; i++) call(mw, "Bearer wrong", `203.0.113.${i}`);
+    expect(stderr).toHaveBeenCalledWith(expect.stringMatching(/global failure budget exhausted/));
+    stderr.mockRestore();
   });
 
   it("ignores X-Forwarded-For unless TRUST_PROXY is on (rotating the header cannot bypass the lockout)", () => {
@@ -447,6 +486,10 @@ describe("failed-auth throttling", () => {
     expect(normalizeAddress("fe80::1%lo0")).toBe("fe80:0000:0000:0000::/64");
     expect(normalizeAddress("192.0.2.9")).toBe("192.0.2.9");
     expect(normalizeAddress("not-an-ip")).toBe("not-an-ip");
+    // Non-IP values never become a Map key verbatim: hashed, bounded; empty → "unknown".
+    const forged = { headers: { "x-forwarded-for": "x".repeat(100_000) } } as unknown as Request;
+    expect(clientKey(forged, true)).toMatch(/^other#[0-9a-f]{16}$/);
+    expect(clientKey({ headers: { "x-forwarded-for": "%" } } as unknown as Request, true)).toBe("unknown");
   });
 
   it("a global failure budget throttles a flood that rotates client keys (valid token still passes)", () => {
@@ -469,6 +512,9 @@ describe("failed-auth throttling", () => {
     const ms = performance.now() - started;
     expect(limiter.size).toBeLessThanOrEqual(1000);
     expect(ms).toBeLessThan(2_000);
+    // Amortised: one scan frees 10 % (100 slots), so 19 000 insertions past the cap need ~190 scans, not 19 000.
+    expect(limiter.evictionScans).toBeLessThanOrEqual(200);
+    expect(limiter.evictionScans).toBeGreaterThan(0);
   });
 
   it("evicts expired and unlocked entries when full but never an active lockout", () => {

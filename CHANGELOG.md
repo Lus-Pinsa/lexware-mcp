@@ -15,7 +15,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Failed-auth lockout**: the token is checked first, so a request with the valid token is never answered with
   429 — a stranger behind the same egress IP (claude.ai connector pool) can no longer lock out the real connector.
   Consequently the lockout only answers WRONG tokens with 429; it is not brute-force protection beyond the
-  token's entropy (use a ≥ 32-byte random token).
+  token's entropy (use a ≥ 32-byte random token). A global budget (1 000 wrong tokens per 15 min across all
+  clients) answers every wrong token with 429 for 15 min once exhausted, so rotating addresses does not help; a
+  valid token is never affected. A distinct stderr line reports a global trip.
   `X-Forwarded-For` is only trusted with `TRUST_PROXY=true` (set it on Render); IPv6 clients are keyed by /64; an
   active lockout is never evicted; a valid token clears the client's failure window.
 - **`LEXWARE_WRITE_TOOLS`** now fails start-up on unknown tool names (a typo used to disable every write tool

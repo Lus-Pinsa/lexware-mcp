@@ -3,11 +3,10 @@ import { z } from "zod";
 import type { LexwareClient } from "../lexware/client.js";
 import { additionalFieldsParam, mergeBody, versionParam, voucherInputShape, voucherUpdateShape } from "./schemas.js";
 import { WRITE, decodeBase64Strict, deepMergePatch, text } from "./shared.js";
-import { WriteRefusedError, changedKeys, recordAuditDetail, voucherSnapshot } from "../write-audit.js";
+import { KNOWN_VOUCHER_STATUSES, WriteRefusedError, changedKeys, recordAuditDetail, voucherSnapshot } from "../write-audit.js";
 
 /** Voucher statuses lexoffice DERIVES from payments — re-sending them on PUT is rejected (invalid_value). */
 const DERIVED_VOUCHER_STATUSES = new Set(["paid", "paidoff", "voided", "transferred", "sepadebit"]);
-const KNOWN_VOUCHER_STATUSES = new Set(["unchecked", "open", "overdue", ...DERIVED_VOUCHER_STATUSES]);
 
 /**
  * Write tools for bookkeeping vouchers (manually-booked sales/purchase

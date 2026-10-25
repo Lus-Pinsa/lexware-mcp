@@ -37,7 +37,7 @@ Historischer Stand 06.10.2026 (vor #41): read + drafts aktiv, finalize aus, kein
   Security-Review ist `voucherStatus` ein freier String, ein Beleg kann damit also gebucht werden.
 
 `LEXWARE_READ_ONLY` ist in Produktion `false`. Die Sicherheit beruht deshalb **nicht** auf diesem Flag, sondern auf
-der Allowlist (fail closed bei unbekannten Namen) und der `unchecked`-Beschränkung.
+der Allowlist (ab #42 fail closed bei unbekannten Namen) und der `unchecked`-Beschränkung.
 
 ## Restrisiko (wichtig)
 

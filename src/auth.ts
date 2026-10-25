@@ -36,7 +36,6 @@ export function bearerAuthMiddleware(token: string, options: BearerAuthOptions =
       providedBuf.length === expected.length && timingSafeEqual(providedBuf, expected);
     const client = clientKey(req, trustProxy);
     if (ok) {
-      limiter.succeed(client);
       next();
       return;
     }
@@ -46,9 +45,14 @@ export function bearerAuthMiddleware(token: string, options: BearerAuthOptions =
       res.status(429).json({ error: "too_many_failed_attempts" });
       return;
     }
-    if (limiter.fail(client)) {
+    const tripped = limiter.fail(client);
+    if (tripped === "client") {
       console.error(
         `[lexware-mcp] auth: client locked out after repeated invalid tokens (keyHash=${fingerprintForLog(client)})`,
+      );
+    } else if (tripped === "global") {
+      console.error(
+        "[lexware-mcp] auth: global failure budget exhausted — wrong tokens from every client are answered 429 for the lock period",
       );
     }
     // RFC 9110 §11.6.1: a 401 MUST carry a WWW-Authenticate challenge so clients
@@ -80,7 +84,13 @@ export function clientKey(req: Request, trustProxy = false): string {
   }
   address ||= req.socket?.remoteAddress || undefined;
   if (!address) return "unknown";
-  return normalizeAddress(address);
+  const normalized = normalizeAddress(address);
+  // A non-IP value can only come from a forged header without an appending proxy; never use it as a Map key
+  // verbatim (unbounded length), key it by a hash instead.
+  if (normalized === "") return "unknown";
+  return isIP(normalized.replace(/\/64$/, "").replace(/::$/, "::0")) !== 0 || normalized.endsWith("::/64")
+    ? normalized
+    : `other#${createHash("sha256").update(normalized, "utf8").digest("hex").slice(0, 16)}`;
 }
 
 /** Unmap IPv4-mapped IPv6 (any spelling); collapse IPv6 to its /64. Non-IP strings are kept as is. */
@@ -117,7 +127,7 @@ export function normalizeAddress(address: string): string {
  * After `maxFailures` invalid tokens within `windowMs`, WRONG tokens from that client are answered 429 for
  * `lockMs`. This is not brute-force protection beyond the token's entropy: a correct token is never delayed
  * (see bearerAuthMiddleware), so a shared egress cannot be used to lock out the legitimate connector. A valid
- * token clears the client's failure window; an active lockout stays until it expires. Memory is bounded
+ * token does not reset the client's failures; an active lockout stays until it expires. Memory is bounded
  * (`maxClients`): when full, expired entries are evicted first, then the first-inserted UNLOCKED ones; an
  * active lockout is never dropped to make room (so the bound is soft while every entry is locked).
  */
@@ -125,6 +135,9 @@ export class FailedAuthLimiter {
   private readonly entries = new Map<string, { failures: number; windowStart: number; lockedUntil: number }>();
   /** Failures from every client within the current global window (distributed guessing). */
   private global = { failures: 0, windowStart: 0, lockedUntil: 0 };
+  /** Diagnostics for tests: how often the global budget tripped and how many eviction scans ran. */
+  globalTrips = 0;
+  evictionScans = 0;
 
   /**
    * @param globalMaxFailures wrong tokens from ALL clients within `windowMs` after which every wrong token is
@@ -148,14 +161,12 @@ export class FailedAuthLimiter {
     return until > t ? Math.ceil((until - t) / 1000) : 0;
   }
 
-  /** A valid token clears the client's failure window (an active lockout is kept until it expires). */
-  succeed(client: string): void {
-    const e = this.entries.get(client);
-    if (e && e.lockedUntil <= this.now()) this.entries.delete(client);
-  }
-
-  /** Record a failure; returns true when this failure triggered a lockout. */
-  fail(client: string): boolean {
+  /**
+   * Record a failure; returns which lock this failure triggered, if any. (A valid token does not reset a
+   * client's failures: it is never throttled anyway, and a reset would let an attacker behind the same egress
+   * recycle the window.)
+   */
+  fail(client: string): "client" | "global" | false {
     const t = this.now();
     if (t - this.global.windowStart > this.windowMs) this.global = { failures: 0, windowStart: t, lockedUntil: this.global.lockedUntil };
     this.global.failures += 1;
@@ -163,6 +174,7 @@ export class FailedAuthLimiter {
     if (this.global.failures >= this.globalMaxFailures && this.global.lockedUntil <= t) {
       this.global = { failures: 0, windowStart: t, lockedUntil: t + this.lockMs };
       globalLock = true;
+      this.globalTrips += 1;
     }
     let e = this.entries.get(client);
     if (!e || t - e.windowStart > this.windowMs) {
@@ -175,9 +187,9 @@ export class FailedAuthLimiter {
       e.lockedUntil = t + this.lockMs;
       e.failures = 0;
       e.windowStart = t;
-      return true;
+      return "client";
     }
-    return globalLock;
+    return globalLock ? "global" : false;
   }
 
   /** Number of tracked clients (for tests and diagnostics). */
@@ -192,6 +204,7 @@ export class FailedAuthLimiter {
    * is what still throttles; per-client locks are then a soft bound.)
    */
   private evict(t: number): void {
+    this.evictionScans += 1;
     const target = Math.max(1, Math.floor(this.maxClients / 10));
     let freed = 0;
     for (const [k, v] of this.entries) {

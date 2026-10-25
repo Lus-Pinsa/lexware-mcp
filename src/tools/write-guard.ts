@@ -51,7 +51,9 @@ export function guardWriteTools(
           const handler = rest[rest.length - 1] as Handler;
           const audited: Handler = async (...args) => {
             const input = args.length > 1 ? (args[0] as Record<string, unknown> | undefined) : undefined;
-            const id = input && typeof input.id === "string" ? input.id : null;
+            // Target in clear only when it looks like an id; anything else (free text, oversized) is fingerprinted.
+            const rawId = input && typeof input.id === "string" ? input.id : null;
+            const id = rawId === null ? null : /^[A-Za-z0-9._:-]{1,64}$/.test(rawId) ? rawId : `id#${createHash("sha256").update(rawId).digest("hex").slice(0, 16)}`;
             const { result, event } = await audit.run(
               { tool: toolConfig.name, actor: describeActor(config, args[args.length - 1]), target: id },
               () => handler(...args),

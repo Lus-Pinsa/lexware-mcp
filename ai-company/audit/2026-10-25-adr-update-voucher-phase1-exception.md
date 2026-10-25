@@ -15,7 +15,8 @@ der Abgleich passiert bei jedem Lauf.
 ## Entscheidung
 
 1. Der Server exponiert in Produktion genau **ein** Schreib-Tool: `update-voucher`
-   (`LEXWARE_WRITE_TOOLS=update-voucher`). Unbekannte Namen in der Allowlist beenden den Start (fail closed).
+   (`LEXWARE_WRITE_TOOLS=update-voucher`). Unbekannte Namen in der Allowlist beenden ab dem Deploy von #42 den
+   Start (fail closed); auf `883b572` ergibt ein Tippfehler noch still 0 Schreib-Tools.
 2. `update-voucher` ändert nur Belege mit exaktem Status `unchecked` (`LEXWARE_UPDATE_VOUCHER_UNCHECKED_ONLY=true`);
    der Status wird im selben Aufruf unmittelbar vor dem PUT frisch gelesen. Gebuchte Belege werden nie per API geändert.
 3. Jeder Aufruf hinterlässt zwei HMAC-SHA256-verkettete Protokollzeilen (Versuch vor dem Lexware-Aufruf, Ergebnis

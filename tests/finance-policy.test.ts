@@ -403,3 +403,39 @@ describe("Phase 2 finance intelligence stays read-only", () => {
     }
   });
 });
+
+/**
+ * The LU'S production profile as deployed since 2026-10-22 (verified via get-server-info): drafts on, finalize off,
+ * write allowlist = update-voucher, unchecked-only on. Freezing it here means a change of this profile is a
+ * deliberate policy change, and a Render env drift (allowlist removed) is at least visibly different from the
+ * documented state.
+ */
+describe("hardened production profile (LEXWARE_WRITE_TOOLS=update-voucher)", () => {
+  const HARDENED = {
+    ...PRODUCTION,
+    LEXWARE_WRITE_TOOLS: "update-voucher",
+    LEXWARE_UPDATE_VOUCHER_UNCHECKED_ONLY: "true",
+    TRUST_PROXY: "true",
+  };
+  const hardened = capture((s) => registerTools(s, {} as LexwareClient, cfg(HARDENED)));
+
+  it("exposes exactly one state-changing tool", () => {
+    const writes = [...hardened.values()].filter((t) => t.annotations?.readOnlyHint !== true).map((t) => t.name);
+    expect(writes).toEqual(["update-voucher"]);
+  });
+
+  it("keeps every read tool of the unrestricted production profile", () => {
+    const prod = capture((s) => registerTools(s, {} as LexwareClient, cfg(PRODUCTION)));
+    const reads = (m: Map<string, { annotations?: { readOnlyHint?: boolean } }>) =>
+      [...m.entries()].filter(([, t]) => t.annotations?.readOnlyHint === true).map(([n]) => n).sort();
+    expect(reads(hardened)).toEqual(reads(prod));
+  });
+
+  it("starts without warnings, with a keyed audit chain and proxy-aware throttling", () => {
+    const c = cfg(HARDENED);
+    expect(c.warnings).toEqual([]);
+    expect(c.updateVoucherUncheckedOnly).toBe(true);
+    expect(c.trustProxy).toBe(true);
+    expect(c.auditKey).not.toBeNull();
+  });
+});

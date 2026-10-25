@@ -460,6 +460,7 @@ if (config.auth.mode === "oauth") {
     "/mcp",
     bearerAuthMiddleware(
       config.auth.token,
+      { trustProxy: config.trustProxy },
     ),
   );
 }

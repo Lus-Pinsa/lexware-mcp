@@ -1,16 +1,24 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
+import { LexwareApiError } from "./lexware/errors.js";
 
 /**
  * Append-only audit trail for every state-changing tool call.
  *
- * Each call emits exactly one JSON line on stdout (`{"audit":"lexware-write",...}`): who (auth mode +
- * actor), when, which tool and target, the outcome and — for update-voucher — the booking-relevant fields
- * before and after. Lines are hash-chained (`prevHash` → `hash`) so a missing or edited line is detectable
- * within one process lifetime; a restart starts a new chain (`seq` 1, `prevHash` = "genesis").
+ * Each call emits two JSON lines on stdout (`{"audit":"lexware-write",...}`): an `attempt` line BEFORE the
+ * handler runs (so a crash mid-write still leaves a trace) and a result line (`ok` / `refused` / `error`)
+ * afterwards with — for update-voucher — the booking-relevant fields before and after. Lines are
+ * hash-chained (`prevHash` → `hash`) so a missing or edited line is detectable within one process lifetime;
+ * a restart starts a new chain (`seq` 1, `prevHash` = "genesis").
  *
- * Free text that may carry personal data (contactName, remark) is never written in clear — only a short
- * SHA-256 fingerprint and its length. Secrets are never part of an event.
+ * With an audit key (`LEXWARE_AUDIT_KEY`, or derived from the static MCP token) the chain and every
+ * fingerprint are HMAC-SHA256: a log reader cannot recompute a consistent chain after editing a line, and a
+ * fingerprint of a low-entropy value (a supplier name) cannot be reversed with a dictionary. Without a key
+ * both fall back to plain SHA-256 and the server warns at start-up.
+ *
+ * The trail is PSEUDONYMISED, not free of business data: ids, dates and amounts are written in clear so a
+ * change can be reconstructed; free text (contactName, remark, voucherNumber) only as fingerprint + length.
+ * Upstream error text is never copied verbatim. Secrets are never part of an event.
  */
 
 /** Booking-relevant snapshot of a voucher (no free text in clear). */
@@ -29,7 +37,7 @@ export interface AuditEvent {
   tool: string;
   actor: string;
   target: string | null;
-  outcome: "ok" | "error" | "refused";
+  outcome: "attempt" | "ok" | "error" | "refused";
   error?: string;
   durationMs: number;
   detail?: AuditDetail;
@@ -37,14 +45,42 @@ export interface AuditEvent {
   hash: string;
 }
 
+export interface AuditFingerprint {
+  sha256: string;
+  length: number;
+}
+
 type Sink = (line: string) => void;
 
-const store = new AsyncLocalStorage<{ detail?: AuditDetail }>();
+interface AuditContext {
+  detail?: AuditDetail;
+  key: Buffer | null;
+}
 
-/** Fingerprint of a free-text value: never the text itself. */
-export function fingerprint(value: unknown): { sha256: string; length: number } | null {
+const store = new AsyncLocalStorage<AuditContext>();
+
+function digest(key: Buffer | null, value: string): string {
+  return key ? createHmac("sha256", key).update(value).digest("hex") : createHash("sha256").update(value).digest("hex");
+}
+
+/**
+ * Fingerprint of a free-text value: never the text itself. Keyed (HMAC) when called inside an audited
+ * handler of a log that has a key; the field name stays `sha256` for log readers.
+ */
+export function fingerprint(value: unknown, key: Buffer | null = store.getStore()?.key ?? null): AuditFingerprint | null {
   if (typeof value !== "string" || value === "") return null;
-  return { sha256: createHash("sha256").update(value).digest("hex").slice(0, 16), length: value.length };
+  return { sha256: digest(key, value).slice(0, 16), length: value.length };
+}
+
+/** Known enumerations; any other value is written as "other" (upstream/input text never in clear). */
+export const KNOWN_VOUCHER_TYPES = new Set(["salesinvoice", "salescreditnote", "purchaseinvoice", "purchasecreditnote", "invoice", "downpaymentinvoice", "creditnote", "orderconfirmation", "quotation", "deliverynote", "dunning"]);
+export const KNOWN_VOUCHER_STATUSES = new Set(["unchecked", "open", "overdue", "paid", "paidoff", "voided", "transferred", "sepadebit", "draft", "accepted", "rejected"]);
+export const KNOWN_TAX_TYPES = new Set(["net", "gross", "vatfree", "intraCommunitySupply", "thirdPartyCountry", "constructionService13b", "externalService13b", "photovoltaicEquipment"]);
+
+/** Note: an unknown→different-unknown transition collapses to "other"→"other" and is not listed in changedKeys. */
+function enumOrOther(value: unknown, known: Set<string>): string | null {
+  if (value === undefined || value === null) return null;
+  return typeof value === "string" && known.has(value) ? value : "other";
 }
 
 /** Reduce a Lexware voucher to the fields that matter for a booking change. */
@@ -52,11 +88,11 @@ export function voucherSnapshot(v: Record<string, unknown>): VoucherSnapshot {
   const items = Array.isArray(v.voucherItems) ? v.voucherItems : [];
   return {
     version: v.version ?? null,
-    type: v.type ?? null,
-    voucherStatus: v.voucherStatus ?? null,
-    voucherNumber: v.voucherNumber ?? null,
+    type: enumOrOther(v.type, KNOWN_VOUCHER_TYPES),
+    voucherStatus: enumOrOther(v.voucherStatus, KNOWN_VOUCHER_STATUSES),
+    voucherNumber: fingerprint(v.voucherNumber),
     voucherDate: v.voucherDate ?? null,
-    taxType: v.taxType ?? null,
+    taxType: enumOrOther(v.taxType, KNOWN_TAX_TYPES),
     totalGrossAmount: v.totalGrossAmount ?? null,
     totalTaxAmount: v.totalTaxAmount ?? null,
     contactId: v.contactId ?? null,
@@ -85,30 +121,66 @@ export function recordAuditDetail(detail: AuditDetail): void {
   if (ctx) ctx.detail = { ...ctx.detail, ...detail };
 }
 
+/**
+ * Error summary for the trail: our own refusals carry their (business-data-free) message; Lexware errors
+ * only status and kind; anything else only its class name plus a fingerprint of the message. Upstream
+ * bodies can contain contact names and remarks and are therefore never copied.
+ */
+const KNOWN_ERROR_NAMES = new Set(["Error", "TypeError", "RangeError", "SyntaxError", "ZodError", "AbortError", "TimeoutError", "ConfigError"]);
+
+export function summarizeError(err: unknown, key: Buffer | null): string {
+  if (err instanceof WriteRefusedError) return `${err.name}: ${err.message}`.slice(0, 300);
+  if (err instanceof LexwareApiError) return `LexwareApiError status=${err.status} kind=${err.kind}`;
+  // Only well-known class names in clear: an error name can carry data (anything else is hashed too).
+  const rawName = err instanceof Error ? err.name : typeof err;
+  const name = KNOWN_ERROR_NAMES.has(rawName) || !(err instanceof Error) ? rawName : `Error(name#${digest(key, rawName).slice(0, 8)})`;
+  const message = err instanceof Error ? err.message : String(err);
+  return `${name} msg#${digest(key, message).slice(0, 16)}`;
+}
+
+export interface WriteAuditLogOptions {
+  sink?: Sink;
+  now?: () => Date;
+  /** HMAC key for chain and fingerprints (≥ 16 bytes). `null` = unkeyed SHA-256. */
+  key?: Buffer | null;
+}
+
 export class WriteAuditLog {
   private seq = 0;
   private prevHash = "genesis";
+  private readonly sink: Sink;
+  private readonly now: () => Date;
+  readonly key: Buffer | null;
 
-  constructor(
-    private readonly sink: Sink = (line) => process.stdout.write(`${line}\n`),
-    private readonly now: () => Date = () => new Date(),
-  ) {}
+  constructor(options: WriteAuditLogOptions = {}) {
+    this.sink = options.sink ?? ((line) => process.stdout.write(`${line}\n`));
+    this.now = options.now ?? (() => new Date());
+    this.key = options.key ?? null;
+  }
 
-  /** Run a write handler inside an audit context and emit one chained event for it. */
+  /** `hmac-sha256` when keyed, else `sha256` (reported by get-server-info). */
+  get chainAlgorithm(): "hmac-sha256" | "sha256" {
+    return this.key ? "hmac-sha256" : "sha256";
+  }
+
+  /**
+   * Run a write handler inside an audit context: one `attempt` event before, one result event after.
+   * The returned `event` is the result event.
+   */
   async run<T>(
     meta: { tool: string; actor: string; target: string | null },
     handler: () => Promise<T>,
   ): Promise<{ result: T; event: AuditEvent }> {
-    const ctx: { detail?: AuditDetail } = {};
+    const ctx: AuditContext = { key: this.key };
     const started = this.now().getTime();
+    this.emit(meta, "attempt", started);
     try {
       const result = await store.run(ctx, handler);
       return { result, event: this.emit(meta, "ok", started, ctx.detail) };
     } catch (err) {
       const outcome = err instanceof WriteRefusedError ? "refused" : "error";
-      const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
-      const event = this.emit(meta, outcome, started, ctx.detail, message.slice(0, 500));
-      throw Object.assign(err instanceof Error ? err : new Error(message), { auditSeq: event.seq });
+      const event = this.emit(meta, outcome, started, ctx.detail, summarizeError(err, this.key));
+      throw Object.assign(err instanceof Error ? err : new Error(String(err)), { auditSeq: event.seq });
     }
   }
 
@@ -133,10 +205,18 @@ export class WriteAuditLog {
       ...(detail ? { detail } : {}),
       prevHash: this.prevHash,
     };
-    const hash = createHash("sha256").update(JSON.stringify(body)).digest("hex");
+    const hash = digest(this.key, JSON.stringify(body));
     this.prevHash = hash;
     const event: AuditEvent = { ...body, hash };
-    this.sink(JSON.stringify(event));
+    // A failing sink must never turn a completed Lexware write into a tool error (a client would retry a
+    // non-idempotent request). Report it on stderr and keep the chain consistent.
+    try {
+      this.sink(JSON.stringify(event));
+    } catch (sinkError) {
+      console.error(
+        `[lexware-mcp] audit: sink failed for seq ${event.seq} (${sinkError instanceof Error ? sinkError.name : "error"})`,
+      );
+    }
     return event;
   }
 }

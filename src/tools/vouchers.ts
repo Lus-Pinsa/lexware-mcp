@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { LexwareClient } from "../lexware/client.js";
 import { additionalFieldsParam, mergeBody, versionParam, voucherInputShape, voucherUpdateShape } from "./schemas.js";
 import { WRITE, decodeBase64Strict, deepMergePatch, text } from "./shared.js";
-import { WriteRefusedError, changedKeys, recordAuditDetail, voucherSnapshot } from "../write-audit.js";
+import { KNOWN_VOUCHER_STATUSES, WriteRefusedError, changedKeys, recordAuditDetail, voucherSnapshot } from "../write-audit.js";
 
 /** Voucher statuses lexoffice DERIVES from payments — re-sending them on PUT is rejected (invalid_value). */
 const DERIVED_VOUCHER_STATUSES = new Set(["paid", "paidoff", "voided", "transferred", "sepadebit"]);
@@ -70,8 +70,11 @@ export function registerVoucherWriteTools(
       // LEXWARE_UPDATE_VOUCHER_UNCHECKED_ONLY: only inbox (unchecked) vouchers may be booked; a voucher that
       // is already booked is never changed through the API.
       if (opts.uncheckedOnly && current.voucherStatus !== "unchecked") {
+        // Known statuses are echoed; anything else is upstream text and must not reach the audit trail in clear.
+        const status = String(current.voucherStatus);
+        const shown = KNOWN_VOUCHER_STATUSES.has(status) ? status : "unknown";
         throw new WriteRefusedError(
-          `Voucher ${id} has status "${String(current.voucherStatus)}" — this server only updates vouchers with ` +
+          `Voucher ${id} has status "${shown}" — this server only updates vouchers with ` +
             'status "unchecked" (LEXWARE_UPDATE_VOUCHER_UNCHECKED_ONLY). Change booked vouchers in the Lexware web app.',
         );
       }

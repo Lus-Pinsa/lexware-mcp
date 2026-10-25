@@ -2,9 +2,11 @@ import { createHash } from "node:crypto";
 import type { McpServer } from "skybridge/server";
 import type { Config } from "../config.js";
 import { WriteAuditLog } from "../write-audit.js";
+export { KNOWN_WRITE_TOOLS } from "../write-tools.js";
 
-type ToolConfig = { name: string; annotations?: { readOnlyHint?: boolean } };
+type ToolConfig = { name: string };
 type Handler = (...args: unknown[]) => Promise<unknown>;
+
 
 /** Who is calling, without PII or secrets: auth mode plus a short fingerprint. */
 export function describeActor(config: Config, extra: unknown): string {
@@ -25,7 +27,10 @@ export function describeActor(config: Config, extra: unknown): string {
 /**
  * Wrap the server for the write tiers: a state-changing tool is registered only if it passes
  * `LEXWARE_WRITE_TOOLS`, and every call of a registered one is written to the audit trail.
- * Read-only tools pass through untouched.
+ *
+ * The guard decides by registration path, not by annotation: EVERYTHING registered through the returned
+ * server is treated as a write, including a tool that (wrongly) carries `readOnlyHint: true`. Read-only
+ * tools are registered through the unguarded server (src/tools/index.ts), which a structural test enforces.
  */
 export function guardWriteTools(
   server: McpServer,
@@ -39,7 +44,6 @@ export function guardWriteTools(
       if (prop === "registerTool") {
         return (toolConfig: ToolConfig, ...rest: unknown[]) => {
           const register = target.registerTool as (...args: unknown[]) => unknown;
-          if (toolConfig.annotations?.readOnlyHint === true) return register.call(target, toolConfig, ...rest);
           if (allow !== null && !allow.includes(toolConfig.name)) {
             skipped.push(toolConfig.name);
             return receiver;
@@ -47,7 +51,9 @@ export function guardWriteTools(
           const handler = rest[rest.length - 1] as Handler;
           const audited: Handler = async (...args) => {
             const input = args.length > 1 ? (args[0] as Record<string, unknown> | undefined) : undefined;
-            const id = input && typeof input.id === "string" ? input.id : null;
+            // Target in clear only when it looks like an id; anything else (free text, oversized) is fingerprinted.
+            const rawId = input && typeof input.id === "string" ? input.id : null;
+            const id = rawId === null ? null : /^[A-Za-z0-9._:-]{1,64}$/.test(rawId) ? rawId : `id#${createHash("sha256").update(rawId).digest("hex").slice(0, 16)}`;
             const { result, event } = await audit.run(
               { tool: toolConfig.name, actor: describeActor(config, args[args.length - 1]), target: id },
               () => handler(...args),

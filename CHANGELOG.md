@@ -7,14 +7,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Security
+- **Audit trail hardening** (independent review of the write path, 2026-10-22): the chain and all fingerprints are
+  HMAC-SHA256 with `LEXWARE_AUDIT_KEY` (or a key derived from the static MCP token); an `attempt` line is written
+  BEFORE the Lexware call; the voucher number is fingerprinted; upstream error text is never copied (status/kind
+  only); a failing log sink never turns a completed write into a tool error. The trail is pseudonymised, not free
+  of business data (ids, dates and amounts stay in clear). `get-server-info` reports `writePolicy.auditChain`.
+- **Failed-auth lockout**: the token is checked first, so a request with the valid token is never answered with
+  429 — a stranger behind the same egress IP (claude.ai connector pool) can no longer lock out the real connector.
+  Consequently the lockout only answers WRONG tokens with 429; it is not brute-force protection beyond the
+  token's entropy (use a ≥ 32-byte random token). A global budget (1 000 wrong tokens per 15 min across all
+  clients) answers every wrong token with 429 for 15 min once exhausted, so rotating addresses does not help; a
+  valid token is never affected. A distinct stderr line reports a global trip.
+  `X-Forwarded-For` is only trusted with `TRUST_PROXY=true` (set it on Render); IPv6 clients are keyed by /64; an
+  active lockout is never evicted; a valid token neither resets nor is affected by the failure window.
+- **`LEXWARE_WRITE_TOOLS`** now fails start-up on unknown tool names (a typo used to disable every write tool
+  silently) and on `none` mixed with names. The write guard no longer trusts the `readOnlyHint` annotation:
+  everything registered on the write path is filtered and audited.
 - **Write allowlist** `LEXWARE_WRITE_TOOLS`: narrows the write surface below the capability tiers (e.g.
   `update-voucher` only); it can never enable a tool of a disabled tier. Reported by `get-server-info` (`writePolicy`).
 - **`LEXWARE_UPDATE_VOUCHER_UNCHECKED_ONLY`**: `update-voucher` refuses vouchers that are no longer `unchecked`.
 - **Audit trail**: every write-tool call emits one hash-chained JSON line on stdout (`"audit":"lexware-write"`) with
   actor (auth mode + fingerprint, no PII), timestamp, tool, target id, outcome and — for `update-voucher` — the
   booking fields before/after plus the changed keys; contact names and remarks only as SHA-256 fingerprints.
-- **Failed-auth lockout** for the static bearer token: 10 invalid tokens in 15 min lock that client out for 15 min
-  (per client; the valid connector is never counted).
+- **Failed-auth lockout** for the static bearer token: after 10 invalid tokens in 15 min, wrong tokens from that
+  client are answered 429 for 15 min (per client; a valid token is never counted and, since the hardening above,
+  never blocked).
 - The per-request `/mcp` debug line is now only written with `LEXWARE_DEBUG_LOGGING=true`.
 
 ### Added

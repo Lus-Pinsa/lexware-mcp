@@ -65,7 +65,7 @@ export function registerTools(
   client: LexwareClient,
   config: Config,
   runtime: ServerRuntime = { env: process.env, startedAt: PROCESS_STARTED_AT },
-  audit: WriteAuditLog = new WriteAuditLog(),
+  audit: WriteAuditLog = new WriteAuditLog({ key: config.auditKey }),
 ): { skippedWriteTools: string[] } {
   const { capabilities } = config;
 

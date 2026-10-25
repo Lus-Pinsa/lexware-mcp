@@ -28,7 +28,7 @@
 | GitHub Actions tatsächlich ausgeführt | 0 Runs in der Repo-Historie; prüfen, ob Actions erlaubt ist | Luigi: Settings → Actions |
 | Secret Scanning plus Push Protection (GitHub-nativ) | nicht geprüft (kein API-Zugriff) | Luigi: Settings → Code security |
 | Webhook-Tests (Signatur, Replay, organizationId-Abgleich) | fehlen; erfordern ein Refactoring von `server.ts` | Phase 2 |
-| Serverseitige Einschränkung von `create-voucher`/`update-voucher` | fehlt | Phase 2 / Entscheidung Luigi |
+| Serverseitige Einschränkung von `create-voucher`/`update-voucher` | **umgesetzt** (#41): Allowlist `update-voucher`, nur `unchecked`; `create-voucher` nicht registriert. Unabhängiger Review: `ai-company/audit/2026-10-22-pr41-write-path-review.md`; Härtung: Folge-PR | Luigi (Render-Variablen `TRUST_PROXY=true`, optional `LEXWARE_AUDIT_KEY`) |
 | OAuth-Start ohne E-Mail-Allowlist verweigern | fehlt (derzeit nur WARNING) | Phase 2 |
 | Markierung „Untrusted data“ für PDF- und Belegtext (Prompt Injection) | fehlt | Phase 2 |
 | Audit-Log für Agent-Aktionen außerhalb von Git | fehlt; Git, PRs und CI sind derzeit der Audit-Trail | Phase 2 |

@@ -55,6 +55,10 @@ export interface ServerInfo {
     readonly updateVoucherUncheckedOnly: boolean;
     /** Every write-tool call is logged as a hash-chained JSON line on stdout. */
     readonly auditTrail: "stdout-jsonl-hash-chain";
+    /** `hmac-sha256` when an audit key is configured or derived, else plain `sha256`. */
+    readonly auditChain: "hmac-sha256" | "sha256";
+    /** Whether failed-auth throttling trusts X-Forwarded-For (TRUST_PROXY). */
+    readonly trustProxy: boolean;
   };
   readonly auth: {
     readonly mode: "oauth" | "static" | "none";
@@ -88,6 +92,8 @@ export function buildServerInfo(
       writeToolAllowlist: config.writeToolAllowlist,
       updateVoucherUncheckedOnly: config.updateVoucherUncheckedOnly,
       auditTrail: "stdout-jsonl-hash-chain",
+      auditChain: config.auditKey ? "hmac-sha256" : "sha256",
+      trustProxy: config.trustProxy,
     },
     auth: {
       mode: config.auth.mode,

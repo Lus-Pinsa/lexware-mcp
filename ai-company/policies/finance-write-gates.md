@@ -1,6 +1,10 @@
 # Policy: Finance-Write-Gates
 
-**Status Phase 1: Es werden keine produktiven Finance-Writes durch Agenten ausgeführt.**
+**Status Phase 1 (aktualisiert 2026-10-25): Agenten führen keine produktiven Finance-Writes aus.** Der Server
+exponiert seit #41 (produktiv seit 2026-10-22) genau **ein** Schreib-Tool, `update-voucher`, beschränkt auf
+Belege mit Status `unchecked` – als dokumentierte Owner-Ausnahme für die Buchhaltungsautomatik, siehe
+`ai-company/audit/2026-10-25-adr-update-voucher-phase1-exception.md`. Agenten in Claude-Code-Sessions bleiben
+per `settings.json`, Guard-Hook und `governance.test.ts` gesperrt.
 
 ## Ebenen (Defense in Depth)
 
@@ -12,9 +16,15 @@
 | 4. Guard-Hook | `.claude/hooks/guard.mjs` blockiert jedes Lexware-Tool mit `create/update/upload/delete/ensure/finalize/...`, unabhängig vom Servernamen, sowie direkte API-Aufrufe | umbenannten Connectoren und Umgehung per curl | Sessions in diesem Repo |
 | 5. Agent-Tool-Listen | Finance-Agenten deklarieren nur Read-Tools; CI prüft das gegen `customer.json` → `capabilityTools` | falsch konfigurierten Agenten | Subagenten |
 
-## Tatsächliche serverseitige Write-Fläche in Produktion (verifiziert am 06.10.2026)
+## Tatsächliche serverseitige Write-Fläche in Produktion
 
-Konfiguration laut Tool-Liste des Connectors: read + drafts aktiv, finalize aus. Damit sind
+**Stand 2026-10-22 (verifiziert per `get-server-info`, Build `883b572`):** read + drafts aktiv, finalize aus,
+`LEXWARE_WRITE_TOOLS=update-voucher`, `LEXWARE_UPDATE_VOUCHER_UNCHECKED_ONLY=true`. Erreichbar ist genau **ein**
+zustandsänderndes Tool: `update-voucher`, nur für Belege mit Status `unchecked`. Jeder Aufruf hinterlässt zwei
+HMAC-verkettete Protokollzeilen (Versuch, Ergebnis) in den Render-Logs. `tests/finance-policy.test.ts` friert dieses
+Profil ein („hardened production profile“).
+
+Historischer Stand 06.10.2026 (vor #41): read + drafts aktiv, finalize aus, keine Allowlist. Damit waren
 **16 zustandsändernde Tools** auf dem Server erreichbar:
 
 - `acknowledge-voucher-event`: nur die lokale RAM-Queue, ändert nichts in Lexware
@@ -25,7 +35,8 @@ Konfiguration laut Tool-Liste des Connectors: read + drafts aktiv, finalize aus.
   Dateien. Diese Änderungen lassen sich teilweise per API **nicht** rückgängig machen. Laut
   Security-Review ist `voucherStatus` ein freier String, ein Beleg kann damit also gebucht werden.
 
-`LEXWARE_READ_ONLY` ist in Produktion `false`. Die Sicherheit beruht deshalb **nicht** auf diesem Flag.
+`LEXWARE_READ_ONLY` ist in Produktion `false`. Die Sicherheit beruht deshalb **nicht** auf diesem Flag, sondern auf
+der Allowlist (fail closed bei unbekannten Namen) und der `unchecked`-Beschränkung.
 
 ## Restrisiko (wichtig)
 
@@ -33,7 +44,10 @@ Ebenen 3–5 wirken nur in Claude-Code-Sessions dieses Repositories. In einem **
 dem Connector „LU'S Lexware“** stehen die 16 Tools technisch zur Verfügung. Schutz bieten dort
 nur Ebene 1 (kein Finalize) und die Tool-Bestätigung im Claude-Client.
 
-**Entscheidung für Luigi (empfohlen vor Phase 2):** Eine der folgenden Optionen.
+**Entscheidung (getroffen durch den Merge von #41 am 17.10.2026): Option 3, erster Teil** – `update-voucher` ist
+serverseitig auf `voucherStatus="unchecked"` beschränkt. Ein eigenes, bestätigungspflichtiges Buchungs-Tool (zweiter
+Teil von Option 3) gibt es noch nicht; das Buchen geschieht über `update-voucher` mit `voucherStatus:"open"`.
+Ursprüngliche Optionen:
 1. Auf Render `LEXWARE_READ_ONLY=true` setzen, bis Phase 2 kontrollierte Write-Module liefert.
    Dann fallen auch `acknowledge-voucher-event` und `ensure-lus-voucher-webhook` weg. Die Read-Pipeline
    bleibt vollständig erhalten.

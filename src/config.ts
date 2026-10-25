@@ -5,6 +5,9 @@
  * any Skybridge/Express imports so it can be unit-tested in isolation.
  */
 
+import { createHash } from "node:crypto";
+import { KNOWN_WRITE_TOOLS } from "./write-tools.js";
+
 /** Minimum length for `MCP_AUTH_TOKEN`. A 32-hex-char token is 32 chars. */
 export const MIN_TOKEN_LENGTH = 16;
 
@@ -74,6 +77,16 @@ export interface Config {
   writeToolAllowlist: string[] | null;
   /** `update-voucher` refuses vouchers whose current status is not `unchecked` (already booked documents). */
   updateVoucherUncheckedOnly: boolean;
+  /**
+   * `TRUST_PROXY`: key failed-auth throttling on the right-most `X-Forwarded-For` entry. Only safe behind a
+   * proxy that appends the real peer (Render). Off by default (TCP peer address is used).
+   */
+  trustProxy: boolean;
+  /**
+   * HMAC key for the write audit trail (chain + fingerprints): `LEXWARE_AUDIT_KEY`, else derived from the
+   * static MCP token, else `null` (unkeyed SHA-256, with a start-up warning). Never logged.
+   */
+  auditKey: Buffer | null;
   /** Non-fatal configuration notices to log at startup (e.g. a flag that was overridden). */
   warnings: string[];
 }
@@ -93,7 +106,8 @@ function parseBool(raw: string | undefined, fallback: boolean): boolean {
 
 /**
  * Parse a comma-separated tool list. Unset/blank → `null` (no restriction); `none` → `[]` (no write tool).
- * Names are validated against the tool-name alphabet so a typo can't silently widen the list.
+ * Every name must be a known write tool (any tier): a typo must fail start-up, not silently disable the
+ * one intended tool. `none` cannot be mixed with names.
  */
 function parseToolList(raw: string | undefined): string[] | null {
   if (raw === undefined || raw.trim() === "") return null;
@@ -106,8 +120,36 @@ function parseToolList(raw: string | undefined): string[] | null {
     if (!/^[a-z0-9-]+$/.test(name)) {
       throw new ConfigError(`Invalid tool name "${name}" in LEXWARE_WRITE_TOOLS (expected e.g. update-voucher).`);
     }
+    if (name === "none") {
+      throw new ConfigError('LEXWARE_WRITE_TOOLS: "none" cannot be combined with tool names.');
+    }
+    if (!KNOWN_WRITE_TOOLS.includes(name)) {
+      throw new ConfigError(
+        `Unknown write tool "${name}" in LEXWARE_WRITE_TOOLS. Known: ${KNOWN_WRITE_TOOLS.join(", ")}.`,
+      );
+    }
   }
   return [...new Set(names)];
+}
+
+/** Audit key: explicit `LEXWARE_AUDIT_KEY`, else derived from the static token, else none. */
+function resolveAuditKey(env: NodeJS.ProcessEnv, auth: AuthConfig, warnings: string[]): Buffer | null {
+  const explicit = env.LEXWARE_AUDIT_KEY?.trim();
+  if (explicit) {
+    if (explicit.length < MIN_TOKEN_LENGTH) {
+      throw new ConfigError(`LEXWARE_AUDIT_KEY is too weak (min ${MIN_TOKEN_LENGTH} chars).`);
+    }
+    return createHash("sha256").update(`lexware-audit-key\0${explicit}`, "utf8").digest();
+  }
+  if (auth.mode === "static") {
+    // Derived, not the token itself: whoever holds the token can call the write tools anyway.
+    return createHash("sha256").update(`lexware-audit-key\0${auth.token}`, "utf8").digest();
+  }
+  warnings.push(
+    "LEXWARE_AUDIT_KEY is not set and no static MCP token is configured — the write audit trail is " +
+      "chained with plain SHA-256 (fingerprints reversible by dictionary, chain recomputable by a log editor).",
+  );
+  return null;
 }
 
 function parsePort(raw: string | undefined): number {
@@ -285,6 +327,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
 
   const writeToolAllowlist = parseToolList(env.LEXWARE_WRITE_TOOLS);
+  const trustProxy = parseBool(env.TRUST_PROXY, false);
   if (writeToolAllowlist === null && enableDrafts) {
     warnings.push(
       "LEXWARE_WRITE_TOOLS is not set — every write tool of the enabled tiers is exposed. Set it to the " +
@@ -306,6 +349,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     capabilities: { read: true, drafts: enableDrafts, finalize: enableFinalize },
     writeToolAllowlist,
     updateVoucherUncheckedOnly: parseBool(env.LEXWARE_UPDATE_VOUCHER_UNCHECKED_ONLY, false),
+    trustProxy,
+    auditKey: resolveAuditKey(env, auth, warnings),
     warnings,
   };
 }

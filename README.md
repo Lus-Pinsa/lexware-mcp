@@ -108,6 +108,10 @@ LEXWARE_API_KEY=... MCP_AUTH_TOKEN=... npm start
 | `LEXWARE_APP_BASE_URL` | `https://app.lexware.de` | Web-app base for document deeplinks |
 | `LEXWARE_WEBHOOK_PUBLIC_KEY` | — | PEM public key used to verify `X-Lxo-Signature` on `POST /webhooks/lexware` (`\n` escapes allowed). Without it the webhook answers `503` (fail closed) |
 | `PORT` | `8080` | Listen port (your platform may inject this) |
+| `LEXWARE_WRITE_TOOLS` | — | Allowlist of write tools (comma-separated, e.g. `update-voucher`; `none` = no write tool). Unknown names fail start-up. Unset = every write tool of the enabled tiers (start-up warning) |
+| `LEXWARE_UPDATE_VOUCHER_UNCHECKED_ONLY` | `false` | `update-voucher` refuses vouchers whose status is not `unchecked` |
+| `LEXWARE_AUDIT_KEY` | derived from `MCP_AUTH_TOKEN` | HMAC key for the write audit trail (chain + fingerprints). Without a static token and without this key the trail is plain SHA-256 (warning) |
+| `TRUST_PROXY` | `false` | Key failed-auth throttling on the right-most `X-Forwarded-For` entry. Set `true` only behind a proxy that appends the real peer (Render) |
 | `LEXWARE_DEBUG_LOGGING` | `false` | Verbose logs (never secrets/bodies) |
 
 ¹ The server needs **either** `OAUTH_ISSUER` (OAuth) **or** `MCP_AUTH_TOKEN` (static). It

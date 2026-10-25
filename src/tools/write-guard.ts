@@ -4,7 +4,7 @@ import type { Config } from "../config.js";
 import { WriteAuditLog } from "../write-audit.js";
 export { KNOWN_WRITE_TOOLS } from "../write-tools.js";
 
-type ToolConfig = { name: string; annotations?: { readOnlyHint?: boolean } };
+type ToolConfig = { name: string };
 type Handler = (...args: unknown[]) => Promise<unknown>;
 
 

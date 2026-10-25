@@ -143,7 +143,10 @@ describe("LEXWARE_WRITE_TOOLS", () => {
   it("structural: every module calling a client write method is registered through writeServer and never read-only annotated", () => {
     const dir = join(process.cwd(), "src/tools");
     const index = readFileSync(join(dir, "index.ts"), "utf8");
-    const writeCall = /client\.(post|put|request|delete|postMultipart)\(/;
+    // Generic call sites look like `client.post<{ id: string }>(`; delete registrars reach the API through
+    // `deleteIdempotent` (shared.ts). Both must count as write calls, or this test goes vacuous.
+    const writeCall = /client\.(post|put|request|delete|postMultipart)\b|deleteIdempotent\(/;
+    const inspected: string[] = [];
     for (const file of readdirSync(dir)) {
       if (!file.endsWith(".ts") || ["index.ts", "write-guard.ts", "schemas.ts", "shared.ts"].includes(file)) continue;
       const source = readFileSync(join(dir, file), "utf8");
@@ -156,11 +159,25 @@ describe("LEXWARE_WRITE_TOOLS", () => {
         const bodyEnd = source.indexOf("\nexport function ", bodyStart + 1);
         const body = source.slice(bodyStart, bodyEnd === -1 ? undefined : bodyEnd);
         if (!writeCall.test(body)) continue;
+        inspected.push(fn);
         expect(calls, `${file}:${fn} must register via writeServer`).not.toHaveLength(0);
         for (const target of calls) expect(target, `${file}:${fn}`).toBe("writeServer");
         expect(body, `${file}:${fn} must not be annotated read-only`).not.toMatch(/readOnlyHint:\s*true/);
       }
     }
+    // The heuristic must actually have looked at every write registrar (guards against a regex regression).
+    expect(inspected.sort()).toEqual([
+      "registerArticleDeleteTools",
+      "registerArticleWriteTools",
+      "registerContactDraftTools",
+      "registerDocumentDraftTools",
+      "registerDocumentFinalizeTools",
+      "registerEventSubscriptionDeleteTools",
+      "registerEventSubscriptionWriteTools",
+      "registerFileWriteTools",
+      "registerLusVoucherWebhookTools",
+      "registerVoucherWriteTools",
+    ]);
   });
 });
 
@@ -298,7 +315,7 @@ describe("update-voucher audit + unchecked-only", () => {
     expect(() => loadConfig({ LEXWARE_API_KEY: "k", MCP_AUTH_TOKEN: TOKEN, LEXWARE_AUDIT_KEY: "short" } as NodeJS.ProcessEnv)).toThrow(/too weak/);
   });
 
-  it("keeps the chain linear under concurrent writes", async () => {
+  it("keeps the chain linear under concurrent writes and each result carries its own call's detail", async () => {
     const client = voucherClient(VOUCHER);
     const c = capture(cfg(env), client as unknown as LexwareClient);
     const tool = c.tools.get("update-voucher")!;
@@ -309,6 +326,9 @@ describe("update-voucher audit + unchecked-only", () => {
       expect(e.seq).toBe(i + 1);
       expect(e.prevHash).toBe(i === 0 ? "genesis" : events[i - 1].hash);
     });
+    const results = events.filter((e) => e.outcome === "ok");
+    expect(results).toHaveLength(6);
+    for (const r of results) expect(r.detail?.after).toMatchObject({ version: 4 });
   });
 
   it("a failing sink never turns a completed write into a tool error, and the chain stays consistent", async () => {
@@ -359,6 +379,8 @@ describe("failed-auth throttling", () => {
     expect(call(mw, "Bearer wrong").status).toHaveBeenCalledWith(429);
     // Same key, valid token: passes (the legitimate connector behind the same egress is unaffected).
     expect(call(mw, `Bearer ${TOKEN}`).next).toHaveBeenCalled();
+    // ... and the active lockout for wrong tokens from that key is kept, not cleared by the valid token.
+    expect(call(mw, "Bearer wrong").status).toHaveBeenCalledWith(429);
     // Another client is unaffected either way.
     expect(call(mw, `Bearer ${TOKEN}`, "5.6.7.8").next).toHaveBeenCalled();
     expect(call(mw, "Bearer wrong", "5.6.7.8").status).toHaveBeenCalledWith(401);
@@ -415,6 +437,10 @@ describe("failed-auth throttling", () => {
     expect(normalizeAddress("2001:db8:1:2::1")).toBe("2001:0db8:0001:0002::/64");
     expect(normalizeAddress("::1")).toBe("0000:0000:0000:0000::/64");
     expect(normalizeAddress("::ffff:192.0.2.9")).toBe("192.0.2.9");
+    expect(normalizeAddress("::FFFF:192.0.2.9")).toBe("192.0.2.9");
+    expect(normalizeAddress("0:0:0:0:0:ffff:192.0.2.9")).toBe("192.0.2.9");
+    expect(normalizeAddress("::ffff:c000:209")).toBe("192.0.2.9");
+    expect(normalizeAddress("fe80::1%lo0")).toBe("fe80:0000:0000:0000::/64");
     expect(normalizeAddress("192.0.2.9")).toBe("192.0.2.9");
     expect(normalizeAddress("not-an-ip")).toBe("not-an-ip");
   });

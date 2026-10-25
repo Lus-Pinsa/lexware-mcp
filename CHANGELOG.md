@@ -14,6 +14,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   of business data (ids, dates and amounts stay in clear). `get-server-info` reports `writePolicy.auditChain`.
 - **Failed-auth lockout**: the token is checked first, so a request with the valid token is never answered with
   429 — a stranger behind the same egress IP (claude.ai connector pool) can no longer lock out the real connector.
+  Consequently the lockout only answers WRONG tokens with 429; it is not brute-force protection beyond the
+  token's entropy (use a ≥ 32-byte random token).
   `X-Forwarded-For` is only trusted with `TRUST_PROXY=true` (set it on Render); IPv6 clients are keyed by /64; an
   active lockout is never evicted; a valid token clears the client's failure window.
 - **`LEXWARE_WRITE_TOOLS`** now fails start-up on unknown tool names (a typo used to disable every write tool
@@ -25,8 +27,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Audit trail**: every write-tool call emits one hash-chained JSON line on stdout (`"audit":"lexware-write"`) with
   actor (auth mode + fingerprint, no PII), timestamp, tool, target id, outcome and — for `update-voucher` — the
   booking fields before/after plus the changed keys; contact names and remarks only as SHA-256 fingerprints.
-- **Failed-auth lockout** for the static bearer token: 10 invalid tokens in 15 min lock that client out for 15 min
-  (per client; a valid token is never counted and, since the hardening above, never blocked).
+- **Failed-auth lockout** for the static bearer token: after 10 invalid tokens in 15 min, wrong tokens from that
+  client are answered 429 for 15 min (per client; a valid token is never counted and, since the hardening above,
+  never blocked).
 - The per-request `/mcp` debug line is now only written with `LEXWARE_DEBUG_LOGGING=true`.
 
 ### Added

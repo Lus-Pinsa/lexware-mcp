@@ -83,24 +83,41 @@ export function clientKey(req: Request, trustProxy = false): string {
   return normalizeAddress(address);
 }
 
-/** Strip an IPv4-mapped prefix; collapse IPv6 to its /64. Non-IP strings are kept as is. */
+/** Unmap IPv4-mapped IPv6 (any spelling); collapse IPv6 to its /64. Non-IP strings are kept as is. */
 export function normalizeAddress(address: string): string {
-  const unmapped = address.startsWith("::ffff:") && isIP(address.slice(7)) === 4 ? address.slice(7) : address;
-  if (isIP(unmapped) !== 6) return unmapped;
-  // Expand "::" so the first four hextets can be read off.
-  const [head, tail = ""] = unmapped.split("::");
-  const headParts = head ? head.split(":") : [];
-  const tailParts = tail ? tail.split(":") : [];
+  const lower = address.toLowerCase().replace(/%.*$/, ""); // zone id is not part of the address
+  if (isIP(lower) !== 6) return lower === address.toLowerCase() ? address : lower;
+  // Expand "::" so all eight hextets are known; a trailing dotted IPv4 counts as two hextets.
+  const [head, tail = ""] = lower.split("::");
+  const toHextets = (part: string): string[] =>
+    part
+      ? part.split(":").flatMap((h) => {
+          if (!h.includes(".")) return [h];
+          const [a, b, c, d] = h.split(".").map(Number);
+          return [((a << 8) | b).toString(16), ((c << 8) | d).toString(16)];
+        })
+      : [];
+  const headParts = toHextets(head);
+  const tailParts = toHextets(tail);
   const missing = 8 - headParts.length - tailParts.length;
-  const full = [...headParts, ...Array.from({ length: Math.max(0, missing) }, () => "0"), ...tailParts];
-  return `${full.slice(0, 4).map((h) => h.toLowerCase().padStart(4, "0")).join(":")}::/64`;
+  const full = [...headParts, ...Array.from({ length: Math.max(0, missing) }, () => "0"), ...tailParts].map((h) =>
+    h.padStart(4, "0"),
+  );
+  if (full.slice(0, 5).every((h) => h === "0000") && full[5] === "ffff") {
+    const hi = parseInt(full[6], 16);
+    const lo = parseInt(full[7], 16);
+    return `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
+  }
+  return `${full.slice(0, 4).join(":")}::/64`;
 }
 
 /**
- * Locks a client out for `lockMs` after `maxFailures` invalid tokens within `windowMs`. A valid token is
- * never counted (and clears the client's failure window), and the lockout is per client. Memory is bounded
- * (`maxClients`): when full, expired entries are evicted first, then the oldest UNLOCKED ones; an active
- * lockout is never dropped to make room.
+ * After `maxFailures` invalid tokens within `windowMs`, WRONG tokens from that client are answered 429 for
+ * `lockMs`. This is not brute-force protection beyond the token's entropy: a correct token is never delayed
+ * (see bearerAuthMiddleware), so a shared egress cannot be used to lock out the legitimate connector. A valid
+ * token clears the client's failure window; an active lockout stays until it expires. Memory is bounded
+ * (`maxClients`): when full, expired entries are evicted first, then the first-inserted UNLOCKED ones; an
+ * active lockout is never dropped to make room (so the bound is soft while every entry is locked).
  */
 export class FailedAuthLimiter {
   private readonly entries = new Map<string, { failures: number; windowStart: number; lockedUntil: number }>();
@@ -154,7 +171,7 @@ export class FailedAuthLimiter {
     for (const [k, v] of this.entries) {
       if (v.lockedUntil <= t && t - v.windowStart > this.windowMs) this.entries.delete(k);
     }
-    // Still full: drop the oldest unlocked windows (Map iteration is insertion order). Locked entries stay.
+    // Still full: drop the first-inserted unlocked windows (Map iteration is insertion order). Locked stay.
     for (const [k, v] of this.entries) {
       if (this.entries.size < this.maxClients) break;
       if (v.lockedUntil <= t) this.entries.delete(k);
